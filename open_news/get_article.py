@@ -1,5 +1,6 @@
 """Fetch full article text and metadata using newspaper4k, trafilatura, or BeautifulSoup fallback."""
 
+import json
 import logging
 from datetime import datetime
 from typing import Dict, Optional, Tuple
@@ -66,9 +67,8 @@ def _extract_with_trafilatura(url: str) -> Tuple[str, Dict]:
                 with_metadata=True,
             )
             if result:
-                import json as _json
                 try:
-                    data = _json.loads(result)
+                    data = json.loads(result)
                     text = data.get("text") or data.get("raw_text") or ""
                     meta = {
                         "title": data.get("title", ""),
@@ -76,7 +76,7 @@ def _extract_with_trafilatura(url: str) -> Tuple[str, Dict]:
                         "source": data.get("sitename", ""),
                     }
                     return text, meta
-                except (_json.JSONDecodeError, TypeError):
+                except (json.JSONDecodeError, TypeError):
                     # Fallback: extract returned a plain string (older trafilatura)
                     text = trafilatura.extract(downloaded) or ""
                     return text, {}
