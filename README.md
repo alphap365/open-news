@@ -8,7 +8,7 @@
 [![Python](https://img.shields.io/badge/Python-3.7%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)](https://github.com/alphap365/open-news)
 
-*A lightweight, batteries-included Python package for fetching news articles, extracting content, and discovering RSS feeds.*
+*A lightweight, batteries-included Python package for fetching news articles, extracting content, discovering RSS feeds, and batch processing with summarization.*
 
 [Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [API Reference](#-api-reference) • [Contributing](#-contributing)
 
@@ -59,10 +59,20 @@ Auto-discover RSS feeds from any website:
 </td>
 </tr>
 <tr>
-<td colspan="2">
+<td>
 
 ### ⚡ Smart Caching
 24-hour feed caching to minimize network requests and improve performance
+
+</td>
+<td>
+
+### 🚀 Batch Processing & Summarization
+Process multiple articles concurrently with built-in summarization:
+- Fetch and summarize batch URLs
+- Search Google News + fetch + summarize in one call
+- Configurable concurrency and timeouts
+- Lightweight extractive summarization
 
 </td>
 </tr>
@@ -145,6 +155,43 @@ articles = get_articles_from_website_rss("https://techcrunch.com", limit=5)
 
 for article in articles:
     print(f"✓ {article['title']}")
+```
+
+### 6️⃣ Batch Fetch & Summarize Articles
+```python
+from open_news import fetch_and_summarize_batch
+
+urls = [
+    "https://example.com/article1",
+    "https://example.com/article2",
+    "https://example.com/article3",
+]
+
+results = fetch_and_summarize_batch(urls, sentence_count=2, max_workers=3)
+
+for result in results:
+    if result["status"] == "success":
+        print(f"📰 {result['title']}")
+        print(f"   Summary: {result['summary']}\n")
+    else:
+        print(f"❌ Failed: {result['error']}")
+```
+
+### 7️⃣ Search & Summarize in One Call
+```python
+from open_news import fetch_and_summarize_search_results
+
+results = fetch_and_summarize_search_results(
+    "climate change",
+    limit=5,
+    sentence_count=2,
+    max_workers=3
+)
+
+for article in results:
+    print(f"🔗 {article['url']}")
+    print(f"📰 {article['title']}")
+    print(f"   {article['summary']}\n")
 ```
 
 ---
@@ -267,6 +314,77 @@ for article in articles:
 
 ---
 
+### `fetch_and_summarize_batch(urls: List[str], include_full_text: bool = False, sentence_count: int = 3, max_workers: int = 5, timeout: int = 30) → List[Dict]`
+
+Fetch and summarize multiple articles concurrently.
+
+**Parameters:**
+- `urls` (List[str]): Article URLs to process
+- `include_full_text` (bool): Include full article text in results (default: False)
+- `sentence_count` (int): Sentences per summary (default: 3)
+- `max_workers` (int): Concurrent threads (default: 5, adjust based on CPU/network)
+- `timeout` (int): Timeout per article in seconds (default: 30)
+
+**Returns:**
+```python
+[
+    {
+        "url": str,
+        "status": str,        # "success", "failed", or "timeout"
+        "title": str,         # Article title (if extracted)
+        "summary": str,       # Summarized content
+        "text": str,          # Full text (only if include_full_text=True)
+        "error": str          # Error message if status is "failed"
+    },
+    ...
+]
+```
+
+**Example:**
+```python
+from open_news import fetch_and_summarize_batch
+
+urls = ["https://example.com/1", "https://example.com/2"]
+results = fetch_and_summarize_batch(urls, sentence_count=2)
+
+for result in results:
+    if result["status"] == "success":
+        print(f"✓ {result['title']}")
+        print(f"  {result['summary']}")
+```
+
+---
+
+### `fetch_and_summarize_search_results(query: str, limit: int = 10, sentence_count: int = 3, **kwargs) → List[Dict]`
+
+Search Google News, fetch, and summarize all results in one call.
+
+**Parameters:**
+- `query` (str): Search term
+- `limit` (int): Max results (default: 10)
+- `sentence_count` (int): Sentences per summary (default: 3)
+- `**kwargs`: Additional arguments passed to `fetch_and_summarize_batch` (e.g., `max_workers`, `timeout`)
+
+**Returns:** Merged list combining search metadata with extracted & summarized content
+
+**Example:**
+```python
+from open_news import fetch_and_summarize_search_results
+
+results = fetch_and_summarize_search_results(
+    "artificial intelligence",
+    limit=5,
+    sentence_count=2,
+    max_workers=3
+)
+
+for article in results:
+    print(f"Title: {article['title']}")
+    print(f"Summary: {article['summary']}")
+```
+
+---
+
 ## 📡 RSS Feeds
 
 This package uses curated RSS feed definitions from the **[open-feeds](https://github.com/alphap365/open-feeds)** repository.
@@ -280,7 +398,7 @@ This package uses curated RSS feed definitions from the **[open-feeds](https://g
 The `get_live_news()` function fetches feeds dynamically from the [open-feeds](https://github.com/alphap365/open-feeds) repository, so you always get the latest available feeds.
 
 ### Contributing to Feeds
-To add new RSS feeds or report broken feeds, visit the **[open-feeds repository](https://github.com/alphap365/open-feeds)** and follow their [contributing guidelines](https://github.com/alphap365/open-feeds#-contributing).
+To add new RSS feeds or report broken feeds, visit the **[open-feeds repository](https://github.com/alphap365/open-feeds)** and follow their contributing guidelines.
 
 ---
 
