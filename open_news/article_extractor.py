@@ -1,17 +1,17 @@
 #!/usr/bin/env python3
 """
-Fast Article Extractor - Single file, lightweight, 99% accuracy.
-Dependencies: lxml, python-dateutil (no tldextract, no requests for images unless enabled)
+Fast Article Extractor – Single file, lightweight, 99% accuracy.
+Dependencies: lxml, python-dateutil (no extra HTTP calls).
 """
 
 import re
+from copy import deepcopy
 from datetime import datetime
 from typing import Any, Dict, List, Optional, Set, Tuple
-from urllib.parse import urljoin, urlparse
+from urllib.parse import urljoin
 
 from dateutil.parser import parse as date_parser
-from lxml import etree
-from lxml.html import HtmlElement, fromstring, tostring
+from lxml.html import HtmlElement, fromstring
 
 # ---------- Configuration ----------
 SCORE_WEIGHTS = {
@@ -24,10 +24,9 @@ SCORE_WEIGHTS = {
 
 LANGUAGE_STOPWORDS = {
     "en": {"the", "and", "for", "that", "this", "with", "from", "have", "are", "was", "were"},
-    # extend with other languages if needed
 }
 
-# Meta fields (same as newspaper3k)
+# Meta tags for title, author, date (same as newspaper3k)
 TITLE_META = ["title", "og:title", "twitter:title", "headline"]
 AUTHOR_META = ["author", "article:author", "byline", "dc.creator", "sailthru.author"]
 DATE_META = [
@@ -36,11 +35,11 @@ DATE_META = [
 ]
 VIDEO_PROVIDERS = ["youtube", "youtu.be", "vimeo", "dailymotion", "twitch"]
 
-# Precompile regexes
+# Precompile regex
 STRICT_DATE_REGEX = re.compile(r'/(\d{4})/(\d{1,2})/(\d{1,2})/')
 AUTHOR_SPLIT_REGEX = re.compile(r'[·|,]|\sand\s|\set\s', re.I)
 DIGITS_REGEX = re.compile(r'\d')
-STOPWORD_REGEX_CACHE = {}
+
 
 # ---------- Helper functions ----------
 def get_stopwords(lang: str = "en") -> Set[str]:
@@ -48,9 +47,11 @@ def get_stopwords(lang: str = "en") -> Set[str]:
     lang = lang[:2].lower()
     return LANGUAGE_STOPWORDS.get(lang, LANGUAGE_STOPWORDS["en"])
 
+
 def text_length(node: HtmlElement) -> int:
     """Length of visible text (excluding script/style)."""
     return len((node.text_content() or "").strip())
+
 
 def link_density(node: HtmlElement) -> float:
     """Ratio of link text to total text."""
@@ -61,6 +62,7 @@ def link_density(node: HtmlElement) -> float:
     link_len = sum(len(a.text_content().strip()) for a in links)
     return link_len / total
 
+
 def score_node(node: HtmlElement, stopwords: Set[str]) -> float:
     """Score a node based on stopword count, tag importance, link density."""
     text = node.text_content()
@@ -69,6 +71,7 @@ def score_node(node: HtmlElement, stopwords: Set[str]) -> float:
     # Count stopwords (simple tokenization)
     words = re.findall(r"[A-Za-z\u00C0-\u00FF]+", text.lower())
     stopword_count = sum(1 for w in words if w in stopwords)
+
     # Tag bonus
     tag_bonus = 0
     tag = node.tag.lower()
@@ -78,12 +81,13 @@ def score_node(node: HtmlElement, stopwords: Set[str]) -> float:
         tag_bonus = 5
     elif tag == "div" and node.get("class", "").find("content") != -1:
         tag_bonus = 3
+
     # Negative for high link density
-    ld = link_density(node)
-    if ld > 0.5:
+    if link_density(node) > 0.5:
         tag_bonus = -20
-    # Combined score
+
     return stopword_count * SCORE_WEIGHTS["stopword_bonus"] + tag_bonus
+
 
 def get_best_node(doc: HtmlElement, stopwords: Set[str]) -> Optional[HtmlElement]:
     """Find the node with highest density of stopword-rich text."""
@@ -95,7 +99,6 @@ def get_best_node(doc: HtmlElement, stopwords: Set[str]) -> Optional[HtmlElement
             scored.append((s, node))
     if not scored:
         return None
-    # Return node with highest score
     scored.sort(reverse=True, key=lambda x: x[0])
     best = scored[0][1]
     # Walk up to a more meaningful parent if score improves
@@ -106,9 +109,9 @@ def get_best_node(doc: HtmlElement, stopwords: Set[str]) -> Optional[HtmlElement
         parent = parent.getparent()
     return best
 
+
 def clean_node(node: HtmlElement) -> HtmlElement:
     """Deep copy and remove non-content elements (script, style, nav, etc.)."""
-    from copy import deepcopy
     clean = deepcopy(node)
     for sel in ["script", "style", "nav", "aside", "footer", "header", "form", "button"]:
         for el in clean.xpath(f".//{sel}"):
@@ -116,6 +119,7 @@ def clean_node(node: HtmlElement) -> HtmlElement:
             if parent is not None:
                 parent.remove(el)
     return clean
+
 
 def get_siblings(top: HtmlElement, stopwords: Set[str], base_score: float) -> List[HtmlElement]:
     """Add preceding siblings that have plausible content."""
@@ -131,6 +135,7 @@ def get_siblings(top: HtmlElement, stopwords: Set[str], base_score: float) -> Li
                 if s > base_score * SCORE_WEIGHTS["sibling_accept_ratio"]:
                     siblings.append(p)
     return siblings
+
 
 def extract_json_ld(doc: HtmlElement) -> Dict:
     """Parse JSON-LD scripts into a dict (simplified)."""
@@ -149,27 +154,30 @@ def extract_json_ld(doc: HtmlElement) -> Dict:
             continue
     return data
 
+
 # ---------- Main Extractor ----------
 class FastArticleExtractor:
+    """Extract title, authors, date, text, images, videos from HTML."""
+
     def __init__(self, language: str = "en"):
         self.language = language
         self.stopwords = get_stopwords(language)
 
     def extract(self, html: str, url: Optional[str] = None) -> Dict[str, Any]:
-        """Extract all article data from HTML."""
+        """
+        Extract all article data from HTML.
+        Returns dict with keys: title, authors, publish_date, text,
+        top_image, images, videos, meta.
+        """
         doc = fromstring(html)
-        # Make links absolute if url provided
         if url:
             doc.make_links_absolute(url)
-        # 1. Metadata
+
         meta = self._extract_meta(doc, url)
-        # 2. Title
         title = self._extract_title(doc, meta)
-        # 3. Authors
         authors = self._extract_authors(doc, meta)
-        # 4. Publish date
         pub_date = self._extract_pubdate(doc, url, meta)
-        # 5. Article text & top node
+
         top_node = get_best_node(doc, self.stopwords)
         if top_node is None:
             text = ""
@@ -181,10 +189,10 @@ class FastArticleExtractor:
                 top_node.addprevious(sib)
             top_node_clean = clean_node(top_node)
             text = " ".join(p.text_content().strip() for p in top_node_clean.xpath(".//p") if p.text_content())
-        # 6. Images
+
         images = self._extract_images(doc, top_node, url)
-        # 7. Videos
         videos = self._extract_videos(doc, top_node)
+
         return {
             "title": title,
             "authors": authors,
@@ -204,22 +212,16 @@ class FastArticleExtractor:
             meta["language"] = lang[:2]
         # Canonical link
         canonical = doc.xpath('//link[@rel="canonical"]/@href')
-        if canonical:
-            meta["canonical"] = canonical[0]
-        elif url:
-            meta["canonical"] = url
+        meta["canonical"] = canonical[0] if canonical else (url or "")
         # Description
         desc = doc.xpath('//meta[@name="description"]/@content|//meta[@property="og:description"]/@content')
-        if desc:
-            meta["description"] = desc[0]
+        meta["description"] = desc[0] if desc else ""
         # Site name
         site = doc.xpath('//meta[@property="og:site_name"]/@content')
-        if site:
-            meta["site_name"] = site[0]
+        meta["site_name"] = site[0] if site else ""
         # Keywords
         kw = doc.xpath('//meta[@name="keywords"]/@content')
-        if kw:
-            meta["keywords"] = [k.strip() for k in kw[0].split(",")]
+        meta["keywords"] = [k.strip() for k in kw[0].split(",")] if kw else []
         # JSON-LD
         meta["json_ld"] = extract_json_ld(doc)
         return meta
@@ -232,11 +234,9 @@ class FastArticleExtractor:
         title_tag = doc.xpath('//title/text()')
         if title_tag:
             t = title_tag[0].strip()
-            # Split on common delimiters if too long
             for delim in ["|", "-", "»", "–"]:
                 if delim in t:
                     parts = [p.strip() for p in t.split(delim)]
-                    # Choose longest part
                     t = max(parts, key=len)
                     break
             return t
@@ -247,22 +247,18 @@ class FastArticleExtractor:
 
     def _extract_authors(self, doc: HtmlElement, meta: Dict) -> List[str]:
         authors = set()
-        # From meta tags
         for name in AUTHOR_META:
             vals = doc.xpath(f'//meta[@name="{name}"]/@content|//meta[@property="{name}"]/@content')
             for v in vals:
                 authors.add(v.strip())
-        # From byline class
         byline = doc.xpath('//*[contains(@class, "byline") or contains(@class, "author")]//text()')
         if byline:
             txt = " ".join(byline).strip()
-            # Split by typical separators
             parts = AUTHOR_SPLIT_REGEX.split(txt)
             for p in parts:
                 p = p.strip()
                 if p and not DIGITS_REGEX.search(p) and len(p) > 2:
                     authors.add(p)
-        # From JSON-LD
         j = meta.get("json_ld", {})
         if "author" in j:
             auth = j["author"]
@@ -273,7 +269,6 @@ class FastArticleExtractor:
         return list(authors)
 
     def _extract_pubdate(self, doc: HtmlElement, url: Optional[str], meta: Dict) -> Optional[datetime]:
-        # 1. URL regex
         if url:
             m = STRICT_DATE_REGEX.search(url)
             if m:
@@ -281,7 +276,6 @@ class FastArticleExtractor:
                     return datetime(int(m.group(1)), int(m.group(2)), int(m.group(3)))
                 except:
                     pass
-        # 2. Meta tags
         for name in DATE_META:
             vals = doc.xpath(f'//meta[@name="{name}"]/@content|//meta[@property="{name}"]/@content')
             if vals:
@@ -289,7 +283,6 @@ class FastArticleExtractor:
                     return date_parser(vals[0])
                 except:
                     pass
-        # 3. JSON-LD
         j = meta.get("json_ld", {})
         for key in ["datePublished", "dateCreated", "dateModified"]:
             if key in j:
@@ -297,7 +290,6 @@ class FastArticleExtractor:
                     return date_parser(j[key])
                 except:
                     pass
-        # 4. Time tags
         time_tags = doc.xpath('//time/@datetime')
         if time_tags:
             try:
@@ -308,11 +300,9 @@ class FastArticleExtractor:
 
     def _extract_images(self, doc: HtmlElement, top_node: Optional[HtmlElement], url: Optional[str]) -> List[str]:
         imgs = []
-        # First, meta image (og:image)
         og_img = doc.xpath('//meta[@property="og:image"]/@content')
         if og_img and url:
             imgs.append(urljoin(url, og_img[0]))
-        # Then images inside top node (if any)
         if top_node is not None:
             for img in top_node.xpath(".//img"):
                 src = img.get("src") or img.get("data-src")
@@ -320,7 +310,6 @@ class FastArticleExtractor:
                     imgs.append(src)
                 elif src and url:
                     imgs.append(urljoin(url, src))
-        # Remove duplicates
         return list(dict.fromkeys(imgs))
 
     def _extract_videos(self, doc: HtmlElement, top_node: Optional[HtmlElement]) -> List[str]:
@@ -331,32 +320,18 @@ class FastArticleExtractor:
             src = iframe.get("src") or ""
             if any(provider in src for provider in VIDEO_PROVIDERS):
                 videos.append(src)
-        # JSON-LD VideoObject
+        # Also check meta og:video
+        og_video = doc.xpath('//meta[@property="og:video"]/@content')
+        if og_video:
+            videos.append(og_video[0])
         json_ld = extract_json_ld(doc)
         if "video" in json_ld and "contentUrl" in json_ld["video"]:
             videos.append(json_ld["video"]["contentUrl"])
         return list(dict.fromkeys(videos))
 
-# ---------- Simple endpoints ----------
+
+# ---------- Simple endpoint ----------
 def extract_article(html: str, url: Optional[str] = None, language: str = "en") -> Dict:
     """Fast, single‑function interface."""
     extractor = FastArticleExtractor(language)
     return extractor.extract(html, url)
-
-# Example usage (commented)
-if __name__ == "__main__":
-    sample_html = """
-    <html>
-    <head><title>Test Article | Site</title></head>
-    <body>
-        <article>
-            <h1>Test Title</h1>
-            <div class="byline">John Doe</div>
-            <p>This is a test paragraph with stopwords.</p>
-            <p>Second paragraph here.</p>
-        </article>
-    </body>
-    </html>
-    """
-    result = extract_article(sample_html)
-    print(result)

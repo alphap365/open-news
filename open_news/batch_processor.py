@@ -4,102 +4,63 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
 
+from .get_article import get_article
+from .batch_summarizer import summarize_text
+
 logger = logging.getLogger(__name__)
 
 
-def fetch_and_summarize_batch(
+def batch_summarize(
     urls: List[str],
-    include_full_text: bool = False,
     sentence_count: int = 3,
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
     max_workers: int = 5,
-    timeout: int = 30
+    timeout_per_article: int = 30
 ) -> List[Dict]:
     """
     Fetch and summarize multiple articles concurrently.
-    
-    **Args:**
-    - `urls` (List[str]): Article URLs to process
-    - `include_full_text` (bool): Include full article text in results (default: False)
-    - `sentence_count` (int): Sentences per summary (default: 3)
-    - `max_workers` (int): Concurrent threads (default: 5, adjust based on CPU/network)
-    - `timeout` (int): Timeout per article in seconds (default: 30)
-    
-    **Returns:**
-    List of dicts with:
-    - `url` (str): Original URL
-    - `status` (str): "success", "failed", or "timeout"
-    - `title` (str): Article title (if extracted)
-    - `summary` (str): Summarized content
-    - `text` (str): Full text (only if include_full_text=True)
-    - `error` (str): Error message if status is "failed"
-    
-    **Example:**
-    ```python
-    from open_news import fetch_and_summarize_batch
-    
-    urls = [
-        "https://example.com/article1",
-        "https://example.com/article2",
-    ]
-    
-    results = fetch_and_summarize_batch(urls, sentence_count=2)
-    for result in results:
-        if result["status"] == "success":
-            print(f"📰 {result['title']}")
-            print(f"   Summary: {result['summary'][:150]}...")
-        else:
-            print(f"❌ {result['url']}: {result['error']}")
-    ```
+
+    Args:
+        urls: List of article URLs.
+        sentence_count: Sentences per summary.
+        include_full_text: Include full article text in result.
+        include_images_videos: Include images and videos in result.
+        max_workers: Number of concurrent threads.
+        timeout_per_article: Timeout per article in seconds.
+
+    Returns:
+        List of dicts with keys: url, status, title, summary, (optional text, images, videos).
     """
-    from .get_article import fetch_article
-    from .batch_summarizer import summarize_text_simple
-    
     results = []
-    
-    def process_article(url: str) -> Dict:
-        """Process a single article: fetch, extract, summarize."""
+
+    def process(url: str) -> Dict:
         try:
             logger.info(f"Processing: {url}")
-            
-            # Fetch article (includes caching if available)
-            article_data = fetch_article(url)
-            
-            if not article_data.get("text"):
+            article = get_article(url, timeout=timeout_per_article)
+            if not article.get("text"):
                 return {
                     "url": url,
                     "status": "failed",
                     "title": "",
                     "summary": "Could not extract article content",
-                    "error": "Extraction pipeline returned empty content"
+                    "error": "Empty text"
                 }
-            
-            title = article_data.get("title", "")
-            text = article_data.get("text", "")
-            
-            # Summarize
-            summary = summarize_text_simple(text, sentence_count)
-            
+
+            summary = summarize_text(article["text"], sentence_count)
             result = {
                 "url": url,
                 "status": "success",
-                "title": title,
+                "title": article.get("title", ""),
                 "summary": summary,
             }
-            
             if include_full_text:
-                result["text"] = text
-            
-            logger.info(f"✓ Successfully processed: {url}")
+                result["text"] = article.get("text", "")
+            if include_images_videos:
+                result["images"] = article.get("images", [])
+                result["videos"] = article.get("videos", [])
+                result["top_image"] = article.get("top_image")
             return result
-            
-        except TimeoutError:
-            return {
-                "url": url,
-                "status": "timeout",
-                "title": "",
-                "summary": "",
-                "error": f"Processing exceeded {timeout}s timeout"
-            }
         except Exception as e:
             logger.error(f"Error processing {url}: {e}")
             return {
@@ -109,81 +70,64 @@ def fetch_and_summarize_batch(
                 "summary": "",
                 "error": str(e)
             }
-    
-    # Process articles concurrently
+
     with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all tasks
-        future_to_url = {
-            executor.submit(process_article, url): url 
-            for url in urls
-        }
-        
-        # Collect results as they complete
-        for future in as_completed(future_to_url, timeout=timeout):
-            result = future.result()
-            results.append(result)
-    
-    # Log summary
-    success_count = sum(1 for r in results if r["status"] == "success")
-    failed_count = len(results) - success_count
-    logger.info(f"Batch complete: {success_count} success, {failed_count} failed out of {len(urls)}")
-    
+        future_to_url = {executor.submit(process, url): url for url in urls}
+        for future in as_completed(future_to_url):
+            results.append(future.result())
+
+    success = sum(1 for r in results if r["status"] == "success")
+    logger.info(f"Batch done: {success}/{len(urls)} successful")
     return results
 
 
-def fetch_and_summarize_search_results(
+def search_and_summarize(
     query: str,
     limit: int = 10,
     sentence_count: int = 3,
-    **kwargs
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
+    max_workers: int = 5
 ) -> List[Dict]:
     """
-    Search Google News + fetch + summarize all results in one go.
-    
-    **Args:**
-    - `query` (str): Search term
-    - `limit` (int): Max results (default: 10)
-    - `sentence_count` (int): Sentences per summary
-    - `**kwargs`: Passed to fetch_and_summarize_batch (max_workers, timeout, etc.)
-    
-    **Example:**
-    ```python
-    results = fetch_and_summarize_search_results(
-        "climate change", 
-        limit=5,
-        sentence_count=2,
-        max_workers=3
-    )
-    ```
+    Search Google News, fetch articles, and summarize them.
+
+    Args:
+        query: Search term.
+        limit: Maximum number of articles.
+        sentence_count: Sentences per summary.
+        include_full_text: Include full text.
+        include_images_videos: Include images/videos.
+        max_workers: Concurrent threads.
+
+    Returns:
+        List of enriched article dicts with search metadata + summary.
     """
-    from .main import search_news
-    
-    logger.info(f"Searching for '{query}'...")
-    articles = search_news(query, limit=limit)
-    
+    from .main import search  # avoid circular import
+
+    articles = search(query, limit=limit)
     if not articles:
         logger.warning(f"No articles found for '{query}'")
         return []
-    
+
     urls = [art["url"] for art in articles]
-    batch_results = fetch_and_summarize_batch(
+    batch_results = batch_summarize(
         urls,
         sentence_count=sentence_count,
-        **kwargs
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_workers=max_workers
     )
-    
-    # Merge search metadata with batch results
+
+    # Merge search metadata
     url_to_search = {art["url"]: art for art in articles}
     merged = []
-    
-    for batch_result in batch_results:
-        url = batch_result["url"]
-        search_data = url_to_search.get(url, {})
-        
-        merged_result = {
-            **search_data,  # url, title (from search), source, published, description
-            **batch_result  # overrides with full extracted title, summary, status
-        }
-        merged.append(merged_result)
-    
+    for br in batch_results:
+        search_data = url_to_search.get(br["url"], {})
+        merged.append({**search_data, **br})
     return merged
+
+
+# Legacy aliases
+fetch_and_summarize_batch = batch_summarize
+fetch_and_summarize_search_results = search_and_summarize
