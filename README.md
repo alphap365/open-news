@@ -200,7 +200,7 @@ for article in results:
 Extract article content and metadata from a given URL.
 
 **Returns:**
-\`\`\`python
+```python
 {
     "url": str,            # Original article URL
     "title": str,          # Article headline
@@ -213,16 +213,16 @@ Extract article content and metadata from a given URL.
     "source": str,         # Website domain
     "meta": dict           # Raw metadata: description, site name, keywords, JSON-LD
 }
-\`\`\`
+```
 
 **Example:**
-\`\`\`python
+```python
 article = fetch_article("https://example.com/article")
 if article["text"]:
     print(f"✓ Successfully extracted: {article['title']}")
 else:
     print("✗ Could not extract article content")
-\`\`\`
+```
 
 A note on reliability: extraction quality depends entirely on how clean and structured the page's HTML is. Heavily templated sites with lots of navigation or ad markup around the article body may need some trial and error — if a result looks off, check `meta` and `images` for clues about what got picked up.
 
@@ -330,7 +330,7 @@ Fetch and summarize multiple articles concurrently.
 - `timeout_per_article` (int): Timeout per article in seconds (default: 30)
 
 **Returns:**
-\`\`\`python
+```python
 [
     {
         "url": str,
@@ -342,12 +342,12 @@ Fetch and summarize multiple articles concurrently.
     },
     ...
 ]
-\`\`\`
+```
 
 A timeout just shows up as a `"failed"` result with the timeout message in `error` — there's no separate `"timeout"` status, so check `error` if you need to distinguish *why* something failed.
 
 **Example:**
-\`\`\`python
+```python
 from open_news import fetch_and_summarize_batch
 
 urls = ["https://example.com/1", "https://example.com/2"]
@@ -359,7 +359,7 @@ for result in results:
         print(f"  {result['summary']}")
     else:
         print(f"✗ {result['url']}: {result['error']}")
-\`\`\`
+```
 
 ---
 
