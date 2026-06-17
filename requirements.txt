@@ -1,8 +1,8 @@
-newspaper4k
-trafilatura
-beautifulsoup4
 lxml
+python-dateutil
+httpx
+beautifulsoup4
 feedparser
 googlenewsdecoder
-httpx
 requests
+python-dateutil

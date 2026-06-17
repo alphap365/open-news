@@ -5,7 +5,7 @@ import json
 import time
 import logging
 from typing import Dict, Optional
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -84,10 +84,12 @@ def discover_rss_feed(website_url: str) -> Optional[str]:
             if href:
                 return urljoin(website_url, href)
 
+        feed_keywords = ("/feed", "/rss", "/atom", ".rss", ".atom", "feed.xml", "rss.xml")
         for a in soup.find_all("a", href=True):
-            href = a["href"].lower()
-            if "feed" in href or "rss" in href or "atom" in href:
-                return urljoin(website_url, a["href"])
+            href = a["href"]
+            path = urlparse(href).path.lower()
+            if any(kw in path for kw in feed_keywords):
+                return urljoin(website_url, href)
         return None
     except Exception as e:
         logger.debug(f"Discovery failed for {website_url}: {e}")

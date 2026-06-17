@@ -48,7 +48,11 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT) -> Dict:
         }
 
     # Extract using FastArticleExtractor
-    extracted = extract_article(html, url=url)
+    try:
+        extracted = extract_article(html, url=url)
+    except Exception as e:
+        logger.error(f"Extraction failed for {url}: {e}")
+        extracted = {}
 
     # Add source domain
     from urllib.parse import urlparse
