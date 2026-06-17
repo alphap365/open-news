@@ -16,6 +16,12 @@
 
 ---
 
+## 🔁 Latest Updates
+
+> **[17-06-2026]** - Initial Stable Release `v0.1.0`
+
+> View more on our [Changelog](CHANGELOG)
+
 ## 🎯 Features
 
 <table>
