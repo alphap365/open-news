@@ -20,6 +20,15 @@ from lxml.html import HtmlElement, fromstring, tostring
 # ----------------------------------------------------------------------
 # Configurable thresholds (trafilatura style)
 # ----------------------------------------------------------------------
+
+SCORE_WEIGHTS = {
+    "stopword_bonus": 3,           # points per stopword
+    "negative_link_density": -5,   # penalty per link‑density unit (if > threshold)
+    "sibling_accept_ratio": 0.3,   # threshold for pulling in siblings
+}
+
+STRICT_DATE_REGEX = re.compile(r'/(\d{4})/(\d{2})/(\d{2})/')
+
 DEFAULT_CONFIG = {
     "min_text_length": 200,               # Minimum characters for considered extraction
     "max_link_density": 0.5,              # If link/text > this, node penalised
@@ -56,7 +65,7 @@ class FastArticleExtractor:
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
-    def extract_article(self, html: str, url: Optional[str] = None) -> Dict:
+    def extract(self, html: str, url: Optional[str] = None) -> Dict:
         """Return full article data as a dict."""
         doc = fromstring(html)
         if url:
@@ -90,9 +99,9 @@ class FastArticleExtractor:
     def _extract_text(self, doc: HtmlElement) -> Tuple[str, Optional[HtmlElement]]:
         """Try newspaper‑style extraction first, fall back to generic density."""
         top_node = self._get_best_node(doc)
-        if top_node:
+        if top_node is not None:
             # Expand with siblings that score above threshold
-            base_score = self._score_node(top_node)
+            base_score = self.score_node(top_node)
             siblings = self._get_siblings(top_node, base_score)
             for sib in siblings:
                 top_node.addprevious(sib)
@@ -107,14 +116,14 @@ class FastArticleExtractor:
         # Fallback: trafilatura's generic text‑density method
         return self._fallback_text_extraction(doc), None
 
-    def score_node(node: HtmlElement, stopwords: Set[str]) -> float:
+    def score_node(self, node: HtmlElement) -> float:
         """Score a node based on stopword count, tag importance, link density."""
         text = node.text_content()
         if not text:
             return 0.0
         # Count stopwords (simple tokenization)
         words = re.findall(r"[A-Za-z\u00C0-\u00FF]+", text.lower())
-        stopword_count = sum(1 for w in words if w in stopwords)
+        stopword_count = sum(1 for w in words if w in self.stopwords)
 
         # Tag bonus
         tag_bonus = 0
@@ -131,7 +140,7 @@ class FastArticleExtractor:
         # Penalize high link density on top of the computed score, rather than
         # discarding tag_bonus alone — this keeps nav-heavy blocks from
         # still scoring positively when they're also stopword-dense.
-        if link_density(node) > 0.5:
+        if self._link_density(node) > self.config["max_link_density"]:
             score += SCORE_WEIGHTS["negative_link_density"] * 4  # -20 total, applied to full score
 
         return score
@@ -144,12 +153,12 @@ class FastArticleExtractor:
         link_len = sum(len(a.text_content().strip()) for a in links)
         return link_len / total
 
-    def _get_best_node(doc: HtmlElement, stopwords: Set[str]) -> Optional[HtmlElement]:
+    def _get_best_node(self, doc: HtmlElement) -> Optional[HtmlElement]:
         """Find the node with highest density of stopword-rich text."""
         candidates = doc.xpath(".//p|.//article|.//div[contains(@class, 'content')]|.//section")
         scored = []
         for node in candidates:
-            s = score_node(node, stopwords)
+            s = self.score_node(node)
             if s > 0:
                 scored.append((s, node))
         if not scored:
@@ -166,7 +175,7 @@ class FastArticleExtractor:
         while parent is not None and parent != doc and hops < max_hops:
             if parent.tag.lower() in ("body", "html"):
                 break
-            parent_score = score_node(parent, stopwords)
+            parent_score = self.score_node(parent)
             if parent_score > best_score * 1.2:
                 best = parent
                 best_score = parent_score
@@ -174,17 +183,17 @@ class FastArticleExtractor:
             hops += 1
         return best
 
-    def _get_siblings(top: HtmlElement, stopwords: Set[str], base_score: float) -> List[HtmlElement]:
+    def _get_siblings(self, top: HtmlElement, base_score: float) -> List[HtmlElement]:
         """Add preceding siblings that have plausible content."""
         candidates = []  # collect (sibling_node, list_of_p_nodes_to_keep) without mutating yet
         for sib in list(top.itersiblings(preceding=True)):  # snapshot before any mutation
             if sib.tag == "p":
-                s = score_node(sib, stopwords)
+                s = self.score_node(sib)
                 if s > base_score * SCORE_WEIGHTS["sibling_accept_ratio"]:
                     candidates.append(sib)
             elif sib.tag in ("div", "section"):
                 for p in sib.xpath(".//p"):
-                    s = score_node(p, stopwords)
+                    s = self.score_node(p)
                     if s > base_score * SCORE_WEIGHTS["sibling_accept_ratio"]:
                         candidates.append(p)
         return candidates
@@ -338,7 +347,7 @@ class FastArticleExtractor:
         if og_img and url:
             imgs.append(urljoin(url, og_img[0]))
         # Inside the article body
-        if top_node:
+        if top_node is not None:
             for img in top_node.xpath(".//img"):
                 src = img.get("src") or img.get("data-src")
                 if src:
@@ -366,7 +375,7 @@ class FastArticleExtractor:
             videos.append(j["video"]["contentUrl"])
         return list(dict.fromkeys(videos))
 
-    def _extract_json_ld(doc: HtmlElement) -> Dict:
+    def _extract_json_ld(self, doc: HtmlElement) -> Dict:
         """Parse JSON-LD scripts into a dict (simplified)."""
         import json
         data = {}
@@ -388,3 +397,8 @@ class FastArticleExtractor:
                     if key not in data or (is_article_like and key in ("datePublished", "dateCreated", "dateModified", "author", "headline")):
                         data[key] = value
         return data
+
+def extract_article(html: str, url: Optional[str] = None) -> Dict:
+    """Convenience function for FastArticleExtractor.extract_article."""
+    extractor = FastArticleExtractor()
+    return extractor.extract(html, url)
