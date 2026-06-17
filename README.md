@@ -96,6 +96,10 @@ pip install -e .
 pip install git+https://github.com/alphap365/open-news.git
 ```
 
+### To install a specific version
+```bash
+pip install git+https://github.com/alphap365/open-news.git@v0.1.0 #Change the vtag with your choice tag
+```
 **Dependencies installed automatically:**
 - `beautifulsoup4` • `lxml` • `python-dateutil`
 - `feedparser` • `googlenewsdecoder` • `httpx` • `requests`
