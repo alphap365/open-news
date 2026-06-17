@@ -80,16 +80,16 @@ Process multiple articles concurrently with built-in summarization:
 ## 📦 Installation
 
 ### From GitHub
-\`\`\`bash
+```bash
 git clone https://github.com/alphap365/open-news.git
 cd open-news
 pip install -e .
-\`\`\`
+```
 
 ### Direct Install
-\`\`\`bash
+```bash
 pip install git+https://github.com/alphap365/open-news.git
-\`\`\`
+```
 
 **Dependencies installed automatically:**
 - `beautifulsoup4` • `lxml` • `python-dateutil`
