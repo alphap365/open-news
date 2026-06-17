@@ -49,7 +49,6 @@ Search across Google News with decoded URLs:
 
 ### 🔗 RSS Discovery
 Auto-discover RSS feeds from any website:
-- No external `feedfinder2` dependency
 - Built with BeautifulSoup + lxml
 - Fetch articles from discovered feeds instantly
 
@@ -398,7 +397,7 @@ for article in results:
 This package uses curated RSS feed definitions from the **[open-feeds](https://github.com/alphap365/open-feeds)** repository.
 
 ### Feed Sources
-- **50+ country-specific feeds** (India, USA, UK, Pakistan, etc.)
+- **Country-specific feeds** (India, USA, UK, Pakistan, etc.)
 - **Category feeds**: General news, Business, Politics, Geopolitics
 - All feeds are community-maintained and regularly tested
 
