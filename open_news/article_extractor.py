@@ -388,3 +388,5 @@ class FastArticleExtractor:
                     if key not in data or (is_article_like and key in ("datePublished", "dateCreated", "dateModified", "author", "headline")):
                         data[key] = value
         return data
+
+extract_article = extract
