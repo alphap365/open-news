@@ -18,9 +18,11 @@
 
 ## 🔁 Latest Updates
 
+> **[18-06-2026 - Latest]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`
+
 > **[17-06-2026]** - Initial Stable Release `v0.1.0`
 
-> View more on our [Changelog](CHANGELOG)
+> View more on our [Changelog](CHANGELOG.md)
 
 ## 🎯 Features
 
@@ -93,12 +95,12 @@ pip install -e .
 
 ### Direct Install
 ```bash
-pip install git+https://github.com/alphap365/open-news.git
+pip install open-news
 ```
 
 ### To install a specific version
 ```bash
-pip install git+https://github.com/alphap365/open-news.git@v0.1.0 #Change the vtag with your choice tag
+pip install open-news@v0.1.1 #Change the vtag with your choice tag
 ```
 **Dependencies installed automatically:**
 - `beautifulsoup4` • `lxml` • `python-dateutil`

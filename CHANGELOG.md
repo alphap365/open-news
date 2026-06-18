@@ -12,6 +12,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.1] - 2026-06-18
+
+### Fixed
+- Packaging metadata for PyPI release (no functional changes)
+
+---
+
 ## [0.1.0] - 2026-06-17
 
 ### Added
@@ -32,4 +39,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-[0.1.0]: https://github.com/alphap365/open-news/releases/tag/v0.1.0
+[0.1.1]: https://github.com/alphap365/open-news/releases/tag/v0.1.1
