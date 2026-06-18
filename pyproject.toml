@@ -14,7 +14,7 @@ classifiers = [
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
-    "Topic :: Internet :: WWW/HTTP :: Dynamic Content :: News",
+    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
 ]
 requires-python = ">=3.7"
 keywords = ["news", "rss", "google-news", "article-extraction", "feedparser", "newspaper"]
