@@ -8,13 +8,13 @@ version = "0.1.1"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "dev.arajit.2010@gmail.com"}]
-license = {text = "MIT"}
+license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
-    "Topic :: Internet :: WWW/HTTP :: Dynamic Content",
+    "Topic :: Internet :: WWW/HTTP",
 ]
 requires-python = ">=3.7"
 keywords = ["news", "rss", "google-news", "article-extraction", "feedparser", "newspaper"]
