@@ -15,7 +15,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.1.1] - 2026-06-18
 
 ### Fixed
-- Packaging metadata for PyPI release (no functional changes)
+- Packaging metadata for PyPI release (no functional changes).
+
+*The package name may vary due to some PyPI issue, so it is recomended to use correct package name provided in README*
 
 ---
 

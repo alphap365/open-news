@@ -18,7 +18,7 @@
 
 ## 🔁 Latest Updates
 
-> **[18-06-2026 - Latest]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`
+> **[18-06-2026 - Latest]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`.
 
 > **[17-06-2026]** - Initial Stable Release `v0.1.0`
 
@@ -86,6 +86,9 @@ Process multiple articles concurrently with built-in summarization:
 
 ## 📦 Installation
 
+*Important note! - The actual package name is set to `open-news-api` insteed of project name `open-news` due to some PyPI issues.*
+
+
 ### From GitHub
 ```bash
 git clone https://github.com/alphap365/open-news.git
@@ -95,12 +98,12 @@ pip install -e .
 
 ### Direct Install
 ```bash
-pip install open-news
+pip install open-news-api
 ```
 
 ### To install a specific version
 ```bash
-pip install open-news@v0.1.1 #Change the vtag with your choice tag
+pip install open-news-api@v0.1.1 #Change the vtag with your choice tag
 ```
 **Dependencies installed automatically:**
 - `beautifulsoup4` • `lxml` • `python-dateutil`
