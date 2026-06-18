@@ -11,10 +11,13 @@ authors = [{name = "ARAJIT PAUL", email = "dev.arajit.2010@gmail.com"}]
 license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
     "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Intended Audience :: Developers",
-    "Topic :: Internet :: WWW/HTTP",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+    "Topic :: Text Processing :: Markup :: HTML",
+    "Topic :: Utilities",
 ]
 requires-python = ">=3.7"
 keywords = ["news", "rss", "google-news", "article-extraction", "feedparser", "newspaper"]
