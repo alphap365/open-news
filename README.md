@@ -7,7 +7,7 @@
 [![License](https://img.shields.io/github/license/alphap365/open-news?style=for-the-badge&color=blue)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.7%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
 [![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)](https://github.com/alphap365/open-news)
-[![PyPI version](https://shields.io)](https://pypi.org/project/open-news-api/0.1.1/)
+[![PyPI version](https://img.shields.io/pypi/v/open-news-api?style=for-the-badge)](https://pypi.org/project/open-news-api/)
 
 
 *A lightweight, batteries-included Python package for fetching news articles, extracting content, discovering RSS feeds, and batch processing with summarization.*
