@@ -5,59 +5,54 @@ from typing import Dict, Optional
 
 import httpx
 from .article_extractor import extract_article
+from .user_agents import get_user_agent
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 15
-USER_AGENT = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
 
-
-def get_article(url: str, timeout: int = DEFAULT_TIMEOUT) -> Dict:
+def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> Dict:
     """
     Fetch and extract full article content, metadata, images, and videos.
 
     Args:
         url: Article URL.
         timeout: Request timeout in seconds.
-
-    Returns:
-        dict with keys:
-            url, title, text, authors, publish_date, top_image, images, videos,
-            source (domain), meta (raw extracted metadata).
+        js: If True, render the page with a headless browser (requires
+            `pip install open-news-api[js]`). Use for JS-heavy sites where
+            httpx's raw HTML misses the real article body.
     """
-    logger.info(f"Fetching article: {url}")
-    try:
-        headers = {"User-Agent": USER_AGENT}
-        with httpx.Client(follow_redirects=True, timeout=timeout) as client:
-            resp = client.get(url, headers=headers)
-            resp.raise_for_status()
-            html = resp.text
-    except Exception as e:
-        logger.error(f"HTTP request failed for {url}: {e}")
-        return {
-            "url": url,
-            "title": "",
-            "text": "",
-            "authors": [],
-            "publish_date": None,
-            "top_image": None,
-            "images": [],
-            "videos": [],
-            "source": "",
-            "meta": {},
-        }
+    logger.info(f"Fetching article: {url} (js={js})")
+    html = None
 
-    # Extract using FastArticleExtractor
+    if js:
+        from . import js_renderer
+        try:
+            html = js_renderer.render_html(url, timeout=timeout, user_agent=get_user_agent())
+        except RuntimeError as e:
+            logger.warning(f"{e} — falling back to plain HTTP fetch")
+        except Exception as e:
+            logger.error(f"JS render failed for {url}: {e} — falling back to plain HTTP fetch")
+
+    if html is None:
+        try:
+            headers = {"User-Agent": get_user_agent()}
+            with httpx.Client(follow_redirects=True, timeout=timeout) as client:
+                resp = client.get(url, headers=headers)
+                resp.raise_for_status()
+                html = resp.text
+        except Exception as e:
+            logger.error(f"HTTP request failed for {url}: {e}")
+            return _empty_result(url)
+
     try:
         extracted = extract_article(html, url=url)
     except Exception as e:
         logger.error(f"Extraction failed for {url}: {e}")
         extracted = {}
 
-    # Add source domain
     from urllib.parse import urlparse
-    parsed = urlparse(url)
-    source = parsed.netloc.replace("www.", "")
+    source = urlparse(url).netloc.replace("www.", "")
 
     return {
         "url": url,
@@ -70,6 +65,13 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT) -> Dict:
         "videos": extracted.get("videos", []),
         "source": source,
         "meta": extracted.get("meta", {}),
+    }
+
+
+def _empty_result(url: str) -> Dict:
+    return {
+        "url": url, "title": "", "text": "", "authors": [], "publish_date": None,
+        "top_image": None, "images": [], "videos": [], "source": "", "meta": {},
     }
 
 

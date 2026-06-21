@@ -16,7 +16,8 @@ def batch_summarize(
     include_full_text: bool = False,
     include_images_videos: bool = False,
     max_workers: int = 5,
-    timeout_per_article: int = 30
+    timeout_per_article: int = 30,
+    js: bool = False
 ) -> List[Dict]:
     """
     Fetch and summarize multiple articles concurrently.
@@ -28,16 +29,17 @@ def batch_summarize(
         include_images_videos: Include images and videos in result.
         max_workers: Number of concurrent threads.
         timeout_per_article: Timeout per article in seconds.
-
-    Returns:
-        List of dicts with keys: url, status, title, summary, (optional text, images, videos).
+        js: If True, render each page with a headless browser before
+            extraction (requires `pip install open-news-api[js]`). Slower —
+            consider lowering max_workers when js=True since each worker
+            now spins up a browser context.
     """
     results = []
 
     def process(url: str) -> Dict:
         try:
             logger.info(f"Processing: {url}")
-            article = get_article(url, timeout=timeout_per_article)
+            article = get_article(url, timeout=timeout_per_article, js=js)
             if not article.get("text"):
                 return {
                     "url": url,
@@ -87,7 +89,8 @@ def search_and_summarize(
     sentence_count: int = 3,
     include_full_text: bool = False,
     include_images_videos: bool = False,
-    max_workers: int = 5
+    max_workers: int = 5,
+    js: bool = False
 ) -> List[Dict]:
     """
     Search Google News, fetch articles, and summarize them.
@@ -99,9 +102,7 @@ def search_and_summarize(
         include_full_text: Include full text.
         include_images_videos: Include images/videos.
         max_workers: Concurrent threads.
-
-    Returns:
-        List of enriched article dicts with search metadata + summary.
+        js: If True, render each article page with a headless browser.
     """
     from .main import search  # avoid circular import
 
@@ -116,17 +117,16 @@ def search_and_summarize(
         sentence_count=sentence_count,
         include_full_text=include_full_text,
         include_images_videos=include_images_videos,
-        max_workers=max_workers
+        max_workers=max_workers,
+        js=js
     )
 
-    # Merge search metadata
     url_to_search = {art["url"]: art for art in articles}
     merged = []
     for br in batch_results:
         search_data = url_to_search.get(br["url"], {})
         merged.append({**search_data, **br})
     return merged
-
 
 # Legacy aliases
 fetch_and_summarize_batch = batch_summarize

@@ -30,4 +30,4 @@ __all__ = [
     "fetch_and_summarize_search_results",
 ]
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"

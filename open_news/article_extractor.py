@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple, Union
 from urllib.parse import urljoin
 
-import dateutil.parser as date_parser
+from dateutil import parser as date_parser
 from lxml import etree
 from lxml.html import HtmlElement, fromstring, tostring
 
@@ -310,7 +310,7 @@ class FastArticleExtractor:
             vals = doc.xpath(f'//meta[@name="{name}"]/@content|//meta[@property="{name}"]/@content')
             if vals:
                 try:
-                    return date_parser(vals[0])
+                    return date_parser.parse(vals[0])
                 except Exception:
                     pass
 
@@ -318,14 +318,14 @@ class FastArticleExtractor:
         for key in ["datePublished", "dateCreated", "dateModified"]:
             if key in j:
                 try:
-                    return date_parser(j[key])
+                    return date_parser.parse(j[key])   # was: date_parser(j[key])
                 except Exception:
                     pass
 
         time_tags = doc.xpath('//time/@datetime')
         if time_tags:
             try:
-                return date_parser(time_tags[0])
+                return date_parser.parse(time_tags[0])   # was: date_parser(time_tags[0])
             except Exception:
                 pass
 

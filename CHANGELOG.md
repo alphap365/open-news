@@ -12,6 +12,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [0.1.2] - 2026-06-21
+
+### Added
+- Optional `js=True` parameter on `fetch_article`, `fetch_and_summarize_batch`, `fetch_and_summarize_search_results` for rendering JS-heavy pages via headless Chromium (`pip install open-news-api[js]`)
+- Rotating User-Agent pool for outgoing requests
+- Documented `include_images_videos`, corrected inaccurate `**kwargs` description on `fetch_and_summarize_search_results`
+- Removed duplicate `python-dateutil` line in requirements.txt
+
+### Fixed
+- **Critical:** `get_article.py` defined the `fetch_article` legacy alias *before* `get_article` was defined, causing `NameError` on `import open_news` — the entire package was unimportable. Alias moved to the end of the module.
+- `publish_date` extraction was silently broken in two of three code paths (JSON-LD and `<time>` tag) — `dateutil.parser` module was being called instead of `.parse()`. All three paths (meta tags, JSON-LD, `<time>`) now parse correctly.
+
+---
+
 ## [0.1.1] - 2026-06-18
 
 ### Fixed
@@ -41,4 +55,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+[0.1.2]: https://github.com/alphap365/open-news/releases/tag/v0.1.2
 [0.1.1]: https://github.com/alphap365/open-news/releases/tag/v0.1.1

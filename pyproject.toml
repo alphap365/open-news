@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "0.1.1"
+version = "0.1.2"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "dev.arajit.2010@gmail.com"}]
@@ -34,3 +34,6 @@ dependencies = {file = ["requirements.txt"]}
 
 [tool.setuptools.package-data]
 open_news = ["py.typed"]
+
+[project.optional-dependencies]
+js = ["playwright>=1.40.0"]

@@ -13,9 +13,9 @@ logger = logging.getLogger(__name__)
 # Simplified public API
 # ------------------------------------------------------------------
 
-def get_article(url: str, timeout: int = 15) -> Dict:
+def get_article(url: str, timeout: int = 15, js: bool = False) -> Dict:
     """Fetch full article content, metadata, images, videos."""
-    return _get_article(url, timeout)
+    return _get_article(url, timeout, js=js)
 
 
 def search(query: str, limit: int = 10) -> List[Dict]:
@@ -63,9 +63,9 @@ def discover_and_get(website_url: str, limit: int = 10) -> List[Dict]:
     return from_rss(rss_url, limit)
 
 
-# ------------------------------------------------------------------
-# Legacy aliases (backward compatibility)
-# ------------------------------------------------------------------
+# Legacy aliases (backward compatibility) — both names are fully supported
+# public API, not deprecated. New code may use either; these longer names
+# are kept since early adopters and existing scripts depend on them.
 fetch_article = get_article
 search_news = search
 get_live_news = live_news

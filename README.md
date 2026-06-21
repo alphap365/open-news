@@ -20,11 +20,13 @@
 
 ## 🔁 Latest Updates
 
-> **[18-06-2026 - Latest]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`.
+> **[21-06-2026 - Latest]** - Fixed a critical import bug, fixed `publish_date` extraction (3 code paths), added `js=True` support and rotating User-Agents — Release `v0.1.2`
+
+> **[18-06-2026]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`.
 
 > **[17-06-2026]** - Initial Stable Release `v0.1.0`
 
-> View more on our [Changelog](CHANGELOG.md)
+> View more on our [Changelog](#-CHANGELOG)
 
 ## 🎯 Features
 
@@ -105,7 +107,7 @@ pip install open-news-api
 
 ### To install a specific version
 ```bash
-pip install open-news-api@v0.1.1 #Change the vtag with your choice tag
+pip install open-news-api==v0.1.2 #Change the vtag with your choice tag
 ```
 **Dependencies installed automatically:**
 - `beautifulsoup4` • `lxml` • `python-dateutil`
@@ -209,9 +211,57 @@ for article in results:
 
 ---
 
+### 8️⃣ JS-Heavy Pages (Optional)
+
+Some sites render their article body client-side and return little to nothing
+in the raw HTML. For these, install the optional `js` extra:
+
+```bash
+pip install open-news-api[js]
+playwright install chromium   # one-time browser download
+```
+
+Then pass `js=True` to any fetch function:
+
+```python
+from open_news import fetch_article
+
+article = fetch_article("https://js-heavy-site.example.com/article", js=True)
+```
+
+`js=True` works on `fetch_article`, `fetch_and_summarize_batch`, and
+`fetch_and_summarize_search_results`. It's slower per-request (a real browser
+is launched), so consider lowering `max_workers` when batching with `js=True`.
+If the `js` extra isn't installed, it logs a warning and transparently falls
+back to the plain HTTP fetch instead of raising.
+
+---
+
+## 🔀 Function Names: New vs Legacy
+
+Every function is available under two names — a short modern name and a
+longer legacy-style name (kept for backward compatibility with early
+releases). They are exact aliases; pick whichever reads better in your code.
+
+| Short name              | Legacy alias                           |
+|-------------------------|----------------------------------------|
+| `get_article`           | `fetch_article`                        |
+| `search`                | `search_news`                          |
+| `live_news`             | `get_live_news`                        |
+| `discover_and_get`      | `get_articles_from_website_rss`        |
+| `batch_summarize`       | `fetch_and_summarize_batch`            |
+| `search_and_summarize`  | `fetch_and_summarize_search_results`   |
+
+Both forms are stable public API — neither is deprecated, and the docs below
+use the legacy names since they're more descriptive for newcomers, but feel
+free to import either.
+
+---
+
 ## 📚 API Reference
 
-### `fetch_article(url: str) → Dict`
+### `fetch_article(url: str) → Dict` 
+*(alias: `get_article`)*
 
 Extract article content and metadata from a given URL.
 
@@ -244,7 +294,8 @@ A note on reliability: extraction quality depends entirely on how clean and stru
 
 ---
 
-### `search_news(query: str, limit: int = 10) → List[Dict]`
+### `search_news(query: str, limit: int = 10) → List[Dict]` 
+*(alias: `search`)*
 
 Search Google News for recent articles.
 
@@ -274,7 +325,8 @@ print(f"Found {len(results)} articles")
 
 ---
 
-### `get_live_news(country: str = None, category: str = "news", limit_per_feed: int = None) → List[Dict]`
+### `get_live_news(country: str = None, category: str = "news", limit_per_feed: int = None) → List[Dict]` 
+*(alias: `live_news`)*
 
 Fetch articles from curated RSS feeds.
 
@@ -316,6 +368,7 @@ general = get_live_news()
 ---
 
 ### `get_articles_from_website_rss(website_url: str, limit: int = 10) → List[Dict]`
+*(alias: `discover_and_get`)*
 
 Discover and fetch articles from a website's RSS feed.
 
@@ -334,27 +387,31 @@ for article in articles:
 
 ---
 
-### `fetch_and_summarize_batch(urls: List[str], include_full_text: bool = False, sentence_count: int = 3, max_workers: int = 5, timeout_per_article: int = 30) → List[Dict]`
-
-Fetch and summarize multiple articles concurrently.
+### `fetch_and_summarize_batch(urls, sentence_count=3, include_full_text=False, include_images_videos=False, max_workers=5, timeout_per_article=30, js=False) → List[Dict]`
+*(alias: `batch_summarize`)*
 
 **Parameters:**
 - `urls` (List[str]): Article URLs to process
-- `include_full_text` (bool): Include full article text in results (default: False)
 - `sentence_count` (int): Sentences per summary (default: 3)
-- `max_workers` (int): Concurrent threads (default: 5, adjust based on CPU/network)
+- `include_full_text` (bool): Include full article text in results (default: False)
+- `include_images_videos` (bool): Include `images`, `videos`, and `top_image` in results (default: False)
+- `max_workers` (int): Concurrent threads (default: 5)
 - `timeout_per_article` (int): Timeout per article in seconds (default: 30)
+- `js` (bool): Render pages with a headless browser before extraction (default: False, requires `[js]` extra)
 
 **Returns:**
 ```python
 [
     {
         "url": str,
-        "status": str,        # "success" or "failed"
-        "title": str,         # Article title (empty string if failed)
-        "summary": str,       # Summarized content (empty string if failed)
-        "text": str,          # Full text (only present if include_full_text=True)
-        "error": str          # Present only when status is "failed" — includes timeouts
+        "status": str,         # "success" or "failed"
+        "title": str,
+        "summary": str,
+        "text": str,            # only if include_full_text=True
+        "images": list,         # only if include_images_videos=True
+        "videos": list,         # only if include_images_videos=True
+        "top_image": str,       # only if include_images_videos=True
+        "error": str            # only present when status == "failed"
     },
     ...
 ]
@@ -379,15 +436,17 @@ for result in results:
 
 ---
 
-### `fetch_and_summarize_search_results(query: str, limit: int = 10, sentence_count: int = 3, **kwargs) → List[Dict]`
-
-Search Google News, fetch, and summarize all results in one call.
+### `fetch_and_summarize_search_results(query, limit=10, sentence_count=3, include_full_text=False, include_images_videos=False, max_workers=5, js=False) → List[Dict]`
+*(alias: `search_and_summarize`)*
 
 **Parameters:**
 - `query` (str): Search term
 - `limit` (int): Max results (default: 10)
 - `sentence_count` (int): Sentences per summary (default: 3)
-- `**kwargs`: Additional arguments passed to `fetch_and_summarize_batch` (e.g., `max_workers`, `timeout`)
+- `include_full_text` (bool): Include full text (default: False)
+- `include_images_videos` (bool): Include images/videos (default: False)
+- `max_workers` (int): Concurrent threads (default: 5)
+- `js` (bool): Render pages with a headless browser (default: False)
 
 **Returns:** Merged list combining search metadata with extracted & summarized content
 
