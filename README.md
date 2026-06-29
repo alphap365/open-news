@@ -20,7 +20,9 @@
 
 ## 🔁 Latest Updates
 
-> **[21-06-2026 - Latest]** - Fixed a critical import bug, fixed `publish_date` extraction (3 code paths), added `js=True` support and rotating User-Agents — Release `v0.1.2`
+> **[29-06-2026 - Latest]** - Major v0.2.0 release: auto-discovering feed registry, Google News merged into curated feeds, article dedupe, smart URL resolution, `category` field, `search_site()`, force-refresh/cache control, full internal package restructure — Release `v0.2.0`
+
+> **[21-06-2026]** - Fixed a critical import bug, fixed `publish_date` extraction (3 code paths), added `js=True` support and rotating User-Agents — Release `v0.1.2`
 
 > **[18-06-2026]** - Packaging metadata for PyPI release (no functional changes), Release `v0.1.1`.
 
@@ -42,8 +44,10 @@ Pulls full text and metadata (title, authors, publish date, top image) straight 
 
 ### 📡 Live News Feeds
 Access curated RSS feeds with zero local configuration:
-- **50+ country-specific feeds** (India, USA, Pakistan, etc.)
+- **50+ country-specific feeds** (India, USA, UK, and many more)
 - **Category feeds** (business, politics, geopolitics)
+- Every feed file now includes a locale-targeted **Google News RSS** entry merged in alongside direct outlet feeds
+- Auto-discovered via a remote registry — new categories/countries can be added without a package update
 - Sourced from [open-feeds](https://github.com/alphap365/open-feeds)
 
 </td>
@@ -209,9 +213,43 @@ for article in results:
     print(f"   {article['summary']}\n")
 ```
 
----
+### 8️⃣ Search a Single Domain
+```python
+from open_news import search_site
 
-### 8️⃣ JS-Heavy Pages (Optional)
+results = search_site("alcoholism", domain="timesofindia.indiatimes.com", limit=5)
+
+for article in results:
+    print(f"✓ {article['title']}")
+    print(f"  → {article['url']}\n")
+```
+
+### 9️⃣ Force-Refresh Feeds & Clear Cache
+```python
+from open_news import live_news, clear_feed_cache
+
+# Bypass the 24h cache and fetch fresh feed lists right now
+fresh = live_news(category="business", force_refresh=True)
+
+# Clear one cached entry, or wipe everything
+clear_feed_cache(category="business")
+clear_feed_cache()  # clears the entire cache directory
+```
+
+### 🔟 Dedupe Articles
+```python
+from open_news import live_news, dedupe_articles
+
+# Dedupe is on by default for live_news, discover_and_get, batch_summarize,
+# and search_and_summarize — disable per-call if you want raw results:
+raw = live_news(category="news", dedupe=False)
+
+# Or dedupe any list of article dicts yourself, with optional fuzzy
+# title matching for same-story-different-outlet duplicates:
+merged = dedupe_articles(raw, fuzzy=True)
+```
+
+### 1️⃣1️⃣ JS-Heavy Pages (Optional)
 
 Some sites render their article body client-side and return little to nothing
 in the raw HTML. For these, install the optional `js` extra:
@@ -244,13 +282,18 @@ longer legacy-style name (kept for backward compatibility with early
 releases). They are exact aliases; pick whichever reads better in your code.
 
 | Short name              | Legacy alias                           |
-|-------------------------|----------------------------------------|
-| `get_article`           | `fetch_article`                        |
-| `search`                | `search_news`                          |
-| `live_news`             | `get_live_news`                        |
-| `discover_and_get`      | `get_articles_from_website_rss`        |
-| `batch_summarize`       | `fetch_and_summarize_batch`            |
-| `search_and_summarize`  | `fetch_and_summarize_search_results`   |
+|--------------------------|----------------------------------------|
+| `get_article`            | `fetch_article`                        |
+| `search`                 | `search_news`                          |
+| `live_news`              | `get_live_news`                        |
+| `discover_and_get`       | `get_articles_from_website_rss`        |
+| `batch_summarize`        | `fetch_and_summarize_batch`            |
+| `search_and_summarize`   | `fetch_and_summarize_search_results`   |
+| `search_site`            | *(none — new in v0.2.0)*               |
+| `clear_feed_cache`       | *(none — new in v0.2.0)*               |
+| `dedupe_articles`        | *(none — new in v0.2.0)*               |
+| `list_categories`        | *(none — new in v0.2.0)*               |
+| `list_countries`         | *(none — new in v0.2.0)*               |
 
 Both forms are stable public API — neither is deprecated, and the docs below
 use the legacy names since they're more descriptive for newcomers, but feel
@@ -387,6 +430,51 @@ for article in articles:
 
 ---
 
+### `search_site(keyword: str, domain: str, limit: int = 10) → List[Dict]`
+
+Search for articles on a single news domain matching a keyword. Scoped via Google News RSS + a `site:` filter, with a post-fetch domain-match check to filter out stray off-domain results.
+
+**Parameters:**
+- `keyword` (str): Search terms
+- `domain` (str): Target domain — bare (`"timesofindia.indiatimes.com"`) or a full URL (scheme/path stripped automatically)
+- `limit` (int): Maximum results (default: 10)
+
+**Returns:** Same shape as `search_news()`.
+
+**Example:**
+```python
+results = search_site("budget", domain="reuters.com", limit=5)
+```
+
+---
+
+### `live_news(..., force_refresh: bool = False, dedupe: bool = True, dedupe_fuzzy: bool = False)`
+
+Three new parameters on top of the existing signature:
+- `force_refresh` (bool): Bypass and refresh the 24h feed-list cache.
+- `dedupe` (bool): Remove duplicate articles across feeds (default: `True`).
+- `dedupe_fuzzy` (bool): Also collapse near-duplicate titles across different URLs — same story, different outlets (default: `False`, slower).
+
+---
+
+### `clear_feed_cache(category: str = None, country: str = None) → None`
+
+Clears cached feed-list data. With no arguments, wipes the entire cache directory (including the registry index cache). With `category` or `country`, clears just that one entry.
+
+---
+
+### `dedupe_articles(articles: List[Dict], fuzzy: bool = False) → List[Dict]`
+
+Deduplicate a list of article dicts. Stage 1 (always): normalizes URLs — resolving Google News redirects, stripping `www.`/scheme/trailing-slash/tracking params — and removes exact matches, preferring direct-outlet entries over aggregator entries on collision. Stage 2 (if `fuzzy=True`): collapses near-duplicate titles across different URLs using sequence matching (skipped automatically above 300 articles).
+
+---
+
+### `list_categories() → List[str]` / `list_countries() → List[str]`
+
+Returns the currently available category/country keys from the open-feeds registry — useful for building UIs or validating input without hardcoding strings.
+
+---
+
 ### `fetch_and_summarize_batch(urls, sentence_count=3, include_full_text=False, include_images_videos=False, max_workers=5, timeout_per_article=30, js=False) → List[Dict]`
 *(alias: `batch_summarize`)*
 
@@ -489,7 +577,7 @@ To add new RSS feeds or report broken feeds, visit the **[open-feeds repository]
 
 Feeds are automatically cached for **24 hours** in `~/.open_news/feeds_cache/` to reduce network requests.
 
-**Current implementation:** Cache is managed internally. Force refresh by clearing the cache directory if needed.
+**Force refresh:** pass `force_refresh=True` to `live_news()`, or call `clear_feed_cache()` to clear one entry or the entire cache directory programmatically — no need to manually delete files anymore.
 
 ---
 
