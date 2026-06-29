@@ -10,7 +10,7 @@ import sys
 from copy import deepcopy
 from datetime import datetime
 from typing import Dict, List, Optional, Set, Tuple, Union
-from urllib.parse import urljoin
+from urllib.parse import urljoin, urlparse
 
 from dateutil import parser as date_parser
 from lxml import etree
@@ -75,6 +75,7 @@ class FastArticleExtractor:
         title = self._extract_title(doc, meta)
         authors = self._extract_authors(doc, meta)
         pub_date = self._extract_pubdate(doc, url, meta)
+        category = self._extract_category(doc, url, meta)
 
         # Main text extraction (newspaper style with trafilatura fallback)
         text, top_node = self._extract_text(doc)
@@ -86,6 +87,7 @@ class FastArticleExtractor:
             "title": title,
             "authors": authors,
             "publish_date": pub_date.isoformat() if pub_date else None,
+            "category": category,
             "text": text,
             "top_image": images[0] if images else None,
             "images": images,
@@ -397,6 +399,26 @@ class FastArticleExtractor:
                     if key not in data or (is_article_like and key in ("datePublished", "dateCreated", "dateModified", "author", "headline")):
                         data[key] = value
         return data
+
+    def _extract_category(self, doc: HtmlElement, url: Optional[str], meta: Dict) -> str:
+        """Best-effort section/category: meta tag first, then URL path segment."""
+        section = doc.xpath('//meta[@property="article:section"]/@content')
+        if section and section[0].strip():
+            return section[0].strip()
+
+        og_section = doc.xpath('//meta[@property="og:section"]/@content')
+        if og_section and og_section[0].strip():
+            return og_section[0].strip()
+
+        if url:
+            path = urlparse(url).path.strip("/")
+            segments = [s for s in path.split("/") if s]
+            # skip purely numeric or date-like segments (years, ids)
+            for seg in segments:
+                if not seg.isdigit() and len(seg) > 2:
+                    return seg.replace("-", " ").title()
+
+        return ""
 
 def extract_article(html: str, url: Optional[str] = None) -> Dict:
     """Convenience function for FastArticleExtractor.extract_article."""
