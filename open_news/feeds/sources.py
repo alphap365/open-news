@@ -1,34 +1,27 @@
-"""Retrieve article URLs and metadata from RSS feeds or Google News search."""
+"""Retrieve article URLs and metadata from RSS feeds, Google News search,
+or a domain-scoped Google search (news-fetch-style site search)."""
 
 import logging
 from typing import List, Dict, Optional
 from urllib.parse import quote_plus, urlparse
 
 import feedparser
+import requests
 from bs4 import BeautifulSoup
 
-try:
-    from googlenewsdecoder import new_decoderv1
-except ImportError:
-    new_decoderv1 = None
+from ..fetch.url_resolver import is_google_news_url, resolve_url
 
 logger = logging.getLogger(__name__)
 
 
-def _decode_google_url(url: str) -> Optional[str]:
-    if not new_decoderv1:
-        logger.debug("googlenewsdecoder not installed, using raw URL")
-        return url
-    try:
-        result = new_decoderv1(url)
-        return result.get("decoded_url") if result else None
-    except Exception as e:
-        logger.debug(f"Decoder error: {e}")
-        return None
-
-
-def from_rss(feed_url: str, limit: int = 10) -> List[Dict]:
-    """Parse RSS feed and return list of articles (title, url, source, published, description)."""
+def from_rss(feed_url: str, limit: int = 10, resolve_google_urls: bool = True) -> List[Dict]:
+    """
+    Parse RSS feed and return list of articles (title, url, source, published,
+    description). If resolve_google_urls is True (default), any entry whose
+    link is a Google News URL gets resolved to the real article URL — this
+    matters once Google News RSS feeds are merged into open-feeds category
+    files alongside direct outlet feeds.
+    """
     articles = []
     try:
         feed = feedparser.parse(feed_url)
@@ -36,13 +29,19 @@ def from_rss(feed_url: str, limit: int = 10) -> List[Dict]:
             link = entry.get("link", "")
             if not link:
                 continue
+
+            real_url = link
+            if resolve_google_urls and is_google_news_url(link):
+                real_url = resolve_url(link)
+
             description = entry.get("description", entry.get("summary", ""))
             if description:
                 soup = BeautifulSoup(description, "html.parser")
                 description = soup.get_text()
+
             articles.append({
                 "title": entry.get("title", "No title"),
-                "url": link,
+                "url": real_url,
                 "source": feed.feed.get("title", "Unknown RSS"),
                 "published": entry.get("published", entry.get("pubDate", "")),
                 "description": description[:500],
@@ -64,7 +63,7 @@ def from_google_news(query: str, limit: int = 10) -> List[Dict]:
             redirect_url = entry.get("link", "")
             if not redirect_url:
                 continue
-            real_url = _decode_google_url(redirect_url) or redirect_url
+            real_url = resolve_url(redirect_url)
 
             source = entry.get("source", {}).get("title", "")
             if not source and " - " in entry.get("title", ""):
@@ -89,3 +88,38 @@ def from_google_news(query: str, limit: int = 10) -> List[Dict]:
     except Exception as e:
         logger.error(f"Google News error: {e}")
     return articles
+
+
+def search_site(keyword: str, domain: str, limit: int = 10) -> List[Dict]:
+    """
+    Search Google for a keyword scoped to a single news domain
+    (news-fetch-style GoogleSearchNewsURLExtractor equivalent), using
+    Google News RSS search with a site: filter rather than scraping
+    google.com/search HTML directly (more stable, no CAPTCHA risk).
+
+    Args:
+        keyword: Search terms.
+        domain: Target domain, e.g. "timesofindia.indiatimes.com" or a
+            full URL like "https://timesofindia.indiatimes.com/" (scheme
+            and path are stripped automatically).
+        limit: Maximum results.
+
+    Returns:
+        Same article dict shape as from_google_news().
+    """
+    netloc = urlparse(domain).netloc or domain
+    netloc = netloc.replace("www.", "").strip("/")
+
+    query = f"{keyword} site:{netloc}"
+    results = from_google_news(query, limit=limit)
+
+    # Defensive filter: Google News search occasionally returns near-domain
+    # matches (subdomains, syndication mirrors) — keep only results whose
+    # resolved URL actually lives on the requested domain.
+    filtered = [
+        art for art in results
+        if netloc in urlparse(art["url"]).netloc.replace("www.", "")
+    ]
+
+    logger.info(f"search_site('{keyword}', domain={netloc}) returned {len(filtered)} articles")
+    return filtered

@@ -4,8 +4,9 @@ import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional
 
-from .get_article import get_article
-from .batch_summarizer import summarize_text
+from ..fetch.article import get_article
+from .summarizer import summarize_text
+from .dedupe import dedupe_articles
 
 logger = logging.getLogger(__name__)
 
@@ -17,7 +18,8 @@ def batch_summarize(
     include_images_videos: bool = False,
     max_workers: int = 5,
     timeout_per_article: int = 30,
-    js: bool = False
+    js: bool = False,
+    dedupe: bool = True,
 ) -> List[Dict]:
     """
     Fetch and summarize multiple articles concurrently.
@@ -30,10 +32,16 @@ def batch_summarize(
         max_workers: Number of concurrent threads.
         timeout_per_article: Timeout per article in seconds.
         js: If True, render each page with a headless browser before
-            extraction (requires `pip install open-news-api[js]`). Slower —
-            consider lowering max_workers when js=True since each worker
-            now spins up a browser context.
+            extraction (requires `pip install open-news-api[js]`).
+        dedupe: If True (default), normalize and dedupe URLs before
+            fetching — avoids wasting network/extraction time on the
+            same article reached via two different links (e.g. a
+            Google News redirect and the outlet's direct URL).
     """
+    if dedupe and urls:
+        deduped = dedupe_articles([{"url": u, "title": ""} for u in urls])
+        urls = [a["url"] for a in deduped]
+
     results = []
 
     def process(url: str) -> Dict:
@@ -90,7 +98,8 @@ def search_and_summarize(
     include_full_text: bool = False,
     include_images_videos: bool = False,
     max_workers: int = 5,
-    js: bool = False
+    js: bool = False,
+    dedupe: bool = True,
 ) -> List[Dict]:
     """
     Search Google News, fetch articles, and summarize them.
@@ -103,13 +112,19 @@ def search_and_summarize(
         include_images_videos: Include images/videos.
         max_workers: Concurrent threads.
         js: If True, render each article page with a headless browser.
+        dedupe: If True (default), dedupe search results (by normalized
+            URL, falling back to fuzzy title match across <=300 results)
+            before fetching/summarizing.
     """
-    from .main import search  # avoid circular import
+    from ..api import search  # avoid circular import
 
     articles = search(query, limit=limit)
     if not articles:
         logger.warning(f"No articles found for '{query}'")
         return []
+
+    if dedupe:
+        articles = dedupe_articles(articles, fuzzy=True)
 
     urls = [art["url"] for art in articles]
     batch_results = batch_summarize(
@@ -118,7 +133,8 @@ def search_and_summarize(
         include_full_text=include_full_text,
         include_images_videos=include_images_videos,
         max_workers=max_workers,
-        js=js
+        js=js,
+        dedupe=False,  # already deduped above with title-aware fuzzy match
     )
 
     url_to_search = {art["url"]: art for art in articles}

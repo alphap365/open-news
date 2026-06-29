@@ -4,8 +4,8 @@ import logging
 from typing import Dict, Optional
 
 import httpx
-from .article_extractor import extract_article
-from .user_agents import get_user_agent
+from ..core.extractor import extract_article
+from ..utils.user_agents import get_user_agent
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +26,7 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
     html = None
 
     if js:
-        from . import js_renderer
+        from ..core import renderer as js_renderer
         try:
             html = js_renderer.render_html(url, timeout=timeout, user_agent=get_user_agent())
         except RuntimeError as e:
@@ -60,6 +60,7 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
         "text": extracted.get("text", ""),
         "authors": extracted.get("authors", []),
         "publish_date": extracted.get("publish_date"),
+        "category": extracted.get("category", ""),
         "top_image": extracted.get("top_image"),
         "images": extracted.get("images", []),
         "videos": extracted.get("videos", []),
@@ -71,7 +72,7 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
 def _empty_result(url: str) -> Dict:
     return {
         "url": url, "title": "", "text": "", "authors": [], "publish_date": None,
-        "top_image": None, "images": [], "videos": [], "source": "", "meta": {},
+        "category": "", "top_image": None, "images": [], "videos": [], "source": "", "meta": {},
     }
 
 
