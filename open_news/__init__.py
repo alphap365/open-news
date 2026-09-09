@@ -1,43 +1,29 @@
-"""Minimal news fetching package: article text, images, videos, RSS,
-Google News, site search, batch summarization, dedupe."""
+"""
+open-news: A modern news article aggregation and extraction library.
+"""
 
+import logging
 from .api import (
-    get_article,
+    fetch,
     search,
-    search_site,
-    live_news,
+    get_article,
     discover_and_get,
-    clear_feed_cache,
-    # legacy aliases
-    fetch_article,
-    search_news,
-    get_live_news,
-    get_articles_from_website_rss,
+    search_site,
 )
-from .processing.batch import batch_summarize, search_and_summarize
-from .processing.batch import fetch_and_summarize_batch, fetch_and_summarize_search_results  # legacy
-from .processing.dedupe import dedupe_articles
-from .feeds.registry import list_categories, list_countries
+from .processing.batch import batch_summarize
+from .processing.summarizer import summarize_text
+
+__version__ = "1.0.0"
+
+# Prevent "No handler found" warnings if the user doesn't configure logging.
+logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
-    "get_article",
+    "fetch",
     "search",
-    "search_site",
-    "live_news",
+    "get_article",
     "discover_and_get",
-    "clear_feed_cache",
+    "search_site",
     "batch_summarize",
-    "search_and_summarize",
-    "dedupe_articles",
-    "list_categories",
-    "list_countries",
-    # legacy
-    "fetch_article",
-    "search_news",
-    "get_live_news",
-    "get_articles_from_website_rss",
-    "fetch_and_summarize_batch",
-    "fetch_and_summarize_search_results",
+    "summarize_text",
 ]
-
-__version__ = "0.2.0"

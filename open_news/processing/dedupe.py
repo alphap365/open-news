@@ -1,5 +1,3 @@
-"""Article deduplication: exact URL normalization + optional fuzzy title match."""
-
 import logging
 import re
 from difflib import SequenceMatcher

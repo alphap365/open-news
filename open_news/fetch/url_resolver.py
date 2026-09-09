@@ -1,5 +1,3 @@
-"""Google News URL detection and resolution to real article URLs."""
-
 import logging
 from typing import Optional
 from urllib.parse import urlparse

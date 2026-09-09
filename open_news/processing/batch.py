@@ -1,5 +1,3 @@
-"""Batch article extraction and summarization with concurrent processing."""
-
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import List, Dict, Optional

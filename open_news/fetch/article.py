@@ -1,5 +1,3 @@
-"""Fetch full article text and metadata using FastArticleExtractor + HTTP."""
-
 import logging
 from typing import Dict, Optional
 

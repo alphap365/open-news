@@ -1,5 +1,3 @@
-"""Lightweight text summarization utilities."""
-
 import logging
 import re
 from typing import List, Dict

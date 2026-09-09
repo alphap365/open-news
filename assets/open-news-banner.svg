@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 320" role="img" aria-labelledby="title desc">
+  <title id="title">open-news</title>
+  <desc id="desc">A clean editorial banner for the open-news Python news aggregation toolkit.</desc>
+  <defs>
+    <linearGradient id="paper" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#f7f3e9"/>
+      <stop offset="1" stop-color="#e8efe9"/>
+    </linearGradient>
+    <linearGradient id="ink" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#173f5f"/>
+      <stop offset="1" stop-color="#20639b"/>
+    </linearGradient>
+  </defs>
+  <rect width="1200" height="320" rx="24" fill="url(#paper)"/>
+  <path d="M0 252C180 190 300 292 470 230s300-66 430-12 208 36 300-12v114H0Z" fill="#173f5f" opacity=".08"/>
+  <g transform="translate(92 72)" fill="none" stroke="url(#ink)" stroke-width="10" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M18 22h102a18 18 0 0 1 18 18v126a18 18 0 0 1-18 18H18a18 18 0 0 1-18-18V40A18 18 0 0 1 18 22Z" fill="#fffdf7"/>
+    <path d="M0 54h138M28 86h82M28 116h82M28 146h52"/>
+    <path d="M28 86v60" opacity=".35"/>
+    <path d="M113 154c17-12 27-29 27-49 0-31-25-56-56-56" stroke="#f28f3b"/>
+    <path d="M111 161c27-17 43-47 43-80 0-24-8-45-23-62" stroke="#f28f3b" opacity=".65"/>
+  </g>
+  <text x="310" y="150" fill="#173f5f" font-family="Georgia, 'Times New Roman', serif" font-size="82" font-weight="700">open-news</text>
+  <text x="316" y="205" fill="#45616f" font-family="Arial, sans-serif" font-size="25" letter-spacing="3">FETCH  ·  SEARCH  ·  UNDERSTAND</text>
+  <circle cx="1082" cy="90" r="12" fill="#f28f3b"/>
+  <circle cx="1120" cy="90" r="12" fill="#20639b"/>
+</svg>

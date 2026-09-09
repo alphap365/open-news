@@ -1,5 +1,3 @@
-"""Rotating pool of realistic desktop/mobile User-Agent strings."""
-
 import random
 
 USER_AGENTS = [

@@ -1,12 +1,8 @@
-"""Retrieve article URLs and metadata from RSS feeds, Google News search,
-or a domain-scoped Google search (news-fetch-style site search)."""
-
 import logging
 from typing import List, Dict, Optional
 from urllib.parse import quote_plus, urlparse
 
 import feedparser
-import requests
 from bs4 import BeautifulSoup
 
 from ..fetch.url_resolver import is_google_news_url, resolve_url

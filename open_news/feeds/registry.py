@@ -1,5 +1,3 @@
-"""Feed registry: auto-discovery via index.json, caching, force-refresh."""
-
 import os
 import json
 import time
@@ -17,9 +15,6 @@ CACHE_DIR = os.path.expanduser("~/.open_news/feeds_cache")
 os.makedirs(CACHE_DIR, exist_ok=True)
 CACHE_TTL = 24 * 3600
 
-# Local supplemental feeds merged into remote results (safety net if the
-# remote repo hasn't picked up a feed yet). Empty by default; populate via
-# feeds/local_feeds.json if/when needed.
 LOCAL_SUPPLEMENTAL_FEEDS: Dict[str, List[Dict]] = {}
 
 
