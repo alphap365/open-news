@@ -10,6 +10,7 @@ from .strategies import (
     OpenGraphStrategy,
     HeuristicStrategy,
 )
+from .source_resolver import resolve_source
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,31 @@ class ArticleExtractor:
         for field in ALL_FIELDS:
             result.setdefault(field, _default(field))
 
+        # Aggregator-aware source resolution (msn.com, news.yahoo.com, etc.
+        # serve other outlets' stories under their own domain -- a bare
+        # urlparse(url).netloc would wrongly report "msn"/"yahoo" as the
+        # publisher). Best-effort: see source_resolver.py docstring for
+        # what "resolved" does and doesn't guarantee.
+        source_info = {"source": "", "is_aggregator": False, "resolved": True}
+        if url:
+            json_ld_raw = None
+            for strategy in self.strategies:
+                if isinstance(strategy, JsonLdStrategy):
+                    try:
+                        json_ld_raw = strategy._parse(doc)
+                    except Exception:
+                        json_ld_raw = None
+                    break
+            try:
+                source_info = resolve_source(doc, url, result["site_name"], json_ld_raw)
+            except Exception as e:
+                logger.debug(f"source resolution failed for {url}: {e}")
+                from urllib.parse import urlparse as _urlparse
+                source_info = {
+                    "source": _urlparse(url).netloc.replace("www.", ""),
+                    "is_aggregator": False, "resolved": True,
+                }
+
         return {
             "title": result["title"] or "",
             "authors": result["authors"] or [],
@@ -70,12 +96,16 @@ class ArticleExtractor:
             "top_image": result["top_image"],
             "images": result["images"] or [],
             "videos": result["videos"] or [],
+            "source": source_info["source"],
+            "description": result["description"] or "",   # promoted alongside meta.description
             "meta": {
                 "canonical": result["canonical"] or (url or ""),
                 "description": result["description"] or "",
                 "site_name": result["site_name"] or "",
                 "keywords": result["keywords"] or [],
                 "language": result["language"] or "",
+                "source_is_aggregator": source_info["is_aggregator"],
+                "source_resolved": source_info["resolved"],
             },
             "_field_sources": sources,   # which strategy filled each field (QA/debugging aid)
         }
