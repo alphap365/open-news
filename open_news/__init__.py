@@ -10,12 +10,12 @@ from .api import (
     discover_and_get,
     search_site,
 )
-from .processing.batch import batch_summarize
-from .processing.summarizer import summarize_text
+from .processing.batch import batch_summarize, search_and_summarize
+from .processing.summarizer import summarize_text, summarize_with_keywords
+from .processing.dedupe import dedupe_articles
 
-__version__ = "1.0.0"
+__version__ = "1.0.1"
 
-# Prevent "No handler found" warnings if the user doesn't configure logging.
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
 __all__ = [
@@ -25,5 +25,8 @@ __all__ = [
     "discover_and_get",
     "search_site",
     "batch_summarize",
+    "search_and_summarize",
     "summarize_text",
+    "summarize_with_keywords",
+    "dedupe_articles",
 ]
