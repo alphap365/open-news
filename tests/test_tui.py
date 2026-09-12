@@ -11,6 +11,7 @@ def test_live_refresh_uses_fetch_stream(monkeypatch, capsys):
             "location": None,
             "max_results": 3,
             "refresh_interval": 5,
+            "language": None,
         }
 
         def stream():
