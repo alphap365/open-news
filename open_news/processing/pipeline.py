@@ -64,7 +64,16 @@ def _enrich_full_content(articles: List[Dict], js: bool = False) -> List[Dict]:
         try:
             full = get_article(url, js=js)
             if full.get("text"):
-                merged = {**art, **full, "_full_content": True}
+                # {**art, **full} would let any *empty* field in `full`
+                # (e.g. extraction found no description on a paywalled or
+                # JS-heavy page) silently clobber a perfectly good value
+                # already in `art` (e.g. the search engine's snippet).
+                # Only let `full`'s value win when it actually has one.
+                merged = dict(art)
+                for key, value in full.items():
+                    if value not in (None, "", [], {}):
+                        merged[key] = value
+                merged["_full_content"] = True
                 enriched.append(merged)
             else:
                 art["_full_content"] = False
