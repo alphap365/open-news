@@ -9,7 +9,19 @@ def test_cli_fetch_parse(mocker, capsys):
     main()
     captured = capsys.readouterr()
     
-    mock_fetch.assert_called_once_with(category="tech", location=None, max_results=2, language=None, full_content=False, sort_by="date")
+    mock_fetch.assert_called_once_with(
+        category="tech",
+        location=None,
+        max_results=2,
+        language=None,
+        sort_by="date",
+        time_limit="d",
+        full_content=False,
+        js=False,
+        whitelist=None,
+        blacklist=None,
+        dedupe=True,
+    )
     assert "Tech Story" in captured.out
 
 def test_cli_extract(mocker, capsys):
