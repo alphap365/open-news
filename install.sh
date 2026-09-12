@@ -1,0 +1,386 @@
+#!/usr/bin/env bash
+# open-news interactive installer & project initializer
+#
+# Usage:
+#   curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install.sh | bash
+#   ./install.sh --yes              # non-interactive, all defaults (CI-friendly)
+#   ./install.sh --dev               # developer install: git clone + editable
+#   ./install.sh --uv                # use uv instead of pip
+#   ./install.sh --pip               # use pip (default)
+#   ./install.sh --no-js             # never offer the Playwright/JS extra
+#   ./install.sh --dry-run           # print what would happen, run nothing
+#   ./install.sh --uninstall         # remove the venv + config this script created
+#
+# What this does, roughly in order:
+#   1. Detect OS / shell / Termux, and Python version.
+#   2. Ask: Quick install or Developer install (git clone -e).
+#   3. Ask: isolated venv (recommended) or current environment.
+#   4. Ask: install the JS/Playwright extra now, later, or never.
+#   5. Fix PATH so `open-news` works in a new shell.
+#   6. Ask a few first-run preferences -> ~/.config/open-news/config.json
+#   7. Install, verify with `open-news --version`, offer to launch the TUI.
+#
+set -euo pipefail
+
+REPO_URL="https://github.com/alphap365/open-news.git"
+PKG="open-news-api"
+VENV_DIR="${HOME}/.open-news/venv"
+DEV_DIR="${HOME}/open-news"
+CONFIG_DIR="${HOME}/.config/open-news"
+CONFIG_FILE="${CONFIG_DIR}/config.json"
+STATE_FILE="${HOME}/.open-news/install-state.json"
+
+ASSUME_YES=0
+DEV_MODE=0
+JS_MODE="ask"      # ask | yes | no
+PACKAGE_MANAGER="ask" # ask | pip | uv
+DRY_RUN=0
+DO_UNINSTALL=0
+
+for arg in "$@"; do
+  case "$arg" in
+    --yes|-y) ASSUME_YES=1 ;;
+    --dev) DEV_MODE=1 ;;
+    --uv) PACKAGE_MANAGER="uv" ;;
+    --pip) PACKAGE_MANAGER="pip" ;;
+    --js) JS_MODE="yes" ;;
+    --no-js) JS_MODE="no" ;;
+    --dry-run) DRY_RUN=1 ;;
+    --uninstall) DO_UNINSTALL=1 ;;
+    -h|--help)
+      grep '^#' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+  esac
+done
+
+# ---------------------------------------------------------------------
+# Small helpers
+# ---------------------------------------------------------------------
+info()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
+warn()  { printf '\033[33m!!\033[0m %s\n' "$1" >&2; }
+fail()  { printf '\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
+ok()    { printf '\033[32m✓\033[0m %s\n' "$1"; }
+
+run() {
+  # Executes unless --dry-run, in which case it just echoes the command.
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '\033[2m$ %s\033[0m\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+# Prompt with a numbered default; returns the chosen index (1-based) on stdout.
+# In --yes mode, always returns the default without asking.
+ask_choice() {
+  local prompt="$1"; shift
+  local default_idx="$1"; shift
+  local options=("$@")
+
+  if [ "$ASSUME_YES" -eq 1 ]; then
+    echo "$default_idx"
+    return
+  fi
+
+  printf '\n%s\n' "$prompt" >&2
+  local i=1
+  for opt in "${options[@]}"; do
+    local marker=" "
+    [ "$i" -eq "$default_idx" ] && marker="*"
+    printf '  [%s%d] %s\n' "$marker" "$i" "$opt" >&2
+  done
+  local reply
+  read -r -p "Choose [default ${default_idx}]: " reply
+  if [ -z "$reply" ]; then
+    echo "$default_idx"
+  else
+    echo "$reply"
+  fi
+}
+
+ask_text() {
+  local prompt="$1" default="$2" reply
+  if [ "$ASSUME_YES" -eq 1 ]; then
+    echo "$default"
+    return
+  fi
+  read -r -p "$prompt [$default]: " reply >&2 || true
+  echo "${reply:-$default}"
+}
+
+# ---------------------------------------------------------------------
+# Uninstall path (short-circuits everything else)
+# ---------------------------------------------------------------------
+if [ "$DO_UNINSTALL" -eq 1 ]; then
+  info "Removing $VENV_DIR"
+  rm -rf "${HOME}/.open-news"
+  read -r -p "Also remove preferences at $CONFIG_FILE? [y/N]: " reply || true
+  if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
+    rm -rf "$CONFIG_DIR"
+    ok "Removed $CONFIG_DIR"
+  fi
+  ok "Uninstalled. Remove the PATH line from your shell rc file manually if you added one."
+  exit 0
+fi
+
+printf '\n'
+printf '\033[1m open-news installer\033[0m\n'
+printf ' Fetch, search, discover, understand.\n\n'
+
+# ---------------------------------------------------------------------
+# 1. Environment detection
+# ---------------------------------------------------------------------
+OS="unknown"
+case "$(uname -s)" in
+  Linux*)
+    if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
+      OS="termux"
+    else
+      OS="linux"
+    fi
+    ;;
+  Darwin*) OS="macos" ;;
+  CYGWIN*|MINGW*|MSYS*) OS="windows-shell" ;;
+esac
+info "Detected environment: $OS"
+
+if [ "$OS" = "windows-shell" ]; then
+  warn "Native cmd.exe/PowerShell can't run this script — you're in Git Bash/MSYS,"
+  warn "which is fine, but consider WSL for the smoothest experience."
+fi
+
+PYTHON_BIN=""
+for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    PYTHON_BIN="$candidate"
+    break
+  fi
+done
+PY_VERSION="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
+PY_MAJOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[0])')"
+PY_MINOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[1])')"
+if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
+  fail "Python 3.10+ required, found $PY_VERSION ($PYTHON_BIN)."
+fi
+ok "Python $PY_VERSION ($PYTHON_BIN)"
+
+if [ "$OS" = "termux" ]; then
+  info "Termux detected — ensuring build deps for lxml (clang, libxml2, libxslt)..."
+  run pkg install -y clang libxml2 libxslt python-pip || \
+    warn "Auto-install failed; if lxml fails to build run: pkg install clang libxml2 libxslt"
+fi
+
+UV_BIN=""
+if command -v uv >/dev/null 2>&1; then
+  UV_BIN="$(command -v uv)"
+fi
+if [ "$PACKAGE_MANAGER" = "ask" ]; then
+  if [ -n "$UV_BIN" ]; then
+    package_manager_choice=$(ask_choice \
+      "Which package manager should install open-news?" 2 \
+      "pip" \
+      "uv (recommended when available)")
+    [ "$package_manager_choice" = "2" ] && PACKAGE_MANAGER="uv" || PACKAGE_MANAGER="pip"
+  else
+    info "uv not found — using pip. Pass --uv after installing uv to use it."
+  fi
+elif [ "$PACKAGE_MANAGER" = "uv" ] && [ -z "$UV_BIN" ]; then
+  fail "--uv was requested, but uv was not found. Install it from https://docs.astral.sh/uv/getting-started/installation/"
+fi
+
+# ---------------------------------------------------------------------
+# 2. Quick vs Developer install
+# ---------------------------------------------------------------------
+if [ "$DEV_MODE" -eq 1 ]; then
+  mode_choice=2
+else
+  mode_choice=$(ask_choice \
+    "How would you like to install open-news?" 1 \
+    "Quick install — package, for regular use" \
+    "Developer install — git clone + editable (-e), for contributing")
+fi
+
+# ---------------------------------------------------------------------
+# 3. venv or current environment
+# ---------------------------------------------------------------------
+venv_choice=$(ask_choice \
+  "Where should it be installed?" 1 \
+  "Isolated virtual environment (recommended): $VENV_DIR" \
+  "Current Python environment ($PYTHON_BIN)")
+
+if [ "$mode_choice" = "2" ]; then
+  # Developer installs always want their own venv inside the repo,
+  # matching the README's `python -m venv .venv` convention.
+  VENV_DIR="${DEV_DIR}/.venv"
+fi
+
+# ---------------------------------------------------------------------
+# 4. JS/Playwright extra
+# ---------------------------------------------------------------------
+if [ "$JS_MODE" = "ask" ]; then
+  js_choice=$(ask_choice \
+    "Install the optional JavaScript-rendering extra (Playwright + Chromium, ~300MB)?" 2 \
+    "Yes, now" \
+    "No, I can add it later with: ${PACKAGE_MANAGER} install \"open-news-api[js]\" && playwright install chromium")
+  [ "$js_choice" = "1" ] && JS_MODE="yes" || JS_MODE="no"
+fi
+
+# ---------------------------------------------------------------------
+# 5. First-run preferences -> config.json (the "project initializer" part)
+# ---------------------------------------------------------------------
+info "A few defaults — these are written once and used by the CLI/TUI unless overridden per-run."
+PREF_LANGUAGE=$(ask_text "Default language filter (ISO 639-1, blank = none)" "")
+PREF_CATEGORY=$(ask_text "Default fetch category" "general")
+PREF_SORT=$(ask_text "Default sort (date/relevance/popularity)" "date")
+PREF_FORMAT=$(ask_text "Default CLI output format (pretty/json)" "pretty")
+
+# ---------------------------------------------------------------------
+# Install
+# ---------------------------------------------------------------------
+if [ "$mode_choice" = "2" ]; then
+  # --- Developer install ---
+  if [ -d "$DEV_DIR/.git" ]; then
+    info "Repo already present at $DEV_DIR — pulling latest"
+    run git -C "$DEV_DIR" pull --ff-only
+  else
+    info "Cloning $REPO_URL to $DEV_DIR"
+    run git clone "$REPO_URL" "$DEV_DIR"
+  fi
+  info "Creating venv at $VENV_DIR"
+  run "$PYTHON_BIN" -m venv "$VENV_DIR"
+  if [ -d "$VENV_DIR/Scripts" ]; then
+    BIN_DIR="$VENV_DIR/Scripts"
+    VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
+  else
+    BIN_DIR="$VENV_DIR/bin"
+    VENV_PYTHON="$VENV_DIR/bin/python"
+  fi
+  SPEC=".[dev]"
+  [ "$JS_MODE" = "yes" ] && SPEC=".[dev,js]"
+  info "Installing editable ($SPEC) from $DEV_DIR"
+  if [ "$PACKAGE_MANAGER" = "uv" ]; then
+    ( cd "$DEV_DIR" && run "$UV_BIN" pip install --python "$VENV_PYTHON" --upgrade "$SPEC" )
+  else
+    PIP_BIN="$BIN_DIR/pip"
+    run "$PIP_BIN" install --upgrade pip
+    ( cd "$DEV_DIR" && run "$PIP_BIN" install -e "$SPEC" )
+  fi
+else
+  # --- Quick install ---
+  if [ "$venv_choice" = "1" ]; then
+    info "Creating venv at $VENV_DIR"
+    run "$PYTHON_BIN" -m venv "$VENV_DIR"
+    if [ -d "$VENV_DIR/Scripts" ]; then
+      BIN_DIR="$VENV_DIR/Scripts"
+      VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
+    else
+      BIN_DIR="$VENV_DIR/bin"
+      VENV_PYTHON="$VENV_DIR/bin/python"
+    fi
+  else
+    BIN_DIR="$("$PYTHON_BIN" -c 'import site; print(site.USER_BASE + "/bin")')"
+  fi
+  SPEC="$PKG"
+  [ "$JS_MODE" = "yes" ] && SPEC="${PKG}[js]"
+  info "Installing $SPEC"
+  if [ "$PACKAGE_MANAGER" = "uv" ]; then
+    if [ "$venv_choice" = "1" ]; then
+      run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
+    else
+      run "$UV_BIN" pip install --python "$PYTHON_BIN" --user --upgrade "$SPEC"
+    fi
+  elif [ "$venv_choice" = "1" ]; then
+    PIP_BIN="$BIN_DIR/pip"
+    run "$PIP_BIN" install --upgrade pip
+    run "$PIP_BIN" install "$SPEC"
+  else
+    run "$PYTHON_BIN" -m pip install --user --upgrade "$SPEC"
+  fi
+fi
+
+if [ "$JS_MODE" = "yes" ]; then
+  info "Installing Playwright's Chromium browser (~300MB download)..."
+  if [ "$venv_choice" = "1" ] || [ "$mode_choice" = "2" ]; then
+    run "$BIN_DIR/playwright" install chromium
+  else
+    run "$PYTHON_BIN" -m playwright install chromium
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# PATH handling
+# ---------------------------------------------------------------------
+OPEN_NEWS_BIN="$BIN_DIR/open-news"
+if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/dev/null 2>&1; then
+  SHELL_RC="${HOME}/.bashrc"
+  LINE="export PATH=\"$BIN_DIR:\$PATH\""
+  if ! grep -qsF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+    printf '\n# added by open-news installer\n%s\n' "$LINE" >> "$SHELL_RC"
+    warn "Added $BIN_DIR to PATH in $SHELL_RC — restart your shell, or run:"
+    warn "  $LINE"
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# Write preferences config
+# ---------------------------------------------------------------------
+info "Writing preferences to $CONFIG_FILE"
+run mkdir -p "$CONFIG_DIR"
+if [ "$DRY_RUN" -eq 0 ]; then
+  cat > "$CONFIG_FILE" <<EOF
+{
+  "language": $( [ -n "$PREF_LANGUAGE" ] && printf '"%s"' "$PREF_LANGUAGE" || printf 'null' ),
+  "category": "$PREF_CATEGORY",
+  "sort_by": "$PREF_SORT",
+  "format": "$PREF_FORMAT"
+}
+EOF
+  mkdir -p "$(dirname "$STATE_FILE")"
+  cat > "$STATE_FILE" <<EOF
+    if [ "$venv_choice" = "1" ]; then
+      run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
+    else
+      run "$UV_BIN" pip install --python "$PYTHON_BIN" --upgrade "$SPEC"
+}
+EOF
+fi
+
+# ---------------------------------------------------------------------
+# Verify
+# ---------------------------------------------------------------------
+if [ "$DRY_RUN" -eq 1 ]; then
+  ok "Dry run complete — nothing was installed."
+  exit 0
+fi
+
+info "Verifying install..."
+if [ -x "$OPEN_NEWS_BIN" ]; then
+  "$OPEN_NEWS_BIN" --version
+  ok "Install verified."
+  echo
+  echo "Run it with:"
+  if command -v open-news >/dev/null 2>&1; then
+    echo "  open-news --help"
+  else
+    echo "  $OPEN_NEWS_BIN --help   (or restart your shell / re-source your rc file)"
+  fi
+else
+  warn "No open-news binary found at $OPEN_NEWS_BIN — falling back to module invocation."
+  "$PYTHON_BIN" -m open_news.cli --version || fail "Verification failed. Try: $PYTHON_BIN -m open_news.cli --version"
+  echo "Run it with: $PYTHON_BIN -m open_news.cli --help"
+fi
+
+# ---------------------------------------------------------------------
+# Offer to launch the TUI
+# ---------------------------------------------------------------------
+if [ "$ASSUME_YES" -eq 0 ]; then
+  read -r -p $'\nLaunch the terminal interface now? [y/N]: ' launch || true
+  if [ "${launch:-N}" = "y" ] || [ "${launch:-N}" = "Y" ]; then
+    if [ -x "${BIN_DIR}/open-news-tui" ]; then
+      exec "${BIN_DIR}/open-news-tui"
+    else
+      exec "$PYTHON_BIN" -m open_news.tui
+    fi
+  fi
+fi
