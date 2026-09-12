@@ -50,7 +50,13 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
         extracted = {}
 
     from urllib.parse import urlparse
-    source = urlparse(url).netloc.replace("www.", "")
+    from urllib.parse import urlparse
+    # Prefer the extractor's aggregator-aware resolved source (checks
+    # og:site_name / JSON-LD / publisher meta tags, and specifically
+    # avoids reporting "msn"/"yahoo"/etc. as the publisher when a real
+    # outlet name is discoverable). Fall back to the bare domain only if
+    # extraction failed to produce anything (e.g. extraction raised).
+    source = extracted.get("source") or urlparse(url).netloc.replace("www.", "")
 
     return {
         "url": url,
@@ -63,6 +69,7 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
         "images": extracted.get("images", []),
         "videos": extracted.get("videos", []),
         "source": source,
+        "description": extracted.get("description", ""),
         "meta": extracted.get("meta", {}),
     }
 
