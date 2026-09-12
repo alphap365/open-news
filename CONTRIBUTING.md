@@ -40,46 +40,29 @@ In your suggestion, explain:
    source venv/bin/activate      # Linux/macOS
    venv\Scripts\activate         # Windows
    ```
-3. **Install the package in editable mode with development dependencies**:
+3. **Install the package in editable mode with the development dependencies**:
    ```bash
-   pip install -e .[dev]
+   python -m pip install -e ".[dev]"
    ```
-   The `[dev]` extra should include `pytest`, `mypy`, `black`, `ruff`, etc. (See example `pyproject.toml` below.)
-4. **Install NLTK data** (used by `newspaper4k`):
-   ```bash
-   python -m nltk.downloader punkt
-   ```
+   The current `[dev]` extra provides pytest, coverage, VCR, HTTP mocking, and tox.
 
 ## Coding Standards
-- **Formatting**: Use [Black](https://black.readthedocs.io/) with the default settings.
-- **Linting**: Use [Ruff](https://docs.astral.sh/ruff/) (or `flake8` + `pylint`).
-- **Type hints**: All public functions must have type annotations. Run `mypy` to verify.
+- **Formatting**: Keep changes consistent with the surrounding code style.
+- **Linting**: Review changed code for import, syntax, and style issues before opening a PR.
+- **Type hints**: Add type annotations to new public functions.
 - **Docstrings**: Follow Google style or NumPy style; include parameters, returns, and exceptions.
-
-**Example `pyproject.toml` snippet:**
-```toml
-[project.optional-dependencies]
-dev = ["pytest>=7.0", "mypy>=1.0", "black>=23.0", "ruff>=0.1.0"]
-
-[tool.black]
-line-length = 88
-
-[tool.ruff]
-select = ["E", "F", "W", "I"]
-fixable = ["I"]
-```
 
 ## Testing
 - We use `pytest` for unit tests.
 - **All new features must include tests**. Bug fixes should include a regression test.
-- Mock external HTTP requests using `responses` or `pytest-httpx` to avoid hitting real URLs during tests.
+- Mock external HTTP requests using `respx`, `pytest-vcr`, or the repository's existing fixtures to avoid hitting real URLs during tests.
 - Run the test suite locally:
   ```bash
   pytest tests/
   ```
 - Ensure test coverage does not decrease. If possible, run:
   ```bash
-  pytest --cov=open_news tests/
+   python -m pytest --cov=open_news tests/
   ```
 
 ## Submitting Pull Requests
