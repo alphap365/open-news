@@ -1,242 +1,343 @@
 <div align="center">
 
-<img src="https://raw.githubusercontent.com/alphap365/open-news/main/assets/open-news-banner.svg" alt="open-news: fetch, search, understand" width="900">
+```
+ ██████╗ ██████╗ ███████╗███╗   ██╗      ███╗   ██╗███████╗██╗    ██╗███████╗
+██╔═══██╗██╔══██╗██╔════╝████╗  ██║      ████╗  ██║██╔════╝██║    ██║██╔════╝
+██║   ██║██████╔╝█████╗  ██╔██╗ ██║█████╗██╔██╗ ██║█████╗  ██║ █╗ ██║███████╗
+██║   ██║██╔═══╝ ██╔══╝  ██║╚██╗██║╚════╝██║╚██╗██║██╔══╝  ██║███╗██║╚════██║
+╚██████╔╝██║     ███████╗██║ ╚████║      ██║ ╚████║███████╗╚███╔███╔╝███████║
+ ╚═════╝ ╚═╝     ╚══════╝╚═╝  ╚═══╝      ╚═╝  ╚═══╝╚══════╝ ╚══╝╚══╝ ╚══════╝
+```
 
-# open-news
+# 📰 open-news
 
 **A focused Python toolkit for discovering, extracting, filtering, and summarizing news.**
 
-[![Python](https://img.shields.io/badge/Python-3.10%2B-173f5f?style=flat-square&logo=python&logoColor=white)](https://www.python.org/)
-[![Tests](https://img.shields.io/badge/tests-34%20passing-2a9d8f?style=flat-square)](tests/)
-[![License](https://img.shields.io/github/license/alphap365/open-news?style=flat-square)](LICENSE)
-[![PyPI](https://img.shields.io/pypi/v/open-news-api?style=flat-square)](https://pypi.org/project/open-news-api/)
+[![License](https://img.shields.io/github/license/alphap365/open-news?style=for-the-badge&color=blue)](LICENSE)
+[![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/)
+[![Status](https://img.shields.io/badge/Status-Active-brightgreen?style=for-the-badge)](https://github.com/alphap365/open-news)
+[![PyPI version](https://img.shields.io/pypi/v/open-news-api?style=for-the-badge)](https://pypi.org/project/open-news-api/)
 
-[Install](#installation) · [Python API](#python-api) · [CLI](#command-line) · [TUI](#terminal-interface) · [Contributing](#contributing)
+*Fetch, search, discover, and understand news — from a script, a shell, or a menu.*
+
+[Features](#-features) • [Installation](#-installation) • [Quick Start](#-quick-start) • [CLI & TUI](#️-cli--tui) • [API Reference](#-api-reference) • [Contributing](#-contributing)
 
 </div>
 
-## What it does
+---
 
-`open-news` turns a source URL, a topic, or a category into structured article dictionaries. It combines live news search, RSS discovery, an async same-domain crawler, HTML extraction, language and domain filters, deduplication, ranking, and optional full-content enrichment.
+## 🔁 Latest updates
 
-The default path is deliberately lightweight: plain HTTP and RSS first, with an optional Playwright backend for JavaScript-heavy pages.
+> **[Unreleased]** — v1.0.2 planned: live/streaming keyword search (`search(refresh_interval=...)`).
 
-## Highlights
+> **v1.0.1** — `open-news`/`open-news-tui` console commands (previously `python -m` only); CLI rewritten with full API coverage + fixed a `search --sort popularity` crash; TUI rewritten with a settings panel, richer search, save/open-in-browser; **more robust source attribution** — aggregator-hosted articles (MSN, Yahoo News, etc.) now attempt to resolve the *original* publisher instead of reporting the aggregator's domain; fixed full-content enrichment silently overwriting good search snippets with empty extracted fields.
 
-- **Live discovery:** fetch category or location news through DuckDuckGo News.
-- **Topic search:** search Google News with query modes, exclusions, domain filters, and sorting.
-- **Website discovery:** use RSS auto-discovery when available, then crawl pages when needed.
-- **Article extraction:** return title, text, authors, dates, images, videos, source, and metadata.
-- **Processing pipeline:** language guard, token filtering, domain allow/deny lists, exact and fuzzy deduplication, and ranking.
-- **Batch summaries:** extractive summaries over multiple URLs with bounded concurrency.
-- **Two interfaces:** a scriptable Python API, a JSON CLI, and a numbered terminal UI.
-- **Optional JavaScript rendering:** reuse a persistent Chromium instance while crawling JS-rendered sites.
+> **v1.0.0** — Public API stabilized around `fetch()`, `search()`, `get_article()`, `discover_and_get()`, `search_site()`, `batch_summarize()`, `summarize_text()`. The old registry-backed `live_news()` / `get_live_news()` / `search_news()` / `clear_feed_cache()` interfaces from the 0.x series are **retired** — see [docs/changelog.md](docs/changelog.md) for the full migration notes.
 
-## Installation
+> View the complete history in [docs/changelog.md](docs/changelog.md).
 
-The distribution name is `open-news-api`:
+## 🎯 Features
 
+<table>
+<tr>
+<td>
+
+### 📄 Article Extraction
+Full text + metadata (title, authors, publish date, top image, video) via a layered extractor: JSON-LD → Open Graph → HTML-heuristic fallback. No third-party extraction library required.
+
+</td>
+<td>
+
+### 🌐 Live Discovery
+Category or location news via DuckDuckGo News, queried live — no disk cache, so freshness is the point.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🔍 Google News Search
+Query modes (`any`/`all`/`exact_phrase`), exclusion terms, domain allow/deny lists, and Google News redirect decoding to real article URLs.
+
+</td>
+<td>
+
+### 🕸️ Website Discovery
+RSS auto-discovery first; falls back to an async same-domain crawler (or a persistent-browser JS crawler) when a site has no feed.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧭 Aggregator-aware sourcing
+Articles syndicated through MSN, Yahoo News, and similar platforms attempt real-publisher resolution instead of reporting the aggregator's domain as the source — flagged as best-effort, not guaranteed.
+
+</td>
+<td>
+
+### ✂️ Batch Summarization
+Concurrent fetch + extractive summarization across many URLs, or straight from a topic search, with bounded worker threads.
+
+</td>
+</tr>
+<tr>
+<td>
+
+### 🧹 Processing Pipeline
+Language guard, token filtering, domain filters, exact + fuzzy dedupe, and date/relevance/popularity ranking — applied consistently to `fetch()` and `search()`.
+
+</td>
+<td>
+
+### 🖥️ Three Interfaces
+A scriptable Python API, a `open-news` CLI (JSON or pretty output), and a numbered `open-news-tui` menu for non-scripted use.
+
+</td>
+</tr>
+</table>
+
+---
+
+## 📦 Installation
+
+*Note: the distribution name is `open-news-api`, not `open-news` — the latter was taken on PyPI.*
+
+### Interactive installer (recommended)
+```bash
+curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install.sh | bash
+```
+Detects your OS (Linux/macOS/Termux/WSL), sets up an isolated environment, asks about the optional JS extra, and verifies the install before finishing. Full walkthrough: [docs/installation.md](docs/installation.md).
+
+### With pip
 ```bash
 pip install open-news-api
+# a specific version:
+pip install open-news-api==1.0.1
 ```
 
-For local development:
+### With uv
+```bash
+uv add open-news-api
 
+# or drop it straight into a throwaway environment to try it:
+uvx --from open-news-api open-news --help
+```
+
+### From source (development)
 ```bash
 git clone https://github.com/alphap365/open-news.git
 cd open-news
-python -m venv .venv
-# Windows: .venv\\Scripts\\activate
-# macOS/Linux: source .venv/bin/activate
+
+# with pip
+python -m venv .venv && source .venv/bin/activate   # Windows: .venv\Scripts\activate
 python -m pip install -e ".[dev]"
+
+# or with uv (matches this repo's CI)
+uv sync
+uv run pytest -q
 ```
 
-Optional extras:
-
+### Optional: JavaScript rendering
+For sites that render article content client-side:
 ```bash
-# JavaScript-rendered pages and browser-backed crawling
-pip install "open-news-api[js]"
-playwright install chromium
-
-# The numbered terminal interface is included in the core package.
+pip install "open-news-api[js]"    # or: uv add "open-news-api[js]"
+playwright install chromium         # one-time browser download, ~300MB
 ```
+Then pass `js=True` to `get_article()`, `discover_and_get()`, `fetch()`/`search()` (with `full_content=True`), or `batch_summarize()`. If the extra isn't installed, it logs a warning and falls back to plain HTTP rather than raising.
 
-The core package needs an internet connection for live feeds, search, and remote article pages. The extractor itself can be used with supplied HTML in the lower-level modules.
+**Dependencies installed automatically:** `lxml` • `python-dateutil` • `httpx` • `beautifulsoup4` • `feedparser` • `googlenewsdecoder` • `requests` • `ddgs` • `langdetect`
 
-## Python API
+---
 
-### Fetch live news
+## 🚀 Quick Start
 
-```python
-from open_news import fetch
-
-articles = fetch(
-    category="tech",
-    max_results=10,
-    language="en",
-    sort_by="date",
-)
-
-for article in articles:
-    print(article["title"], article["url"])
-```
-
-Supported categories are `general`, `business`, `tech`, `sports`, `health`, `science`, and `entertainment`. A `location` such as `us` or `in` can be supplied when regional news should take precedence.
-
-### Search by topic
-
-```python
-from open_news import search
-
-articles = search(
-    "renewable energy",
-    query_mode="all",          # any, all, or exact_phrase
-    exclude_terms=["sports"],
-    max_results=8,
-    language="en",
-)
-```
-
-### Extract one article
-
+### 1️⃣ Extract one article
 ```python
 from open_news import get_article
 
-article = get_article("https://example.com/article")
+article = get_article("https://www.bbc.com/news/world-us-canada-12345678")
 print(article["title"])
 print(article["text"][:500])
+print(f"Source: {article['source']}")
+print(f"Published: {article['publish_date']}")
 ```
 
-The result contains the source URL, title, text, authors, `publish_date`, `top_image`, images, videos, source domain, category, and metadata when available.
+### 2️⃣ Search Google News
+```python
+from open_news import search
 
-### Discover a website
+results = search("artificial intelligence", query_mode="all", exclude_terms=["sports"], max_results=5)
+for a in results:
+    print(f"✓ {a['title']}")
+    print(f"  → {a['url']}\n")
+```
 
+### 3️⃣ Live category/location news
+```python
+from open_news import fetch
+
+tech_news = fetch(category="tech", max_results=5)
+india_news = fetch(location="in", max_results=5)   # location takes precedence over category
+
+for a in tech_news:
+    print(f"[{a['source']}] {a['title']}")
+```
+
+### 4️⃣ Discover any website
 ```python
 from open_news import discover_and_get
 
-articles = discover_and_get(
-    "https://www.bbc.com",
-    limit=10,
-    prefer_rss=True,
-    max_pages=20,
-)
+articles = discover_and_get("https://techcrunch.com", limit=5)
+for a in articles:
+    print(f"✓ {a['title']}")
 ```
+RSS auto-discovery is tried first; the async crawler follows same-domain links (respecting `robots.txt`) if no feed is found.
 
-RSS discovery is attempted first. If it produces no usable entries, the async crawler follows same-domain links while respecting `robots.txt` by default. Use `js=True` for sites whose article links or content require browser rendering.
-
-### Search one domain
-
-```python
-from open_news import search_site
-
-articles = search_site("climate policy", domain="reuters.com", limit=5)
-```
-
-### Batch summarization
-
+### 5️⃣ Batch fetch & summarize
 ```python
 from open_news import batch_summarize
 
-results = batch_summarize(
-    ["https://example.com/one", "https://example.com/two"],
-    sentence_count=2,
-    max_workers=3,
-)
+urls = ["https://example.com/article1", "https://example.com/article2"]
+results = batch_summarize(urls, sentence_count=2, max_workers=3)
 
-for result in results:
-    if result["status"] == "success":
-        print(result["title"], result["summary"])
+for r in results:
+    if r["status"] == "success":
+        print(f"📰 {r['title']}\n   {r['summary']}\n")
     else:
-        print(result["url"], result["error"])
+        print(f"❌ Failed: {r['error']}")
 ```
 
-### Refreshing news
-
-Set `refresh_interval` on `fetch()` to receive a generator that polls periodically and yields only previously unseen articles:
-
+### 6️⃣ Search + summarize in one call
 ```python
-stream = fetch(category="general", refresh_interval=60)
-for new_articles in stream:
-    for article in new_articles:
-        print(article["title"])
+from open_news import search_and_summarize
+
+results = search_and_summarize("climate change", limit=5, sentence_count=2)
+for a in results:
+    print(f"🔗 {a['url']}\n📰 {a['title']}\n   {a['summary']}\n")
 ```
 
-The minimum refresh interval is five seconds. Normal feed requests are live; the feed registry itself uses a 24-hour cache and falls back to stale data when the remote registry is unavailable.
+### 7️⃣ Search a single domain
+```python
+from open_news import search_site
 
-## Command line
+results = search_site("budget", domain="reuters.com", limit=5)
+for a in results:
+    print(f"✓ {a['title']}\n  → {a['url']}\n")
+```
 
-The CLI prints JSON, making it suitable for shell scripts and pipelines:
+### 8️⃣ Live polling
+```python
+from open_news import fetch
+
+# yields only newly-seen articles each poll; minimum interval is 5s
+for new_articles in fetch(category="general", refresh_interval=60):
+    for a in new_articles:
+        print(a["title"])
+```
+
+### 9️⃣ Dedupe articles yourself
+```python
+from open_news import dedupe_articles
+
+raw = fetch(category="general", dedupe=False)
+merged = dedupe_articles(raw, fuzzy=True)   # collapse same-story-different-outlet duplicates
+```
+
+---
+
+## 🖥️ CLI & TUI
 
 ```bash
-python -m open_news.cli fetch --category tech --limit 5
-python -m open_news.cli search "artificial intelligence" --mode all --limit 5
-python -m open_news.cli extract https://example.com/article
-python -m open_news.cli discover https://example.com --limit 10 --max-pages 20
+open-news fetch --category tech --limit 5
+open-news search "AI regulation" --mode all --exclude sports
+open-news discover https://www.bbc.com --limit 10
+open-news summarize --query "climate policy" --sentences 2
+open-news --version
 ```
 
-Add `--full-content` to `fetch` or `search`, `--js` to `extract`, and `--no-rss` to `discover` when those modes are needed. Run `python -m open_news.cli --help` for the complete option list.
-
-## Terminal interface
-
-Launch the included numbered terminal interface:
-
+Or launch the numbered menu — no flags to remember:
 ```bash
-python -m open_news.tui
+open-news-tui
 ```
 
-The interface provides numbered actions for fetch, search, RSS/crawler discovery, single-article extraction, loaded-article viewing, clearing, and live refresh. Fetch and live refresh both accept an optional country/region code such as `us` or `in`; leaving it blank uses the selected category. Live refresh prints only new articles and returns to the menu when you press `Ctrl+C`. It uses the same public API as the CLI.
+- **[docs/cli-reference.md](docs/cli-reference.md)** — every subcommand and flag
+- **[docs/tui-guide.md](docs/tui-guide.md)** — menu walkthrough, settings panel, live-refresh limitations
 
-## Processing model
+---
 
-For `fetch()` and `search()`, results pass through this sequence:
+## 🔀 Function names: current vs legacy alias
 
-1. Language filtering, when `language` is supplied.
-2. Query and exclusion-term filtering.
-3. Whitelist and blacklist domain filtering.
-4. URL deduplication and optional fuzzy title deduplication.
-5. Date, relevance, or popularity ranking.
-6. Result limiting.
-7. Optional full-content extraction.
+Two names, same function, both stable — pick whichever reads better:
 
-This ordering avoids downloading full article bodies for results that will later be filtered out.
+| Current name | Legacy alias |
+|---|---|
+| `get_article` | `fetch_article` |
+| `discover_and_get` | `get_articles_from_website_rss` |
 
-## Public API
+⚠️ **Retired in v1.0.0, not aliases:** `live_news`, `get_live_news`, `search_news`, `clear_feed_cache`. If you're upgrading from 0.x, see [doc/changelog.md](docs/changelog.md) for the direct replacement of each.
 
-The package-level API in v1.0 is:
+---
+
+## 📚 API Reference
+
+Full parameter tables and return shapes for every function: **[docs/python-api.md](docs/python-api.md)**
 
 | Function | Purpose |
-| --- | --- |
-| `fetch()` | Fetch live category or location news |
-| `search()` | Search Google News with filtering and ranking |
-| `get_article()` | Extract one article |
-| `discover_and_get()` | Discover articles from a website or feed |
-| `search_site()` | Search within one domain |
-| `batch_summarize()` | Extract and summarize multiple URLs |
-| `summarize_text()` | Summarize supplied text |
+|---|---|
+| `fetch()` | Live category/location news, optional streaming via `refresh_interval` |
+| `search()` | Google News search with query modes, exclusions, filtering |
+| `get_article()` | Extract one article's full content + metadata |
+| `discover_and_get()` | RSS-first, crawler-fallback discovery from any site |
+| `search_site()` | Search scoped to one domain |
+| `batch_summarize()` / `search_and_summarize()` | Concurrent extract + summarize |
+| `summarize_text()` / `summarize_with_keywords()` | Standalone extractive summarization |
+| `dedupe_articles()` | Exact + fuzzy dedup on any article list |
 
-The old registry-backed `live_news()` and `search_news()` interfaces are retired in v1.0. See [CHANGELOG.md](CHANGELOG.md) for the migration summary.
+## 🧭 Known limitations
 
-## Development
+- **Source attribution is best-effort on aggregator sites.** MSN/Yahoo News/etc. don't consistently expose the original publisher in their markup; when no hint is found, the aggregator's own name is reported with `meta.source_is_aggregator=True, meta.source_resolved=False` so you can distinguish a confirmed publisher from a fallback.
+- **No live/streaming keyword search yet** — `refresh_interval` exists on `fetch()` but not `search()`. Planned for v1.0.2.
+- **`discover_and_get()` has no `whitelist`/`blacklist` parameters** yet, unlike `fetch()`/`search()`.
 
-Run the test suite from the repository root:
+Details and architecture context: [docs/architecture.md](docs/architecture.md).
+
+---
+
+## 🧪 Development
 
 ```bash
-python -m pytest -q
+uv sync
+uv run pytest -q
+uv run python -m compileall -q open_news
+
+# or with pip
+python -m pip install -e ".[dev]"
+pytest -q
 python -m compileall -q open_news
 ```
 
-The tests use mocked network behavior where appropriate. Live provider availability, robots policies, and publisher HTML layouts can change independently of this project.
+CI runs this matrix across Python 3.10–3.13 on every push; see `.github/workflows/ci.yml`.
 
-## Contributing
+## 🤝 Contributing
 
-Issues and pull requests are welcome. Please read [CONTRIBUTING.md](CONTRIBUTING.md), keep changes focused, and add tests for behavior changes. Feed definitions are maintained separately in [open-feeds](https://github.com/alphap365/open-feeds).
+Issues and PRs welcome:
+- 🐛 Bug reports · ✨ Feature requests · 📝 Documentation · 💻 Pull requests
 
-## License
+Please read [CONTRIBUTING.md](CONTRIBUTING.md), keep changes focused, and add tests for behavior changes. Feed-discovery targets aren't curated centrally in this version — `discover_and_get()` works against any site directly.
 
-MIT. See [LICENSE](LICENSE).
+## 🙏 Acknowledgements
+
+Built on: [**httpx**](https://www.python-httpx.org/) • [**lxml**](https://lxml.de/) • [**feedparser**](https://github.com/kurtmckee/feedparser) • [**BeautifulSoup4**](https://www.crummy.com/software/BeautifulSoup/) • [**googlenewsdecoder**](https://github.com/HeiseL/GoogleNewsDecoder) • [**ddgs**](https://github.com/deedy5/ddgs) • [**langdetect**](https://github.com/Mimino666/langdetect) • [**Playwright**](https://playwright.dev/) (optional)
+
+## 📄 License
+
+MIT — see [LICENSE](LICENSE).
 
 <div align="center">
 
-Made by [Arajit Paul](https://github.com/alphap365)
+**Made with ❤️ by [Arajit Paul](https://github.com/alphap365)**
+
+[⭐ Star on GitHub](https://github.com/alphap365/open-news) · [📧 Email](mailto:arajitpaul2010@gmail.com)
 
 </div>
