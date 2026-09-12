@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.0"
+version = "1.0.1"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
-authors = [{name = "ARAJIT PAUL", email = "dev.arajit.2010@gmail.com"}]
+authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
 license = "MIT"
 classifiers = [
     "Programming Language :: Python :: 3",
@@ -20,10 +20,24 @@ classifiers = [
 ]
 requires-python = ">=3.10"
 keywords = ["news", "rss", "google-news", "article-extraction", "feedparser", "newspaper"]
-dynamic = ["dependencies"]
+dependencies = [
+    "lxml",
+    "python-dateutil",
+    "httpx",
+    "beautifulsoup4",
+    "feedparser",
+    "googlenewsdecoder",
+    "requests",
+    "ddgs",
+    "langdetect",
+]
 
 [project.urls]
 Homepage = "https://github.com/alphap365/open-news"
+
+[project.scripts]
+open-news = "open_news.cli:main"
+open-news-tui = "open_news.tui:run_tui"
 
 [tool.setuptools]
 include-package-data = true
@@ -31,11 +45,18 @@ include-package-data = true
 [tool.setuptools.packages.find]
 include = ["open_news*"]
 
-[tool.setuptools.dynamic]
-dependencies = {file = ["requirements.txt"]}
-
 [tool.setuptools.package-data]
 open_news = ["py.typed"]
+
+[dependency-groups]
+dev = [
+    "pytest>=7.0",
+    "pytest-cov>=4.0",
+    "pytest-vcr>=1.0",
+    "respx>=0.20",
+    "tox>=4.0",
+    "pytest-mock>=3.0",
+]
 
 [project.optional-dependencies]
 js = ["playwright>=1.40.0"]
