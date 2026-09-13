@@ -10,7 +10,7 @@ from datetime import datetime
 from typing import Any, Dict, List, Optional, Sequence
 from urllib.parse import urlparse
 
-from open_news.api import discover_and_get, fetch, get_article, search, search_site
+from open_news.api import discover_and_get, fetch, get_article, search, search_site, stream_search
 from open_news.processing.batch import batch_summarize, search_and_summarize
 
 
@@ -62,12 +62,13 @@ class Settings:
         self.default_limit: int = 10
         self.whitelist: Optional[List[str]] = None
         self.blacklist: Optional[List[str]] = None
+        self.country: Optional[str] = None  # v1.0.2: ISO 3166-1 alpha-2, search() only
 
     def summary_line(self) -> str:
         wl = ",".join(self.whitelist) if self.whitelist else "none"
         bl = ",".join(self.blacklist) if self.blacklist else "none"
         return (
-            f"language={self.language or 'any'}  sort={self.sort_by}  "
+            f"language={self.language or 'any'}  country={self.country or 'default'}  sort={self.sort_by}  "
             f"full_content={'on' if self.full_content else 'off'}  "
             f"js={'on' if self.js else 'off'}  default_limit={self.default_limit}  "
             f"whitelist={wl}  blacklist={bl}"
@@ -132,7 +133,7 @@ class OpenNewsTUI:
         print(C.cyan("[7]") + " View loaded articles")
         print(C.cyan("[8]") + " Settings")
         print(C.cyan("[9]") + " Clear loaded articles")
-        print(C.cyan("[10]") + " Live refresh category news")
+        print(C.cyan("[10]") + " Live refresh (category or keyword search)")
         print(C.cyan("[0]") + " Exit")
         if self.articles:
             print(C.dim(f"Loaded articles: {len(self.articles)}"))
@@ -170,6 +171,7 @@ class OpenNewsTUI:
             mode = "any"
         exclude_raw = input("Exclude terms, comma-separated (blank = none): ").strip()
         exclude_terms = [t.strip() for t in exclude_raw.split(",") if t.strip()] or None
+        start_date, end_date = self._prompt_date_range()
         limit = self._prompt_limit()
         # search() only supports date/relevance ranking (no popularity
         # clustering); silently fall back rather than raising deep in the stack.
@@ -178,12 +180,24 @@ class OpenNewsTUI:
             results = search(
                 query, query_mode=mode, exclude_terms=exclude_terms, max_results=limit,
                 language=self.settings.language, sort_by=sort_by,
+                start_date=start_date, end_date=end_date, country=self.settings.country,
                 full_content=self.settings.full_content, js=self.settings.js,
                 whitelist=self.settings.whitelist, blacklist=self.settings.blacklist,
             )
             self._replace_articles(results, f"Search results for {query!r}")
         except Exception as error:
             self._show_error(error)
+
+    @staticmethod
+    def _prompt_date_range() -> "tuple[Optional[str], Optional[str]]":
+        """Optional custom date range (v1.0.2) — 'YYYY-MM-DD', either side
+        may be left blank for an open-ended range. Overrides the recency
+        window (time_limit) when either is given."""
+        raw = input("Custom date range? Start date YYYY-MM-DD (blank = skip): ").strip()
+        if not raw:
+            return None, None
+        end = input("End date YYYY-MM-DD (blank = open-ended): ").strip()
+        return raw or None, end or None
 
     def _discover_news(self) -> None:
         url = input("Website URL (blank to cancel): ").strip()
@@ -251,6 +265,16 @@ class OpenNewsTUI:
         print(C.dim(f"{len(ok)}/{len(results)} succeeded."))
 
     def _watch_news(self) -> None:
+        print("\n[a] Live category/location fetch   [b] Live keyword search")
+        mode = input("Choose (blank to cancel): ").strip().lower()
+        if mode not in ("a", "b"):
+            return
+        if mode == "a":
+            self._watch_fetch()
+        else:
+            self._watch_search()
+
+    def _watch_fetch(self) -> None:
         category = self._prompt_category()
         if category is None:
             return
@@ -259,9 +283,6 @@ class OpenNewsTUI:
         interval = self._prompt_refresh_interval()
         subject = location or category
         print(f"\nWatching {subject} news every {interval} seconds.")
-        print(C.dim("Note: live refresh only works for fetch() (category/location) — "
-                     "the underlying search() API has no refresh_interval, so keyword "
-                     "search can't be watched live yet."))
         print("Press Ctrl+C to stop live refresh and return to the menu.")
         try:
             stream = fetch(
@@ -276,6 +297,40 @@ class OpenNewsTUI:
                 self._clear_screen()
                 self._print_header()
                 print(f"Watching {subject} news every {interval} seconds.")
+                print(f"Last refresh: {stamp} | {len(new_articles)} new article(s)")
+                self._print_article_list(self.articles)
+        except KeyboardInterrupt:
+            print("\nLive refresh stopped.")
+        except Exception as error:
+            self._show_error(error)
+
+    def _watch_search(self) -> None:
+        """Live keyword search (v1.0.2) via stream_search() — the search()
+        equivalent of _watch_fetch(), closing the previous TUI gap where
+        menu 10 only covered category/location fetch."""
+        query = input("Search query (blank to cancel): ").strip()
+        if not query:
+            return
+        limit = self._prompt_limit()
+        interval = self._prompt_refresh_interval()
+        sort_by = self.settings.sort_by if self.settings.sort_by != "popularity" else "date"
+        print(f"\nWatching search {query!r} every {interval} seconds.")
+        print("Press Ctrl+C to stop live refresh and return to the menu.")
+        try:
+            stream = stream_search(
+                query, refresh_interval=interval, max_results=limit,
+                language=self.settings.language, country=self.settings.country,
+                sort_by=sort_by, whitelist=self.settings.whitelist,
+                blacklist=self.settings.blacklist, js=self.settings.js,
+            )
+            for new_articles in stream:
+                if not new_articles:
+                    continue
+                self.articles.extend(new_articles)
+                stamp = datetime.now().strftime("%H:%M:%S")
+                self._clear_screen()
+                self._print_header()
+                print(f"Watching search {query!r} every {interval} seconds.")
                 print(f"Last refresh: {stamp} | {len(new_articles)} new article(s)")
                 self._print_article_list(self.articles)
         except KeyboardInterrupt:
@@ -354,6 +409,7 @@ class OpenNewsTUI:
             print(f"[5] Default limit     ({self.settings.default_limit})")
             print(f"[6] Whitelist domains ({','.join(self.settings.whitelist) if self.settings.whitelist else 'none'})")
             print(f"[7] Blacklist domains ({','.join(self.settings.blacklist) if self.settings.blacklist else 'none'})")
+            print(f"[8] Country (search)  ({self.settings.country or 'default (us)'})")
             print("[0] Back")
             choice = input("Choose an option: ").strip()
             if choice == "0" or not choice:
@@ -386,8 +442,11 @@ class OpenNewsTUI:
             elif choice == "7":
                 v = input("Blacklist domains, comma-separated (blank = clear): ").strip()
                 self.settings.blacklist = [d.strip() for d in v.split(",") if d.strip()] or None
+            elif choice == "8":
+                v = input("Country code for search(), e.g. us, in, gb (blank = default): ").strip()
+                self.settings.country = v or None
             else:
-                print(C.yellow("Please choose a number from 0 to 7."))
+                print(C.yellow("Please choose a number from 0 to 8."))
 
     # ------------------------------------------------------------------
     # Display helpers
