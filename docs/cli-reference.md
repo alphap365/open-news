@@ -17,8 +17,11 @@ open-news fetch --category tech --limit 5 --sort date --time-limit d
 ## `search`
 ```bash
 open-news search "artificial intelligence" --mode all --exclude sports --limit 10
+open-news search "elections" --start-date 2026-08-01 --end-date 2026-08-31
+open-news search "budget" --country in --language hi
+open-news search "budget 2026" --stream 30   # live refresh, Ctrl+C to stop
 ```
-`query` (positional), `--mode {any,all,exact_phrase}`, `--exclude TERMS` (comma-separated), `--sort {date,relevance}` *(no popularity)*, plus the same filter/output flags as `fetch`.
+`query` (positional), `--mode {any,all,exact_phrase}`, `--exclude TERMS` (comma-separated), `--sort {date,relevance}` *(no popularity)*, `--start-date YYYY-MM-DD` / `--end-date YYYY-MM-DD` (overrides `--time-limit` when given), `--country CC` (ISO 3166-1 alpha-2, defaults to `us`), `--stream SECONDS` (live refresh — polls every `SECONDS` ≥5 and prints only newly-seen articles until Ctrl+C), plus the same filter/output flags as `fetch`.
 
 ## `extract`
 ```bash
