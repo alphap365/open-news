@@ -113,8 +113,26 @@ ask_text() {
 # Uninstall path (short-circuits everything else)
 # ---------------------------------------------------------------------
 if [ "$DO_UNINSTALL" -eq 1 ]; then
-  info "Removing $VENV_DIR"
+  # Prior versions always removed ~/.open-news and nothing else, which
+  # silently left a Developer install's clone+venv behind (its venv lives
+  # at ${DEV_DIR}/.venv, i.e. ~/open-news/.venv, not under ~/.open-news at
+  # all). Read the state file (written on install, see STATE_FILE below)
+  # so we know whether a dev clone needs cleaning up too.
+  info "Removing ${HOME}/.open-news"
   rm -rf "${HOME}/.open-news"
+
+  if [ -f "$STATE_FILE" ]; then
+    STATE_DEV_DIR="$(sed -n 's/.*"dev_dir" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
+    STATE_MODE="$(sed -n 's/.*"mode" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
+    if [ "$STATE_MODE" = "dev" ] && [ -n "$STATE_DEV_DIR" ] && [ -d "$STATE_DEV_DIR" ]; then
+      read -r -p "Also remove the developer clone at $STATE_DEV_DIR (includes its .venv)? [y/N]: " reply_dev || true
+      if [ "${reply_dev:-N}" = "y" ] || [ "${reply_dev:-N}" = "Y" ]; then
+        rm -rf "$STATE_DEV_DIR"
+        ok "Removed $STATE_DEV_DIR"
+      fi
+    fi
+  fi
+
   read -r -p "Also remove preferences at $CONFIG_FILE? [y/N]: " reply || true
   if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
     rm -rf "$CONFIG_DIR"
@@ -151,18 +169,38 @@ if [ "$OS" = "windows-shell" ]; then
 fi
 
 PYTHON_BIN=""
-for candidate in python3.13 python3.12 python3.11 python3.10 python3; do
-  if command -v "$candidate" >/dev/null 2>&1; then
+PY_VERSION=""
+PY_MINOR_BEST=-1
+
+candidates=()
+for v in {20..4}; do candidates+=("python3.$v"); done
+candidates+=(python3 python)   # bare names: Linux/macOS use python3,
+                               # Windows Git Bash usually only has python
+
+for candidate in "${candidates[@]}"; do
+  command -v "$candidate" >/dev/null 2>&1 || continue
+
+  ver=$("$candidate" -c 'import sys; print("%d.%d" % sys.version_info[:2])' 2>/dev/null) || continue
+
+  case "$ver" in
+    3.*) ;;
+    *) continue ;;   # not Python 3 at all (e.g. `python` -> python2 on old distros)
+  esac
+
+  minor=${ver#3.}
+  case "$minor" in
+    ''|*[!0-9]*) continue ;;   # sanity: must be a clean integer
+  esac
+  [ "$minor" -ge 10 ] || continue
+
+  if [ "$minor" -gt "$PY_MINOR_BEST" ]; then
     PYTHON_BIN="$candidate"
-    break
+    PY_VERSION="$ver"
+    PY_MINOR_BEST="$minor"
   fi
 done
-PY_VERSION="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
-PY_MAJOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[0])')"
-PY_MINOR="$("$PYTHON_BIN" -c 'import sys; print(sys.version_info[1])')"
-if [ "$PY_MAJOR" -lt 3 ] || { [ "$PY_MAJOR" -eq 3 ] && [ "$PY_MINOR" -lt 10 ]; }; then
-  fail "Python 3.10+ required, found $PY_VERSION ($PYTHON_BIN)."
-fi
+
+[ -n "$PYTHON_BIN" ] || fail "No Python 3.10+ interpreter found on PATH (tried ${candidates[*]})."
 ok "Python $PY_VERSION ($PYTHON_BIN)"
 
 if [ "$OS" = "termux" ]; then
@@ -313,8 +351,18 @@ fi
 # ---------------------------------------------------------------------
 OPEN_NEWS_BIN="$BIN_DIR/open-news"
 if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/dev/null 2>&1; then
-  SHELL_RC="${HOME}/.bashrc"
+  # Pick the rc file for the user's actual login shell rather than always
+  # assuming bash — macOS defaults to zsh, and a PATH line appended to
+  # .bashrc there is silently never sourced.
+  case "$(basename "${SHELL:-bash}")" in
+    zsh) SHELL_RC="${HOME}/.zshrc" ;;
+    fish) SHELL_RC="${HOME}/.config/fish/config.fish" ;;
+    *) SHELL_RC="${HOME}/.bashrc" ;;
+  esac
   LINE="export PATH=\"$BIN_DIR:\$PATH\""
+  if [ "$(basename "${SHELL:-bash}")" = "fish" ]; then
+    LINE="set -gx PATH \"$BIN_DIR\" \$PATH"
+  fi
   if ! grep -qsF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
     printf '\n# added by open-news installer\n%s\n' "$LINE" >> "$SHELL_RC"
     warn "Added $BIN_DIR to PATH in $SHELL_RC — restart your shell, or run:"
@@ -337,11 +385,17 @@ if [ "$DRY_RUN" -eq 0 ]; then
 }
 EOF
   mkdir -p "$(dirname "$STATE_FILE")"
+  STATE_MODE_VAL="quick"
+  [ "$mode_choice" = "2" ] && STATE_MODE_VAL="dev"
   cat > "$STATE_FILE" <<EOF
-    if [ "$venv_choice" = "1" ]; then
-      run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
-    else
-      run "$UV_BIN" pip install --python "$PYTHON_BIN" --upgrade "$SPEC"
+{
+  "mode": "$STATE_MODE_VAL",
+  "package_manager": "$PACKAGE_MANAGER",
+  "venv_dir": "$VENV_DIR",
+  "dev_dir": "$( [ "$mode_choice" = "2" ] && printf '%s' "$DEV_DIR" )",
+  "js_extra": $( [ "$JS_MODE" = "yes" ] && printf 'true' || printf 'false' ),
+  "bin_dir": "$BIN_DIR",
+  "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 }
 EOF
 fi
