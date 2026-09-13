@@ -5,7 +5,23 @@ All notable changes to `open-news` are documented here. The format follows [Keep
 ## [Unreleased]
 
 ### Planned
-- Live/streaming keyword search: `search(refresh_interval=...)`, mirroring the existing `fetch()` support, plus TUI live-refresh support for search results (menu 10 currently only covers category/location fetch).
+- TUI live-refresh support for keyword search (menu 10 currently only covers category/location fetch) — `stream_search()`/`search(refresh_interval=...)` are available in the Python API and CLI (`search --stream SECONDS`) as of 1.0.2, but the TUI menu hasn't been wired up to them yet.
+
+## [1.0.2] - 2026-09-13
+
+### Added
+- **Live/streaming keyword search**, closing the gap tracked since 1.0.0: `search(refresh_interval=...)` and the new always-a-generator `stream_search(query, refresh_interval=...)` convenience wrapper, mirroring `fetch()`'s existing polling behavior (only newly-seen articles are yielded each cycle). Exposed on the CLI as `open-news search QUERY --stream SECONDS`.
+- **Custom date-range search**: `search(start_date=..., end_date=...)` accepts a `'YYYY-MM-DD'` string, an ISO-8601 datetime string, or a `date`/`datetime` object, and maps to Google News RSS's `after:`/`before:` search operators. Either bound can be omitted for an open-ended range. Takes precedence over `time_limit` when given. CLI: `--start-date`/`--end-date`.
+- **`country` parameter on `search()`**: an ISO 3166-1 alpha-2 region code (e.g. `"us"`, `"in"`, `"gb"`) now controls Google News' `gl`/`hl`/`ceid` locale params directly, instead of `search()` always querying the US edition regardless of the caller's `language`. CLI: `--country`.
+- `docs/parameters-reference.md`: consolidated reference for accepted country/region codes, date-format inputs, language codes, and other cross-cutting parameter formats previously scattered (or undocumented) across the other doc pages.
+- `tools/publisher_resolution_eval.ipynb`: a Colab-runnable notebook that stress-tests `core/source_resolver.py` against real aggregator-hosted pages (MSN, Yahoo News, Google News, Flipboard, Apple News, SmartNews, Yandex News, NewsBreak) across a larger, more varied URL set than the existing unit tests, and reports the resolved/unresolved split per aggregator so regressions in publisher attribution are visible before release, independent of the hand-maintained `AGGREGATOR_DOMAINS`/`_PUBLISHER_META_NAMES` lists.
+- `core/source_resolver.py`: two new resolution signals added **ahead of** the existing JSON-LD/meta-tag name matching, since they resolve to an actual off-domain URL rather than a fuzzy-matched string: (1) `<link rel="canonical"|"amphtml">` pointing off the aggregator's own domain, (2) `og:url` pointing off-domain. Both are checked against `is_aggregator_domain()` too, so resolving through one aggregator to *another* aggregator no longer counts as "resolved". Also added a last-resort in-body attribution scan (`"...originally appeared on Reuters."`, `"— via Bloomberg"`) that only runs after every structured signal has failed.
+
+### Fixed
+- `install.sh --uninstall` only ever removed `~/.open-news`, silently leaving a **Developer install**'s git clone and its venv behind entirely (the dev venv lives at `~/open-news/.venv`, outside `~/.open-news`). The installer now records install metadata to `~/.open-news/install-state.json` on install and `--uninstall` reads it to offer removing the dev clone too.
+- `install.sh`'s `install-state.json` write was appending stray leftover shell code from an editing mistake instead of the intended JSON, and the write was malformed and would raise on invocation. Now writes valid JSON (`mode`, `package_manager`, `venv_dir`, `dev_dir`, `js_extra`, `bin_dir`, `installed_at`).
+- `install.sh`'s PATH fix always appended to `~/.bashrc`, which is silently never sourced on systems where the login shell is zsh (macOS default) or fish. Now detects `$SHELL` and writes to `.zshrc`/`config.fish`/`.bashrc` as appropriate, with correct syntax for each.
+- `install.sh`'s Python detection was hard-coded to `python3.13`…`python3` — names that simply **don't exist on Windows Git Bash** (python.org installs `python.exe`; the only `python3.exe` there is the Microsoft Store stub), so the installer aborted with "No Python 3.10+ interpreter found" even with a valid Python 3.12 present. Detection now enumerates bare `python`/`python3` plus `python3.4`–`python3.20`, probes each by actually running it, and picks the newest that reports ≥ 3.10 — which also rejects the Store stub, python2 shims, and broken symlinks, and lifts the old `3.13` ceiling so future releases are found without edits.
 
 ## [1.0.1] - 2026-09-11
 
@@ -95,7 +111,8 @@ Version 1.0 introduces a new discovery and processing architecture. This is a br
 ### Added
 - Initial article extraction, RSS discovery, live feeds, Google News search, batch processing, summarization, and caching APIs.
 
-[Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.1...HEAD
+[Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.2...HEAD
+[1.0.2]: https://github.com/alphap365/open-news/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/alphap365/open-news/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/alphap365/open-news/releases/tag/v1.0.0
 [0.2.0]: https://github.com/alphap365/open-news/releases/tag/v0.2.0
