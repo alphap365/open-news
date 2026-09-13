@@ -52,8 +52,8 @@ Both funnel raw engine results through the same `run_pipeline()`, in this fixed 
 
 `fetch/crawler.py` has `AsyncCrawler` (many concurrent `httpx` requests, BFS frontier) and `JSCrawler` (one persistent Playwright browser, sequential). They're genuinely different execution shapes — `JSCrawler` isn't just "AsyncCrawler but slower," it can't fan out the way a browser context can.
 
-## Known structural gaps (as of v1.0.1)
+## Known structural gaps (as of v1.0.2)
 
-- `search()` has no `refresh_interval` — no live/streaming keyword search yet.
 - `discover_and_get()` has no `whitelist`/`blacklist` parameters.
+- The TUI's live-refresh menu (10) still only covers `fetch()` (category/location); it hasn't been wired up to `stream_search()` / `search(refresh_interval=...)` yet even though the underlying API gap closed in v1.0.2.
 - `feeds/registry.py` (a `requests`-based feed-registry system) exists in the tree but isn't imported anywhere in the current public surface — likely legacy, worth removing or wiring up.
