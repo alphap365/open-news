@@ -28,7 +28,7 @@
 
 ## 🔁 Latest updates
 
-> **[Unreleased]** — v1.0.2 planned: live/streaming keyword search (`search(refresh_interval=...)`).
+> **v1.0.2** — Custom date-range search (`search(start_date=..., end_date=...)`), a `country` parameter on `search()` for locale-correct Google News results, and **live/streaming keyword search** (`stream_search()` / `search(refresh_interval=...)`, plus `open-news search --stream SECONDS` and TUI menu 10) — closing the gap noted in earlier releases. Also fixes an `install.sh --uninstall` bug that left Developer installs' clones behind, and a broken shell-rc detection that silently skipped PATH setup on zsh/fish. See [docs/parameters-reference.md](docs/parameters-reference.md) for country codes, date formats, and other parameter formats in one place.
 
 > **v1.0.1** — `open-news`/`open-news-tui` console commands (previously `python -m` only); CLI rewritten with full API coverage + fixed a `search --sort popularity` crash; TUI rewritten with a settings panel, richer search, save/open-in-browser; **more robust source attribution** — aggregator-hosted articles (MSN, Yahoo News, etc.) now attempt to resolve the *original* publisher instead of reporting the aggregator's domain; fixed full-content enrichment silently overwriting good search snippets with empty extracted fields.
 
@@ -113,7 +113,7 @@ Detects your OS (Linux/macOS/Termux/WSL), sets up an isolated environment, asks 
 ```bash
 pip install open-news-api
 # a specific version:
-pip install open-news-api==1.0.1
+pip install open-news-api==1.0.2
 ```
 
 ### With uv
@@ -172,6 +172,28 @@ for a in results:
     print(f"✓ {a['title']}")
     print(f"  → {a['url']}\n")
 ```
+
+### 2️⃣.1 Custom date range + country (v1.0.2)
+```python
+from open_news import search
+
+# everything published in a specific window, India edition
+results = search("monsoon forecast", start_date="2026-08-01", end_date="2026-08-31", country="in")
+for a in results:
+    print(f"✓ {a['title']} — {a.get('published')}")
+```
+`start_date`/`end_date` accept `'YYYY-MM-DD'`, an ISO datetime string, or a `date`/`datetime` object, and take precedence over `time_limit` when given. `country` is an ISO 3166-1 alpha-2 code (defaults to `"us"`). Full formats: [docs/parameters-reference.md](docs/parameters-reference.md).
+
+### 2️⃣.2 Live keyword search (v1.0.2)
+```python
+from open_news import stream_search
+
+# yields only newly-seen articles each poll, same shape as fetch(refresh_interval=...)
+for new_articles in stream_search("budget 2026", refresh_interval=30):
+    for a in new_articles:
+        print(a["title"])
+```
+Or via `search(refresh_interval=...)` directly, or from the shell: `open-news search "budget 2026" --stream 30`.
 
 ### 3️⃣ Live category/location news
 ```python
@@ -251,6 +273,8 @@ merged = dedupe_articles(raw, fuzzy=True)   # collapse same-story-different-outl
 ```bash
 open-news fetch --category tech --limit 5
 open-news search "AI regulation" --mode all --exclude sports
+open-news search "elections" --start-date 2026-08-01 --end-date 2026-08-31 --country in
+open-news search "budget 2026" --stream 30
 open-news discover https://www.bbc.com --limit 10
 open-news summarize --query "climate policy" --sentences 2
 open-news --version
@@ -286,7 +310,8 @@ Full parameter tables and return shapes for every function: **[docs/python-api.m
 | Function | Purpose |
 |---|---|
 | `fetch()` | Live category/location news, optional streaming via `refresh_interval` |
-| `search()` | Google News search with query modes, exclusions, filtering |
+| `search()` | Google News search with query modes, exclusions, filtering, custom date ranges, country, and optional streaming via `refresh_interval` |
+| `stream_search()` | Always-a-generator convenience wrapper for live/streaming keyword search |
 | `get_article()` | Extract one article's full content + metadata |
 | `discover_and_get()` | RSS-first, crawler-fallback discovery from any site |
 | `search_site()` | Search scoped to one domain |
@@ -294,11 +319,13 @@ Full parameter tables and return shapes for every function: **[docs/python-api.m
 | `summarize_text()` / `summarize_with_keywords()` | Standalone extractive summarization |
 | `dedupe_articles()` | Exact + fuzzy dedup on any article list |
 
+Parameter formats that span multiple functions (country/region codes, date formats, language codes): **[docs/parameters-reference.md](docs/parameters-reference.md)**
+
 ## 🧭 Known limitations
 
-- **Source attribution is best-effort on aggregator sites.** MSN/Yahoo News/etc. don't consistently expose the original publisher in their markup; when no hint is found, the aggregator's own name is reported with `meta.source_is_aggregator=True, meta.source_resolved=False` so you can distinguish a confirmed publisher from a fallback.
-- **No live/streaming keyword search yet** — `refresh_interval` exists on `fetch()` but not `search()`. Planned for v1.0.2.
+- **Source attribution is best-effort on aggregator sites.** MSN/Yahoo News/etc. don't consistently expose the original publisher in their markup; when no hint is found, the aggregator's own name is reported with `meta.source_is_aggregator=True, meta.source_resolved=False` so you can distinguish a confirmed publisher from a fallback. `tools/publisher_resolution_eval.ipynb` is a Colab notebook for spot-checking this against real aggregator pages.
 - **`discover_and_get()` has no `whitelist`/`blacklist` parameters** yet, unlike `fetch()`/`search()`.
+- **The TUI's Settings country field only affects `search()`**, not `fetch()`/`location` — the two use different underlying engines with different locale mechanisms (see [docs/parameters-reference.md](docs/parameters-reference.md#country--region-codes)).
 
 Details and architecture context: [docs/architecture.md](docs/architecture.md).
 
