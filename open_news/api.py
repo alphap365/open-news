@@ -1,5 +1,6 @@
 import logging
-from typing import Dict, Iterator, List, Optional, Union
+from datetime import date, datetime
+from typing import cast, Dict, Iterator, List, Optional, Union
 
 from .fetch.article import get_article as _get_article
 from .fetch.crawler import crawl_site
@@ -107,6 +108,9 @@ def search(
     query_mode: str = "any",
     exclude_terms: Optional[List[str]] = None,
     time_limit: str = "d",
+    start_date: Optional[Union[str, date, datetime]] = None,
+    end_date: Optional[Union[str, date, datetime]] = None,
+    country: Optional[str] = None,
     max_results: int = 20,
     language: Optional[str] = None,
     whitelist: Optional[List[str]] = None,
@@ -114,9 +118,10 @@ def search(
     sort_by: str = "date",
     full_content: bool = False,
     search_in: Optional[List[str]] = None,
+    refresh_interval: Optional[int] = None,
     js: bool = False,
     dedupe: bool = True,
-) -> List[Dict]:
+) -> Union[List[Dict], Iterator[List[Dict]]]:
     """
     Direct keyword search via Google News RSS.
 
@@ -124,16 +129,39 @@ def search(
         query: search terms
         query_mode: 'any'|'all'|'exact_phrase'
         exclude_terms: word-boundary-filtered exclusion list
+        time_limit: 'd'|'w'|'m' recency window. Ignored if start_date
+            and/or end_date is given.
+        start_date / end_date: custom date range (v1.0.2). Accepts a
+            'YYYY-MM-DD' string, an ISO-8601 datetime string, or a
+            date/datetime object. Either can be omitted for an open-ended
+            range (e.g. start_date only = "everything since"). Takes
+            precedence over time_limit. See
+            docs/parameters-reference.md for accepted formats.
+        country: ISO 3166-1 alpha-2 region code (e.g. "US", "IN", "GB"),
+            controlling Google News' locale/region results (v1.0.2).
+            Defaults to "US". See docs/parameters-reference.md for the
+            full list of codes Google News recognizes.
+        refresh_interval: if set (seconds, >= 5), returns a generator that
+            polls this search on a cadence and yields only newly-seen
+            articles each cycle — the search equivalent of
+            fetch(refresh_interval=...), previously only available via
+            fetch(). Prefer stream_search() if you always want a
+            generator back regardless of this argument.
         (remaining parameters shared with fetch(), same meaning)
     """
     config = SearchConfig(
         query=query, query_mode=query_mode, exclude_terms=exclude_terms,
-        time_limit=time_limit, max_results=max_results, language=language,
+        time_limit=time_limit, start_date=start_date, end_date=end_date,
+        max_results=max_results, language=language,
         whitelist=whitelist, blacklist=blacklist, sort_by=sort_by,
         full_content=full_content, search_in=search_in or ["title", "description"],
+        refresh_interval=refresh_interval,
     )
 
-    raw = search_raw(config)
+    if refresh_interval:
+        return _search_stream(config, country=country, js=js, dedupe=dedupe)
+
+    raw = search_raw(config, country=country, language=config.language)
     return run_pipeline(
         raw, max_results=config.max_results, language=config.language,
         query=config.query, query_mode=config.query_mode,
@@ -142,6 +170,72 @@ def search(
         sort_by=config.sort_by, full_content=config.full_content,
         dedupe=dedupe, js=js,
     )
+
+
+def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedupe: bool) -> Iterator[List[Dict]]:
+    """Generator backing search(refresh_interval=...) / stream_search():
+    re-queries the same keyword search on a cadence, yielding only articles
+    not seen in a previous cycle. Mirrors _fetch_stream()'s shape."""
+    import time
+    from .processing.dedupe import normalize_url
+
+    seen = set()
+    while True:
+        raw = search_raw(config, country=country, language=config.language)
+        processed = run_pipeline(
+            raw, max_results=config.max_results, language=config.language,
+            query=config.query, query_mode=config.query_mode,
+            exclude_terms=config.exclude_terms, search_in=config.search_in,
+            whitelist=config.whitelist, blacklist=config.blacklist,
+            sort_by=config.sort_by, full_content=config.full_content,
+            dedupe=dedupe, js=js,
+        )
+        new_articles = [a for a in processed if normalize_url(a.get("url", "")) not in seen]
+        for a in new_articles:
+            seen.add(normalize_url(a.get("url", "")))
+        if new_articles:
+            yield new_articles
+        time.sleep(config.refresh_interval)
+
+
+def stream_search(
+    query: str,
+    refresh_interval: int = 60,
+    query_mode: str = "any",
+    exclude_terms: Optional[List[str]] = None,
+    country: Optional[str] = None,
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    js: bool = False,
+    dedupe: bool = True,
+) -> Iterator[List[Dict]]:
+    """
+    Live/streaming keyword search (v1.0.2) — the search() equivalent of
+    fetch(refresh_interval=...), closing the gap noted in earlier
+    changelogs ("no live/streaming keyword search yet").
+
+    Polls search() on `refresh_interval` seconds and yields only articles
+    not seen in a previous cycle, same semantics as fetch()'s generator.
+    A thin, always-a-generator convenience wrapper around
+    search(refresh_interval=...) for callers who don't want to branch on
+    the return type.
+
+    Example:
+        for new_articles in stream_search("budget 2026", refresh_interval=30):
+            for a in new_articles:
+                print(a["title"])
+    """
+    return cast(Iterator[List[Dict]], search(
+        query, query_mode=query_mode, exclude_terms=exclude_terms,
+        country=country, max_results=max_results, language=language,
+        whitelist=whitelist, blacklist=blacklist, sort_by=sort_by,
+        full_content=full_content, refresh_interval=max(5, refresh_interval),
+        js=js, dedupe=dedupe,
+    ))
 
 
 def search_site(
