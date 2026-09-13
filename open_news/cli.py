@@ -8,7 +8,7 @@ import os
 import sys
 from typing import Any, Dict, List, Optional  # noqa: F401 (Any used by config loader)
 
-from .api import fetch, search, get_article, discover_and_get, search_site
+from .api import fetch, search, stream_search, get_article, discover_and_get, search_site
 from .processing.batch import batch_summarize, search_and_summarize
 
 __all__ = ["main"]
@@ -237,7 +237,13 @@ def build_parser() -> argparse.ArgumentParser:
     # clear argparse error instead of a ValueError from deep in the stack.
     search_p.add_argument("--sort", default=cfg_sort if cfg_sort in ("date", "relevance") else "date",
                            choices=["date", "relevance"])
-    search_p.add_argument("--time-limit", default="d", choices=["d", "w", "m"])
+    search_p.add_argument("--time-limit", default="d", choices=["d", "w", "m"],
+                           help="Ignored if --start-date/--end-date is given.")
+    search_p.add_argument("--start-date", metavar="YYYY-MM-DD", help="Custom date range start (inclusive).")
+    search_p.add_argument("--end-date", metavar="YYYY-MM-DD", help="Custom date range end (inclusive).")
+    search_p.add_argument("--country", metavar="CC", help="ISO 3166-1 alpha-2 region code, e.g. us, in, gb.")
+    search_p.add_argument("--stream", type=int, metavar="SECONDS",
+                           help="Live refresh: poll every SECONDS (>=5) and print only newly-seen articles. Ctrl+C to stop.")
     _add_fetch_content_args(search_p)
     _add_filter_args(search_p)
     _add_output_args(search_p)
@@ -302,10 +308,28 @@ def _run(args: argparse.Namespace) -> None:
         _emit(results, args, "articles")
 
     elif args.command == "search":
+        if args.stream:
+            stream = stream_search(
+                args.query, refresh_interval=args.stream, query_mode=args.mode,
+                exclude_terms=_csv_list(args.exclude), country=args.country,
+                max_results=args.limit, language=args.language, sort_by=args.sort,
+                full_content=args.full_content, js=args.js,
+                whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
+                dedupe=args.dedupe,
+            )
+            print(C.dim(f"Streaming search results for {args.query!r} every {args.stream}s "
+                         "(Ctrl+C to stop)..."), file=sys.stderr)
+            try:
+                for new_articles in stream:
+                    _emit(new_articles, args, "articles")
+            except KeyboardInterrupt:
+                print(C.dim("\nStream stopped."), file=sys.stderr)
+            return
         results = search(
             query=args.query, query_mode=args.mode, exclude_terms=_csv_list(args.exclude),
             max_results=args.limit, language=args.language, sort_by=args.sort,
-            time_limit=args.time_limit, full_content=args.full_content, js=args.js,
+            time_limit=args.time_limit, start_date=args.start_date, end_date=args.end_date,
+            country=args.country, full_content=args.full_content, js=args.js,
             whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
             dedupe=args.dedupe,
         )
