@@ -203,10 +203,13 @@ done
 [ -n "$PYTHON_BIN" ] || fail "No Python 3.10+ interpreter found on PATH (tried ${candidates[*]})."
 ok "Python $PY_VERSION ($PYTHON_BIN)"
 
+PIP_FLAGS=()
 if [ "$OS" = "termux" ]; then
-  info "Termux detected — ensuring build deps for lxml (clang, libxml2, libxslt)..."
-  run pkg install -y clang libxml2 libxslt python-pip || \
-    warn "Auto-install failed; if lxml fails to build run: pkg install clang libxml2 libxslt"
+  info "Termux detected — ensuring native C/C++ and Rust build deps..."
+  run pkg install -y clang rust make cmake pkg-config \
+    libxml2 libxslt libffi openssl python-pip || \
+    warn "Auto-install failed; if native builds fail run: pkg install clang rust make cmake pkg-config libxml2 libxslt libffi openssl python-pip"
+  PIP_FLAGS+=(--no-binary=lxml,selectolax,primp,greenlet --no-cache-dir)
 fi
 
 UV_BIN=""
@@ -302,7 +305,7 @@ if [ "$mode_choice" = "2" ]; then
   else
     PIP_BIN="$BIN_DIR/pip"
     run "$PIP_BIN" install --upgrade pip
-    ( cd "$DEV_DIR" && run "$PIP_BIN" install -e "$SPEC" )
+    ( cd "$DEV_DIR" && run "$PIP_BIN" install "${PIP_FLAGS[@]}" -e "$SPEC" )
   fi
 else
   # --- Quick install ---
@@ -324,16 +327,16 @@ else
   info "Installing $SPEC"
   if [ "$PACKAGE_MANAGER" = "uv" ]; then
     if [ "$venv_choice" = "1" ]; then
-      run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
+      run "$UV_BIN" pip install --python "$VENV_PYTHON" "${PIP_FLAGS[@]}" "$SPEC"
     else
-      run "$UV_BIN" pip install --python "$PYTHON_BIN" --user --upgrade "$SPEC"
+      run "$UV_BIN" pip install --python "$PYTHON_BIN" "${PIP_FLAGS[@]}" --user --upgrade "$SPEC"
     fi
   elif [ "$venv_choice" = "1" ]; then
     PIP_BIN="$BIN_DIR/pip"
     run "$PIP_BIN" install --upgrade pip
-    run "$PIP_BIN" install "$SPEC"
+    run "$PIP_BIN" install "${PIP_FLAGS[@]}" "$SPEC"
   else
-    run "$PYTHON_BIN" -m pip install --user --upgrade "$SPEC"
+    run "$PYTHON_BIN" -m pip install "${PIP_FLAGS[@]}" --user --upgrade "$SPEC"
   fi
 fi
 

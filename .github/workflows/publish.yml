@@ -1,60 +1,90 @@
-name: Publish to PyPI
+name: Publish Pre-Release & Release to PyPI
 
 on:
   push:
-    tags:
-      - "v*"
+    branches: [alpha, beta, main]
+  workflow_dispatch:
+    inputs:
+      branch_override:
+        description: 'Override bump type (normally inferred from branch)'
+        required: false
+        default: ''
+        type: choice
+        options: ['', prerelease-a, prerelease-b, final]
 
 permissions:
-  contents: read
+  contents: write
   id-token: write
 
 jobs:
-  build:
-    name: Build release distributions
+  bump-and-build:
+    name: Bump version and build distributions
     runs-on: ubuntu-latest
-
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
         with:
-          python-version: '3.12'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install build tools
-        run: uv pip install --system --upgrade build twine
-
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - uses: astral-sh/setup-uv@v6
+      - name: Install tools
+        run: uv pip install --system --upgrade build twine commitizen
+      - name: Configure git author
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+      - name: Determine bump
+        id: bump
+        shell: bash
+        run: |
+          set -euo pipefail
+          override='${{ inputs.branch_override }}'
+          if [ -n "$override" ]; then
+            case "$override" in
+              prerelease-a) echo "flag=--prerelease a" >> "$GITHUB_OUTPUT" ;;
+              prerelease-b) echo "flag=--prerelease b" >> "$GITHUB_OUTPUT" ;;
+              final)        echo "flag=" >> "$GITHUB_OUTPUT" ;;
+            esac
+            exit 0
+          fi
+          case "${GITHUB_REF_NAME}" in
+            alpha) echo "flag=--prerelease a" >> "$GITHUB_OUTPUT" ;;
+            beta)  echo "flag=--prerelease b" >> "$GITHUB_OUTPUT" ;;
+            main)  echo "flag="              >> "$GITHUB_OUTPUT" ;;
+            *)     echo "::error::Unexpected branch ${GITHUB_REF_NAME}"; exit 1 ;;
+          esac
+      - name: Bump version
+        shell: bash
+        run: |
+          set -euo pipefail
+          flag='${{ steps.bump.outputs.flag }}'
+          # shellcheck disable=SC2086
+          cz bump $flag --yes
+          new_tag="$(cz version --project)"
+          test -n "$new_tag"
+          echo "NEW_TAG=$new_tag" >> "$GITHUB_ENV"
+          echo "Bumped to $new_tag"
+      - name: Push version commit and tag
+        run: git push origin "HEAD:${GITHUB_REF_NAME}" --tags
       - name: Build distributions
         run: uv build
-
       - name: Validate metadata
         run: uv run --with twine twine check dist/*
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: release-distributions
           path: dist/
+          if-no-files-found: error
 
   publish:
     name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
+    needs: bump-and-build
     environment:
       name: pypi
-      url: https://pypi.org/p/open-news-api
-
+      url: https://pypi.org
     steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: release-distributions
-          path: dist/
-
-      - name: Publish distributions
-        uses: pypa/gh-action-pypi-publish@release/v1
+      - uses: actions/download-artifact@v4
+        with: { name: release-distributions, path: dist/ }
+      - uses: pypa/gh-action-pypi-publish@release/v1

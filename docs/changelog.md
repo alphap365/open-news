@@ -4,8 +4,28 @@ All notable changes to `open-news` are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Added
+- `docs/release-flow.md`: single-page walkthrough of the alpha → beta → final promotion (branch → Commitizen suffix → resulting PEP 440 version), plus how to install a pre-release with pip/uv.
+
 ### Planned
 - TUI live-refresh support for keyword search (menu 10 currently only covers category/location fetch) — `stream_search()`/`search(refresh_interval=...)` are available in the Python API and CLI (`search --stream SECONDS`) as of 1.0.2, but the TUI menu hasn't been wired up to them yet.
+
+### Changed
+- `pyproject.toml` now declares a static `version` and drops `setuptools-scm` / `dynamic = ["version"]`. Previously both `setuptools-scm` (git-tag-driven) and Commitizen (writes `pyproject.toml:version`) owned the version string, so `cz bump` and the built artifact could disagree. Commitizen is now the single source of truth.
+- `.github/workflows/build-dep-wheels.yml` restructured. The previous `standard-wheels` job declared a four-package matrix but hardcoded `lxml` in the build step, so the other three packages were silently never built for desktop; the Android jobs never installed the Rust toolchain that `primp`'s PyO3 build requires. Both are fixed, and the pinned version for each package is now read from `uv.lock` once and shared across all jobs.
+
+### Fixed
+- `install.sh` interactive prompts now read from `/dev/tty` instead of stdin. Under the advertised `curl … | bash` invocation stdin is the script pipe, so every `read -r -p` was consuming lines of `install.sh` itself as the answer — the wizard silently ran with wrong values (or aborted on `set -e`).
+- `install.sh --uninstall` read `~/.open-news/install-state.json` *after* `rm -rf ~/.open-news`, so the state file was always gone by the time it was consulted and the Developer-install cleanup path (added in 1.0.2) never executed. State is now read first, then the directory is removed.
+- `install.sh`'s uv + "current environment" branch called `uv pip install --user`, which uv rejects (`unexpected argument '--user'`). That combination is the recommended path whenever uv is present, so it was failing for the primary audience. The flag is dropped; `--python "$PYTHON_BIN"` already targets the right interpreter.
+- `install.sh`'s uv + Developer-install branch did not pass the Termux `--no-binary=...` / `--no-cache-dir` flags that the equivalent pip branch did, so on Termux+uv it would install manylinux ELF wheels for `lxml`/`selectolax`/`primp`/`greenlet` that cannot load on Android. The flags are now spread in both branches.
+- `install.sh` aborted under `set -u` on macOS's bundled bash 3.2 (`PIP_FLAGS[@]: unbound variable`), because `${arr[@]}` on an empty array is treated as unset in bash < 4.4. All five install call sites now use `${arr[@]+"${arr[@]}"}`, which is a no-op on bash 4.4+ and safe on 3.2.
+
+## [1.0.2a] - 2026-09-15
+
+### Fixed
+- Termux installation now provisions the complete native build toolchain (`clang`, Rust/Cargo, `make`, CMake, `pkg-config`, XML/XSLT, libffi, and OpenSSL packages) and forces source builds for compiled dependencies (`lxml`, `selectolax`, `primp`, and `greenlet`).
+- The dependency wheel workflow builds Android `arm64_v8a` and `x86_64` wheels with `ANDROID_API_LEVEL=24` and publishes them to the `wheelhouse` release. (The desktop matrix and Rust toolchain setup in this workflow were completed later — see Unreleased.)
 
 ## [1.0.2] - 2026-09-13
 
@@ -112,6 +132,7 @@ Version 1.0 introduces a new discovery and processing architecture. This is a br
 - Initial article extraction, RSS discovery, live feeds, Google News search, batch processing, summarization, and caching APIs.
 
 [Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.2...HEAD
+[1.0.2a]: https://github.com/alphap365/open-news/compare/v1.0.1...v1.0.2
 [1.0.2]: https://github.com/alphap365/open-news/compare/v1.0.1...v1.0.2
 [1.0.1]: https://github.com/alphap365/open-news/compare/v1.0.0...v1.0.1
 [1.0.0]: https://github.com/alphap365/open-news/releases/tag/v1.0.0

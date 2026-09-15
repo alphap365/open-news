@@ -33,6 +33,10 @@ This is a wizard, not a silent script. It will:
 
 > **Native Windows note:** `install.sh` needs a POSIX-style shell — it works under **WSL** or **Git Bash**, but not raw `cmd.exe`/PowerShell. On native Windows, use the manual install below inside PowerShell.
 
+> **Shell requirements:** `install.sh` uses bash arrays in a way that needs bash ≥ 4.4. macOS's bundled `/bin/bash` is 3.2; if you hit `PIP_FLAGS[@]: unbound variable`, run the installer with Homebrew bash — `brew install bash && /opt/homebrew/bin/bash install.sh` — or use the manual install below.
+
+> **Piping the script:** the interactive prompts read from `/dev/tty`, so `curl … | bash` works as advertised even though stdin is the pipe. If you're piping the script **and** have no controlling terminal (some CI containers), pass `--yes` — the wizard will then take every default without prompting.
+
 ## Manual install
 
 ```bash
@@ -89,10 +93,10 @@ This is a genuinely large download (~300MB for Chromium) — it's optional for a
 
 ## Termux
 
-`lxml` needs a compiler and headers to build on Termux. The installer handles this automatically; doing it by hand:
+Termux uses native builds for the compiled dependencies. The installer handles the toolchain automatically; doing it by hand:
 
 ```bash
-pkg install clang libxml2 libxslt python-pip
+pkg install clang rust make cmake pkg-config libxml2 libxslt libffi openssl python-pip
 pip install open-news-api
 ```
 
@@ -101,6 +105,46 @@ If `uv` is already installed, the package install is:
 ```bash
 uv pip install open-news-api
 ```
+
+The installer forces native source builds for `lxml`, `selectolax`, `primp`, and `greenlet`. This avoids trying to install desktop Linux wheels on Android. If a build fails, confirm the packages above are installed and retry with verbose output:
+
+```bash
+python -m pip install -v --no-binary=lxml,selectolax,primp,greenlet open-news-api
+```
+
+To verify that native dependency wheels can be produced locally from a checkout:
+
+```bash
+bash scripts/build-termux-wheels.sh
+```
+
+The repository also builds Android wheels for `arm64_v8a` and `x86_64` with `ANDROID_API_LEVEL=24` in GitHub Actions. Those artifacts are published to the `wheelhouse` release; the Termux installer still prefers native builds for compatibility with the device's local environment.
+
+The wheel workflow is [`.github/workflows/build-dep-wheels.yml`](https://github.com/alphap365/open-news/blob/main/.github/workflows/build-dep-wheels.yml). It builds one wheel per package × platform × Python version (3.10–3.13), driven by the versions pinned in `uv.lock` — to refresh a wheel, bump the pin and push, or trigger it manually from the Actions tab.
+
+## Pre-release (alpha / beta) installs
+
+The distribution follows `X.Y.ZaN` (alpha) → `X.Y.ZbN` (beta) → `X.Y.Z` (final) on the `alpha`, `beta`, and `main` branches respectively. **`pip install open-news-api` will not pick up a pre-release** — pip hides them by default. To install one, opt in explicitly:
+
+```bash
+# newest alpha or beta
+pip install --pre open-news-api
+
+# a specific pre-release
+pip install "open-news-api==1.0.2a3"
+
+# "1.0.2a0 or newer, including pre-releases on that line"
+pip install "open-news-api>=1.0.2a0"
+```
+
+With `uv`:
+
+```bash
+uv pip install --prerelease=allow open-news-api
+uv tool install --prerelease=allow open-news-api
+```
+
+The interactive installer always installs the newest stable release; there is no flag to make it install a pre-release. If you're testing an alpha, use one of the commands above instead. `open-news --version` prints the exact version installed.
 
 ## Preferences file
 
@@ -122,7 +166,10 @@ These become the CLI's argparse **defaults** — any flag you pass explicitly on
 ```bash
 ./install.sh --uninstall
 ```
+Removes the venv the installer created (`~/.open-news/`) and offers to remove your preferences (`~/.config/open-news/`). If you did a **Developer install**, it also reads `~/.open-news/install-state.json` (written at install time) to locate the git clone and offers to remove it and its .venv too.
 
-Removes the venv the installer created (`~/.open-news/`) and offers to remove your preferences (`~/.config/open-news/`). If you installed manually via `pip`, just `pip uninstall open-news-api`.
+If you've deleted install-state.json by hand, the dev-clone prompt won't appear — remove ~/open-news yourself in that case.
+
+If you installed manually via `pip`, just `pip uninstall open-news-api`.
 
 For a manual `uv` installation, use `uv pip uninstall open-news-api` or `uv tool uninstall open-news-api` when it was installed as a standalone tool.

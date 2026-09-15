@@ -26,7 +26,9 @@
 
 ---
 
-## 🔁 Latest updates
+## 🔥 Latest updates
+
+> **v1.0.2a1** — Repairs the 1.0.2 pre-release cycle: `install.sh` now reads prompts from `/dev/tty` (so `curl … | bash` actually works), reads install state before deleting it (so `--uninstall` cleans up Developer-install clones as documented), and stops passing `--user` to `uv pip install`. `pyproject.toml` has a single version source again, and `build-dep-wheels.yml` builds all four native dependencies on all four platforms instead of only `lxml`. Release flow (alpha → beta → final) documented in [docs/release-flow.md](docs/release-flow.md).
 
 > **v1.0.2** — Custom date-range search (`search(start_date=..., end_date=...)`), a `country` parameter on `search()` for locale-correct Google News results, and **live/streaming keyword search** (`stream_search()` / `search(refresh_interval=...)`, plus `open-news search --stream SECONDS` and TUI menu 10) — closing the gap noted in earlier releases. Also fixes an `install.sh --uninstall` bug that left Developer installs' clones behind, and a broken shell-rc detection that silently skipped PATH setup on zsh/fish. See [docs/parameters-reference.md](docs/parameters-reference.md) for country codes, date formats, and other parameter formats in one place.
 
@@ -114,6 +116,9 @@ Detects your OS (Linux/macOS/Termux/WSL), sets up an isolated environment, asks 
 pip install open-news-api
 # a specific version:
 pip install open-news-api==1.0.2
+
+# newest alpha / beta pre-release:
+pip install --pre open-news-api
 ```
 
 ### With uv
@@ -345,6 +350,18 @@ python -m compileall -q open_news
 ```
 
 CI runs this matrix across Python 3.10–3.13 on every push; see `.github/workflows/ci.yml`.
+
+### Cutting a release
+
+The three long-lived branches map to version suffixes automatically:
+
+| Branch  | `cz bump` suffix | Version it produces        |
+|---------|------------------|----------------------------|
+| `alpha` | `a`              | `1.0.2a1`, `1.0.2a2`, …    |
+| `beta`  | `b`              | `1.0.2b0`, `1.0.2b1`, …    |
+| `main`  | *(none)*         | `1.0.2` final              |
+
+Merge feature work into `alpha`, let it soak, merge `alpha` → `beta`, then `beta` → `main`. Each push bumps the version with Commitizen, tags it, and publishes to PyPI via [`.github/workflows/publish.yml`](.github/workflows/publish.yml). Version is written to `pyproject.toml:version` — that file is the single source of truth. Full walkthrough: [docs/release-flow.md](docs/release-flow.md).
 
 ## 🤝 Contributing
 

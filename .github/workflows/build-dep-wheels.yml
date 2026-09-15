@@ -1,0 +1,166 @@
+name: Build dependency wheels
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "uv.lock"
+      - ".github/workflows/build-dep-wheels.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  versions:
+    name: Read pinned versions from uv.lock
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.read.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: read
+        shell: bash
+        run: |
+          set -euo pipefail
+          pkgs=(lxml selectolax primp greenlet)
+          json='['
+          for pkg in "${pkgs[@]}"; do
+            v=$(awk -v package="$pkg" '
+              $0 == "name = \"" package "\"" { found=1; next }
+              found && /^version = / { gsub(/\"/, "", $3); print $3; exit }
+            ' uv.lock)
+            test -n "$v" || { echo "::error::No version for $pkg"; exit 1; }
+            json+="{\"pkg\":\"$pkg\",\"version\":\"$v\"},"
+          done
+          json="${json%,}]"
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+
+  android:
+    name: Android / ${{ matrix.entry.pkg }} / ${{ matrix.arch }}
+    needs: versions
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        entry: ${{ fromJSON(needs.versions.outputs.matrix) }}
+        arch: [arm64_v8a, x86_64]
+    env:
+      CIBW_PLATFORM: android
+      CIBW_ARCHS_ANDROID: ${{ matrix.arch }}
+      CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+      CIBW_BUILD_FRONTEND: build
+      CIBW_ENVIRONMENT_ANDROID: "ANDROID_API_LEVEL=24"
+      ANDROID_API_LEVEL: "24"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Set up Rust (primp only)
+        if: matrix.entry.pkg == 'primp'
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,x86_64-linux-android
+      - name: Fetch and unpack sdist
+        shell: bash
+        env:
+          PKG: ${{ matrix.entry.pkg }}
+          VER: ${{ matrix.entry.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p src pkgsrc
+          python -m pip download --no-binary=:all: --no-deps --dest src "$PKG==$VER"
+          archive=$(find src -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -print -quit)
+          test -n "$archive"
+          case "$archive" in
+            *.tar.gz) tar -xzf "$archive" --strip-components=1 -C pkgsrc ;;
+            *.zip)
+              unzip -q "$archive" -d unpacked
+              root=$(find unpacked -mindepth 1 -maxdepth 1 -type d -print -quit)
+              if [ -n "$root" ]; then cp -a "$root"/. pkgsrc/; else cp -a unpacked/. pkgsrc/; fi
+              ;;
+          esac
+      - name: Build Android wheels
+        uses: pypa/cibuildwheel@v3.2.0
+        with:
+          package-dir: pkgsrc
+      - name: Verify
+        shell: bash
+        run: |
+          find wheelhouse -name '*.whl' -print
+          test -n "$(find wheelhouse -maxdepth 1 -name '*.whl' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-android-${{ matrix.entry.pkg }}-${{ matrix.arch }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  desktop:
+    name: ${{ matrix.os }} / ${{ matrix.entry.pkg }}
+    needs: versions
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-13, macos-14, windows-latest]
+        entry: ${{ fromJSON(needs.versions.outputs.matrix) }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CIBW_BUILD: "cp310-* cp311-* cp312-* cp313-*"
+      CIBW_SKIP: "*-musllinux_* pp*"
+      CIBW_ARCHS_LINUX: "x86_64"
+      CIBW_ARCHS_MACOS: "x86_64 arm64"
+      CIBW_ARCHS_WINDOWS: "AMD64"
+      CIBW_BUILD_FRONTEND: build
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with: { python-version: "3.12" }
+      - name: Set up Rust (primp only)
+        if: matrix.entry.pkg == 'primp'
+        uses: dtolnay/rust-toolchain@stable
+      - name: Fetch and unpack sdist
+        shell: bash
+        env:
+          PKG: ${{ matrix.entry.pkg }}
+          VER: ${{ matrix.entry.version }}
+        run: |
+          set -euo pipefail
+          mkdir -p src pkgsrc
+          python -m pip download --no-binary=:all: --no-deps --dest src "$PKG==$VER"
+          archive=$(find src -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) -print -quit)
+          test -n "$archive"
+          case "$archive" in
+            *.tar.gz) tar -xzf "$archive" --strip-components=1 -C pkgsrc ;;
+            *.zip)
+              unzip -q "$archive" -d unpacked
+              root=$(find unpacked -mindepth 1 -maxdepth 1 -type d -print -quit)
+              if [ -n "$root" ]; then cp -a "$root"/. pkgsrc/; else cp -a unpacked/. pkgsrc/; fi
+              ;;
+          esac
+      - name: Build desktop wheels
+        uses: pypa/cibuildwheel@v3.2.0
+        with:
+          package-dir: pkgsrc
+      - name: Verify
+        shell: bash
+        run: test -n "$(find wheelhouse -maxdepth 1 -name '*.whl' -print -quit)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheels-${{ matrix.os }}-${{ matrix.entry.pkg }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+
+  publish:
+    name: Publish to wheelhouse release
+    needs: [android, desktop]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: all-wheels }
+      - name: List collected wheels
+        run: find all-wheels -name '*.whl' | sort
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: wheelhouse
+          files: all-wheels/**/*.whl
+          fail_on_unmatched_files: true
