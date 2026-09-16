@@ -28,27 +28,24 @@ jobs:
 
       - name: Fetch lxml sdist
         run: |
-          curl -L -o src.tar.gz https://pythonhosted.org
+          curl -L -o src.tar.gz https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz
           mkdir -p pkgsrc
           tar xf src.tar.gz -C pkgsrc --strip-components=1
 
-      # 1. Provide JDK (Mandatory for sdkmanager execution)
+      # 1. Set up Java (Required by Android SDK tools under the hood)
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
 
-      # 2. Use a modern, stable SDK installer
-      - name: Install Android Platforms and NDK
-        uses: malinskiy/action-android/install-sdk@v1
-        with:
-          packages: |
-            platforms;android-34
-            build-tools;34.0.0
-            ndk;27.0.12077973
+      # 2. Silently accept licenses and install the specific NDK version directly via native CLI
+      - name: Install Android NDK
+        run: |
+          echo "y" | sdkmanager --licenses
+          sdkmanager "ndk;27.0.12077973"
 
-      # 3. Compile the wheel via cibuildwheel v3.1+
+      # 3. Build the wheel via cibuildwheel
       - uses: pypa/cibuildwheel@v3.1
         with:
           package-dir: pkgsrc
@@ -56,7 +53,7 @@ jobs:
           CIBW_PLATFORM: android
           CIBW_BUILD: "cp313-*"
           CIBW_ARCHS: arm64_v8a
-          # Point cibuildwheel directly to the NDK installed by the action
+          # Reference the native installation path directly
           CIBW_ENVIRONMENT: ANDROID_NDK_HOME=${{ env.ANDROID_HOME }}/ndk/27.0.12077973
 
       - uses: actions/upload-artifact@v4
