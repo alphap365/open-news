@@ -28,9 +28,9 @@ jobs:
 
       - name: Fetch lxml sdist
         run: |
-          python -m pip download --no-deps -d src "lxml==6.1.3" --no-binary :all:
+          curl -L -o src.tar.gz https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz
           mkdir -p pkgsrc
-          cd src && tar xf lxml-6.1.3.tar.gz -C ../pkgsrc --strip-components=1
+          tar xf src.tar.gz -C pkgsrc --strip-components=1
 
       - uses: pypa/cibuildwheel@v2.22
         with:
