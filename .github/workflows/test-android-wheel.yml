@@ -32,14 +32,20 @@ jobs:
           mkdir -p pkgsrc
           tar xf src.tar.gz -C pkgsrc --strip-components=1
 
-      # 1. Properly initialize the Android NDK for cross-compiling C/C++ components
+      # Add Java (Required by Android SDK tools)
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '17'
+
+      # Automatically accepts licenses by default
       - name: Set up Android NDK
         uses: android-actions/setup-android@v3
         with:
           api-level: 24
-          ndk-version: 27.0.12077973 # Or whichever NDK version your target dependencies require
+          ndk-version: 27.0.12077973
 
-      # 2. Upgrade to v3.1+ which understands the "android" platform natively
       - uses: pypa/cibuildwheel@v3.1
         with:
           package-dir: pkgsrc
@@ -47,7 +53,6 @@ jobs:
           CIBW_PLATFORM: android
           CIBW_BUILD: "cp313-*"
           CIBW_ARCHS: arm64_v8a
-          # Inform cibuildwheel exactly where the cross-compilation toolchain lives
           CIBW_ENVIRONMENT: ANDROID_NDK_HOME=${{ env.ANDROID_NDK_ROOT }}
 
       - uses: actions/upload-artifact@v4
