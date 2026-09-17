@@ -265,7 +265,8 @@ def semver_key(tag):
 wh_all = [r for r in releases if r.get("tag_name", "").startswith("wheelhouse-v")]
 candidates = [
     r["tag_name"] for r in wh_all
-    if any("android_arm64_v8a" in a["name"] for a in r.get("assets", []))
+    if any(("android_" in a["name"] and "arm64_v8a" in a["name"])
+           for a in r.get("assets", []))
 ]
 
 if not candidates:
@@ -340,7 +341,9 @@ except Exception as e:
     sys.exit(1)
 
 assets = [a for a in release.get("assets", [])
-          if a["name"].endswith(".whl") and "android_arm64_v8a" in a["name"]]
+          if a["name"].endswith(".whl")
+          and "android_" in a["name"]
+          and "arm64_v8a" in a["name"]]
 
 if not assets:
     print(f"ERROR: release '{tag}' has no android_arm64_v8a wheels.", file=sys.stderr)
