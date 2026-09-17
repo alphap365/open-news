@@ -499,15 +499,15 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 8b. Patch ddgs/primp to use httpx on Termux
+# 8b. Patch ddgs to use a robust httpx-based DuckDuckGo scraper
 # ---------------------------------------------------------------------
 # On Termux/Android, ddgs >= 7.x pulls primp (a Rust HTTP client) which
 # panics with "android context was not initialized" (ndk-context) and
 # SIGABRTs the process on the first network call. This patch replaces
-# the primp-based HTTP client with an httpx-based HTML scraper for
-# DuckDuckGo, which works reliably on Termux.
+# the primp-based HTTP client with a robust httpx-based HTML scraper for
+# DuckDuckGo that handles the uddg= redirect and DuckDuckGo's rate limits.
 if [ "$DRY_RUN" -eq 0 ]; then
-  info "Patching ddgs to use httpx-based DuckDuckGo scraper (Termux fix)..."
+  info "Patching ddgs to use robust httpx-based DuckDuckGo scraper (Termux fix)..."
 
   DDGS_DIR="$("$VENV_PYTHON" -c 'import ddgs, os; print(os.path.dirname(ddgs.__file__))')"
   PATCH_FILE="$DDGS_DIR/_ddg_httpx_fallback.py"
@@ -520,14 +520,19 @@ if [ "$DRY_RUN" -eq 0 ]; then
 # added by open-news installer
 # Termux/Android fallback for ddgs: avoids primp (Rust) which panics
 # with "android context was not initialized" on Termux.
+# Uses httpx against DuckDuckGo's HTML endpoint with retry logic.
 import httpx
-from typing import List, Dict
+import logging
+import time
+from typing import List, Dict, Optional
+from urllib.parse import urlparse, parse_qs, unquote
+
+logger = logging.getLogger(__name__)
 
 _HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
 
 def _decode_uddg(url: str) -> str:
     """Decode DuckDuckGo's uddg= redirect wrapper."""
-    from urllib.parse import urlparse, parse_qs, unquote
     if "uddg=" not in url:
         return url
     try:
@@ -539,34 +544,55 @@ def _decode_uddg(url: str) -> str:
 
 def ddgs_news(query: str, region: str = "wt-wt", timelimit: str = "d",
               max_results: int = 10) -> List[Dict]:
-    """DuckDuckGo news search via HTML endpoint (httpx-based)."""
+    """DuckDuckGo news search via HTML endpoint (httpx-based) with retries."""
     results = []
-    try:
-        with httpx.Client(follow_redirects=True, timeout=15) as client:
-            resp = client.post(_HTML_ENDPOINT, data={
-                "q": query,
-                "kl": region if region != "wt-wt" else "us-en",
-                "df": timelimit,
-            })
-            resp.raise_for_status()
-            from lxml.html import fromstring
-            doc = fromstring(resp.text)
-            for result in doc.xpath("//div[contains(@class,'result')]")[:max_results]:
-                title_el = result.xpath(".//a[contains(@class,'result__a')]")
-                snippet_el = result.xpath(".//a[contains(@class,'result__snippet')]")
-                if not title_el:
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+        "Accept-Language": "en-US,en;q=0.9",
+    }
+    data = {
+        "q": query,
+        "kl": region if region != "wt-wt" else "us-en",
+        "df": timelimit,
+    }
+
+    for attempt in range(3):
+        try:
+            with httpx.Client(follow_redirects=True, timeout=20, headers=headers) as client:
+                resp = client.post(_HTML_ENDPOINT, data=data)
+                if resp.status_code == 202:
+                    wait = 2 ** attempt
+                    logger.warning(f"DDG rate limit hit, retrying in {wait}s...")
+                    time.sleep(wait)
                     continue
-                link = title_el[0].get("href", "")
-                if link:
-                    link = _decode_uddg(link)
-                results.append({
-                    "title": title_el[0].text_content().strip() if title_el else "",
-                    "url": link,
-                    "body": snippet_el[0].text_content().strip() if snippet_el else "",
-                })
-    except Exception as e:
-        import logging
-        logging.getLogger(__name__).warning(f"ddgs httpx fallback failed: {e}")
+                resp.raise_for_status()
+                from lxml.html import fromstring
+                doc = fromstring(resp.text)
+                for result in doc.xpath("//div[contains(@class,'result')]")[:max_results]:
+                    title_el = result.xpath(".//a[contains(@class,'result__a')]")
+                    snippet_el = result.xpath(".//a[contains(@class,'result__snippet')]")
+                    if not title_el:
+                        continue
+                    link = title_el[0].get("href", "")
+                    if link:
+                        link = _decode_uddg(link)
+                    results.append({
+                        "title": title_el[0].text_content().strip() if title_el else "",
+                        "url": link,
+                        "body": snippet_el[0].text_content().strip() if snippet_el else "",
+                    })
+                break
+        except httpx.HTTPStatusError as e:
+            if e.response.status_code == 202 and attempt < 2:
+                wait = 2 ** attempt
+                logger.warning(f"DDG rate limit hit, retrying in {wait}s...")
+                time.sleep(wait)
+                continue
+            logger.warning(f"ddgs httpx fallback failed: {e}")
+            break
+        except Exception as e:
+            logger.warning(f"ddgs httpx fallback failed: {e}")
+            break
     return results
 PY
 
