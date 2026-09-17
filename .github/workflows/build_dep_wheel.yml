@@ -148,6 +148,8 @@ jobs:
   publish:
     needs: [read-version, build, verify-metadata]
     runs-on: ubuntu-latest
+    permissions:
+      contents: write   # required for softprops/action-gh-release
     steps:
       - uses: actions/download-artifact@v4
         with:
