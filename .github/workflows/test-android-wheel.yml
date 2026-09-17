@@ -19,28 +19,65 @@ jobs:
         id: gen
         run: python .github/scripts/compute_wheel_gaps.py
 
-  build-lxml-only:
+  build:
     needs: matrix-gen
     if: needs.matrix-gen.outputs.has_gaps == 'true'
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix-gen.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    # A known-broken package (e.g. lxml's current Android cross-compile gap)
+    # shouldn't take down the whole matrix — let each leg fail independently.
+    continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch lxml sdist
+      - name: Fetch sdist (generic — works for any package/version)
         run: |
-          curl -L -o src.tar.gz https://files.pythonhosted.org/packages/23/ad/28ecd7cb894d172f3c9c80a075eeeb2017ac62e3632cee05a5f9493547eb/lxml-6.1.3.tar.gz
+          python3 - <<'EOF'
+          import json, urllib.request
+
+          pkg = "${{ matrix.package }}"
+          version = "${{ matrix.version }}"
+          data = json.load(urllib.request.urlopen(
+              f"https://pypi.org/pypi/{pkg}/{version}/json"
+          ))
+          sdist = next(u for u in data["urls"] if u["packagetype"] == "sdist")
+          print(sdist["url"])
+          with open("sdist_url.txt", "w") as f:
+              f.write(sdist["url"])
+          EOF
+
+          URL=$(cat sdist_url.txt)
+          echo "Fetching: $URL"
+          curl -L -o src_archive "$URL"
+
           mkdir -p pkgsrc
-          tar xf src.tar.gz -C pkgsrc --strip-components=1
+          case "$URL" in
+            *.tar.gz|*.tgz)
+              tar xf src_archive -C pkgsrc --strip-components=1 ;;
+            *.zip)
+              mkdir -p pkgsrc_tmp
+              unzip -q src_archive -d pkgsrc_tmp
+              mv pkgsrc_tmp/*/* pkgsrc/ ;;
+            *)
+              echo "Unrecognized sdist archive type: $URL" >&2
+              exit 1 ;;
+          esac
+        shell: bash
 
       - uses: pypa/cibuildwheel@v4.2.0
         with:
           package-dir: pkgsrc
         env:
-          CIBW_PLATFORM: android
-          CIBW_BUILD: "cp313-*"
-          CIBW_ARCHS: arm64_v8a
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          CIBW_BUILD: ${{ matrix.cibw_build_id }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
 
       - uses: actions/upload-artifact@v4
+        if: success()
         with:
-          name: lxml-android-wheel
+          name: wheel-${{ matrix.package }}-${{ matrix.cibw_build_id }}-${{ matrix.cibw_archs }}
           path: wheelhouse/*.whl
+          if-no-files-found: warn
