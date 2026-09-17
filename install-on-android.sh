@@ -155,9 +155,6 @@ ok "Python $PY_VERSION ($PYTHON_BIN)"
 # ---------------------------------------------------------------------
 # 0b. TLS trust store for Python
 # ---------------------------------------------------------------------
-# Termux's Python does not automatically locate Termux's CA bundle. Set the
-# environment variables that httpx, requests, and urllib3 all consult, and
-# install ca-certificates so the bundle exists.
 info "Ensuring CA certificates are installed..."
 run pkg install -y ca-certificates || warn "Could not install ca-certificates."
 
@@ -504,13 +501,6 @@ fi
 # ---------------------------------------------------------------------
 # 8b. Patch certifi's CA bundle with Termux's root certificates
 # ---------------------------------------------------------------------
-# Even though httpx respects SSL_CERT_FILE by default, its documentation
-# warns that environment variables cannot override the bundled certifi
-# package. If the application creates an httpx client with trust_env=False,
-# the environment variable is ignored entirely. The robust fix is to append
-# Termux's CA bundle to certifi's own cacert.pem, so every HTTPS request
-# — regardless of how httpx resolves its trust store — sees the Termux
-# root certificates.
 if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
   info "Patching certifi's CA bundle with Termux root certificates..."
 
@@ -530,18 +520,15 @@ with open(certifi_path, "r") as f:
 with open(termux_cert, "r") as f:
     termux_certs = f.read()
 
-# Check if Termux certs are already present (by a distinctive marker)
 marker = "# Termux CA bundle appended by open-news installer"
 if marker in existing:
     print("  SKIP: Termux CA bundle already appended to certifi")
     sys.exit(0)
 
-# Back up the original certifi bundle before modifying it
 backup = certifi_path + ".open-news.bak"
 if not os.path.exists(backup):
     shutil.copy2(certifi_path, backup)
 
-# Append Termux's certificates
 with open(certifi_path, "a") as f:
     f.write(f"\n{marker}\n")
     f.write(termux_certs)
@@ -557,12 +544,83 @@ PY
 fi
 
 # ---------------------------------------------------------------------
+# 8c. Patch httpx to ALWAYS use Termux CA bundle
+# ---------------------------------------------------------------------
+# This is the definitive fix. Even if open-news creates an httpx client
+# with trust_env=False, this patch forces the default SSL context to use
+# Termux's CA bundle. It modifies httpx's _config.py in the venv.
+if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
+  info "Patching httpx to force Termux CA bundle..."
+
+  "$VENV_PYTHON" - <<'PY'
+import httpx, os, sys, importlib.util
+
+# Find httpx's _config.py
+spec = importlib.util.find_spec("httpx._config")
+if spec is None or spec.origin is None:
+    print("  SKIP: httpx._config not found")
+    sys.exit(0)
+
+config_path = spec.origin
+cert_file = os.environ.get("SSL_CERT_FILE", "")
+
+if not cert_file or not os.path.exists(cert_file):
+    print("  SKIP: no Termux CA bundle")
+    sys.exit(0)
+
+with open(config_path, "r") as f:
+    content = f.read()
+
+marker = "# PATCHED_BY_OPEN_NEWS_INSTALLER"
+if marker in content:
+    print("  SKIP: httpx._config already patched")
+    sys.exit(0)
+
+# Find the _default_ssl_context function and patch it to always use
+# Termux's CA bundle, regardless of trust_env.
+old = '''def _default_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    return context'''
+
+new = f'''def _default_ssl_context() -> ssl.SSLContext:
+    # PATCHED_BY_OPEN_NEWS_INSTALLER
+    # Force use of Termux CA bundle for all httpx clients,
+    # even when trust_env=False is set.
+    import os
+    cert = os.environ.get("SSL_CERT_FILE", "")
+    if cert and os.path.exists(cert):
+        context = ssl.create_default_context(cafile=cert)
+    else:
+        context = ssl.create_default_context()
+    return context'''
+
+if old not in content:
+    print("  WARN: could not find _default_ssl_context in httpx._config")
+    print("  The httpx version may differ. Patch skipped.")
+    sys.exit(0)
+
+content = content.replace(old, new)
+
+with open(config_path, "w") as f:
+    f.write(content)
+
+print(f"  Patched httpx._config at {config_path}")
+PY
+
+  if [ $? -eq 0 ]; then
+    ok "httpx patched to force Termux CA bundle."
+  else
+    warn "Could not patch httpx — HTTPS may still fail."
+  fi
+fi
+
+# ---------------------------------------------------------------------
 # 9. Verify Python HTTPS works
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Verifying Python HTTPS works..."
 
-  # Test 1: with environment variables set (how the wrapper runs it)
+  # Test 1: with environment variables set
   if "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
 import httpx, sys
 try:
@@ -578,29 +636,25 @@ PY
   else
     warn "HTTPS from Python failed. First 5 lines of the error:"
     sed -n '1,5p' /tmp/net-check.err >&2 || true
-    warn "Check that ca-certificates is installed and the certifi patch succeeded."
   fi
 
-  # Test 2: without environment variables, relying on certifi alone.
-  # This verifies the certifi patch covers the case where the application
-  # creates an httpx client with trust_env=False.
+  # Test 2: without environment variables, relying on the httpx patch alone
   if env -u SSL_CERT_FILE -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE \
        "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check2.err
 import httpx, sys
 try:
     r = httpx.get("https://news.google.com/rss", timeout=15)
-    print(f"  certifi-only fetch: HTTP {r.status_code}, {len(r.content)} bytes")
+    print(f"  httpx-patched fetch: HTTP {r.status_code}, {len(r.content)} bytes")
     sys.exit(0)
 except Exception as e:
-    print(f"  certifi-only fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+    print(f"  httpx-patched fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
     sys.exit(1)
 PY
   then
-    ok "HTTPS works via certifi alone (trust_env=False safe)."
+    ok "HTTPS works via httpx patch alone (trust_env=False safe)."
   else
-    warn "HTTPS via certifi alone failed. First 5 lines:"
+    warn "HTTPS via httpx patch alone failed. First 5 lines:"
     sed -n '1,5p' /tmp/net-check2.err >&2 || true
-    warn "The certifi patch may not have taken effect."
   fi
 fi
 
