@@ -107,10 +107,8 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then
   info "Removing ${HOME}/.open-news"
   rm -rf "${HOME}/.open-news"
 
-  # Remove wrappers we installed
   for cmd in open-news open-news-tui; do
     if [ -f "$PREFIX/bin/$cmd" ]; then
-      # Only remove if it's our wrapper (contains our marker comment)
       if grep -q 'added by open-news installer' "$PREFIX/bin/$cmd" 2>/dev/null; then
         rm -f "$PREFIX/bin/$cmd"
         ok "Removed $PREFIX/bin/$cmd"
@@ -157,16 +155,9 @@ ok "Python $PY_VERSION ($PYTHON_BIN)"
 # ---------------------------------------------------------------------
 # 0b. TLS trust store for Python
 # ---------------------------------------------------------------------
-# Termux's Python does not automatically locate Termux's CA bundle. Without
-# SSL_CERT_FILE set, every HTTPS request from Python raises
-# SSLCertVerificationError — sometimes silently, depending on the caller.
-# curl works because it reads the system store directly. Set the vars here
-# so they cover:
-#   - the inline Python scripts below (GitHub release lookup)
-#   - pip's own HTTPS calls
-#   - the venv Python for the rest of this script
-# and persist them (see step 3) into the venv's activate script and the
-# launcher wrappers (step 10) so future `open-news` invocations inherit them.
+# Termux's Python does not automatically locate Termux's CA bundle. Set the
+# environment variables that httpx, requests, and urllib3 all consult, and
+# install ca-certificates so the bundle exists.
 info "Ensuring CA certificates are installed..."
 run pkg install -y ca-certificates || warn "Could not install ca-certificates."
 
@@ -176,6 +167,7 @@ if [ -f "$CERT_FILE" ]; then
   export REQUESTS_CA_BUNDLE="$CERT_FILE"
   export CURL_CA_BUNDLE="$CERT_FILE"
   export PIP_CERT="$CERT_FILE"
+  export SSL_CERT_DIR="${PREFIX}/etc/tls"
   ok "Using Termux CA bundle: $CERT_FILE"
 else
   warn "CA bundle not found at $CERT_FILE — HTTPS may fail."
@@ -314,8 +306,7 @@ else
   VENV_PYTHON="$VENV_DIR/bin/python"
 fi
 
-# Persist cert env vars into the venv's activate script so any shell that
-# sources it (e.g. `source ~/.open-news/venv/bin/activate`) inherits them.
+# Persist cert env vars into the venv's activate script.
 if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$VENV_DIR/bin/activate" ]; then
   if ! grep -qs 'SSL_CERT_FILE' "$VENV_DIR/bin/activate"; then
     cat >> "$VENV_DIR/bin/activate" <<EOF
@@ -324,6 +315,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$VENV_DIR/bin/ac
 export SSL_CERT_FILE="$SSL_CERT_FILE"
 export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
 export CURL_CA_BUNDLE="$SSL_CERT_FILE"
+export SSL_CERT_DIR="$SSL_CERT_DIR"
 EOF
     ok "Persisted CA bundle path into venv activate script."
   fi
@@ -377,7 +369,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fi
   done
 
-  # Try cpNN-cpNN -> cpNN-NN rename on any rejected wheel where pytag == abitag.
   for whl in "${reject[@]}"; do
     [ -e "$whl" ] || continue
     base="$(basename "$whl")"
@@ -401,7 +392,6 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fi
   done
 
-  # Drop anything not accepted.
   for whl in "$WHEELHOUSE_DIR"/*.whl; do
     [ -e "$whl" ] || continue
     b="$(basename "$whl")"
@@ -512,14 +502,70 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 9. Quick network sanity check (uses venv Python + cert env vars)
+# 8b. Patch certifi's CA bundle with Termux's root certificates
+# ---------------------------------------------------------------------
+# Even though httpx respects SSL_CERT_FILE by default, its documentation
+# warns that environment variables cannot override the bundled certifi
+# package. If the application creates an httpx client with trust_env=False,
+# the environment variable is ignored entirely. The robust fix is to append
+# Termux's CA bundle to certifi's own cacert.pem, so every HTTPS request
+# — regardless of how httpx resolves its trust store — sees the Termux
+# root certificates.
+if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
+  info "Patching certifi's CA bundle with Termux root certificates..."
+
+  if SSL_CERT_FILE="$SSL_CERT_FILE" "$VENV_PYTHON" - <<'PY'
+import certifi, os, shutil, sys
+
+certifi_path = certifi.where()
+termux_cert = os.environ.get("SSL_CERT_FILE", "")
+
+if not termux_cert or not os.path.exists(termux_cert):
+    print("  SKIP: no Termux CA bundle to append")
+    sys.exit(0)
+
+with open(certifi_path, "r") as f:
+    existing = f.read()
+
+with open(termux_cert, "r") as f:
+    termux_certs = f.read()
+
+# Check if Termux certs are already present (by a distinctive marker)
+marker = "# Termux CA bundle appended by open-news installer"
+if marker in existing:
+    print("  SKIP: Termux CA bundle already appended to certifi")
+    sys.exit(0)
+
+# Back up the original certifi bundle before modifying it
+backup = certifi_path + ".open-news.bak"
+if not os.path.exists(backup):
+    shutil.copy2(certifi_path, backup)
+
+# Append Termux's certificates
+with open(certifi_path, "a") as f:
+    f.write(f"\n{marker}\n")
+    f.write(termux_certs)
+
+print(f"  Appended Termux CA bundle to {certifi_path}")
+print(f"  Backup saved to {backup}")
+PY
+  then
+    ok "certifi CA bundle patched."
+  else
+    warn "Could not patch certifi — HTTPS may still work via SSL_CERT_FILE."
+  fi
+fi
+
+# ---------------------------------------------------------------------
+# 9. Verify Python HTTPS works
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Verifying Python HTTPS works..."
-  if SSL_CERT_FILE="${SSL_CERT_FILE:-}" "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
-import sys
+
+  # Test 1: with environment variables set (how the wrapper runs it)
+  if "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
+import httpx, sys
 try:
-    import httpx
     r = httpx.get("https://news.google.com/rss", timeout=15)
     print(f"  RSS fetch: HTTP {r.status_code}, {len(r.content)} bytes")
     sys.exit(0)
@@ -532,22 +578,39 @@ PY
   else
     warn "HTTPS from Python failed. First 5 lines of the error:"
     sed -n '1,5p' /tmp/net-check.err >&2 || true
-    warn "If this shows SSLCertVerificationError, run: pkg install ca-certificates"
+    warn "Check that ca-certificates is installed and the certifi patch succeeded."
+  fi
+
+  # Test 2: without environment variables, relying on certifi alone.
+  # This verifies the certifi patch covers the case where the application
+  # creates an httpx client with trust_env=False.
+  if env -u SSL_CERT_FILE -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE \
+       "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check2.err
+import httpx, sys
+try:
+    r = httpx.get("https://news.google.com/rss", timeout=15)
+    print(f"  certifi-only fetch: HTTP {r.status_code}, {len(r.content)} bytes")
+    sys.exit(0)
+except Exception as e:
+    print(f"  certifi-only fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    ok "HTTPS works via certifi alone (trust_env=False safe)."
+  else
+    warn "HTTPS via certifi alone failed. First 5 lines:"
+    sed -n '1,5p' /tmp/net-check2.err >&2 || true
+    warn "The certifi patch may not have taken effect."
   fi
 fi
 
 # ---------------------------------------------------------------------
 # 10. Install launcher wrappers in $PREFIX/bin
 # ---------------------------------------------------------------------
-# Termux keeps $PREFIX/bin on PATH already, so a wrapper there makes the
-# command available in any new shell without editing .bashrc. The wrapper
-# also re-exports the CA bundle env vars so `open-news` works regardless
-# of whether the venv's activate script was sourced.
 if [ "$DRY_RUN" -eq 0 ] && [ -d "$PREFIX/bin" ] && [ -w "$PREFIX/bin" ]; then
   for cmd in open-news open-news-tui; do
     if [ -x "$BIN_DIR/$cmd" ]; then
       wrapper="$PREFIX/bin/$cmd"
-      # Do not clobber an unrelated file.
       if [ -e "$wrapper" ] && ! grep -q 'added by open-news installer' "$wrapper" 2>/dev/null; then
         warn "$wrapper exists and is not ours — skipping."
         continue
@@ -558,6 +621,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ -d "$PREFIX/bin" ] && [ -w "$PREFIX/bin" ]; then
 export SSL_CERT_FILE="${PREFIX}/etc/tls/cert.pem"
 export REQUESTS_CA_BUNDLE="\$SSL_CERT_FILE"
 export CURL_CA_BUNDLE="\$SSL_CERT_FILE"
+export SSL_CERT_DIR="${PREFIX}/etc/tls"
 exec "$BIN_DIR/$cmd" "\$@"
 EOF
       chmod +x "$wrapper"
