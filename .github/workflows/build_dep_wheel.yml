@@ -6,7 +6,7 @@ on:
     paths:
       - "uv.lock"
       - "pyproject.toml"
-      - ".github/workflows/build-dep-wheels.yml"
+      - ".github/workflows/build_dep_wheel.yml"
   schedule:
     - cron: "0 3 1 * *"
 
@@ -76,13 +76,13 @@ jobs:
       matrix:
         include: ${{ fromJSON(needs.matrix-gen.outputs.matrix) }}
     runs-on: ${{ matrix.runner }}
-    # A known-broken package (e.g. lxml's Android cross-compile gap) shouldn't
-    # take down the whole matrix — let each leg fail independently.
+    # A known-broken package shouldn't take down the whole matrix —
+    # each leg fails independently. Failed legs simply produce no artifact.
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
 
-      - name: Fetch sdist (generic — works for any package/version)
+      - name: Fetch sdist for ${{ matrix.package }}==${{ matrix.version }}
         run: |
           python3 - <<'EOF'
           import json, urllib.request
@@ -100,7 +100,7 @@ jobs:
 
           URL=$(cat sdist_url.txt)
           echo "Fetching: $URL"
-          curl -L -o src_archive "$URL"
+          curl -fL --retry 3 --retry-delay 2 -o src_archive "$URL"
 
           mkdir -p pkgsrc
           case "$URL" in
@@ -127,7 +127,9 @@ jobs:
       - uses: actions/upload-artifact@v4
         if: success()
         with:
-          name: wheel-${{ matrix.package }}-${{ matrix.cibw_platform }}-${{ matrix.cibw_archs }}-${{ matrix.py_tag }}
+          # target already encodes platform+archs (e.g. manylinux_x86_64),
+          # so no collision between the manylinux and musllinux linux rows.
+          name: wheel-${{ matrix.package }}-${{ matrix.target }}-${{ matrix.py_tag }}
           path: wheelhouse/*.whl
           if-no-files-found: warn
 

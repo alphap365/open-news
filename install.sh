@@ -142,6 +142,29 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then
   exit 0
 fi
 
+# ---------------------------------------------------------------------
+# Termux has a fundamentally different install path — no PyPI Android
+# wheels for compiled deps, and lxml needs a from-source build. Hand off.
+# ---------------------------------------------------------------------
+if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
+  info "Termux detected — handing off to install-on-android.sh"
+
+  SELF_DIR=""
+  if [ -n "${BASH_SOURCE[0]:-}" ]; then
+    SELF_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" 2>/dev/null && pwd || true)"
+  fi
+
+  if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/install-on-android.sh" ]; then
+    exec bash "$SELF_DIR/install-on-android.sh" "$@"
+  fi
+
+  tmp="$(mktemp)"
+  curl -fsSL \
+    "https://raw.githubusercontent.com/alphap365/open-news/main/install-on-android.sh" \
+    -o "$tmp"
+  exec bash "$tmp" "$@"
+fi
+
 printf '\n'
 printf '\033[1m open-news installer\033[0m\n'
 printf ' Fetch, search, discover, understand.\n\n'
@@ -202,12 +225,6 @@ done
 
 [ -n "$PYTHON_BIN" ] || fail "No Python 3.10+ interpreter found on PATH (tried ${candidates[*]})."
 ok "Python $PY_VERSION ($PYTHON_BIN)"
-
-if [ "$OS" = "termux" ]; then
-  info "Termux detected — ensuring build deps for lxml (clang, libxml2, libxslt)..."
-  run pkg install -y clang libxml2 libxslt python-pip || \
-    warn "Auto-install failed; if lxml fails to build run: pkg install clang libxml2 libxslt"
-fi
 
 UV_BIN=""
 if command -v uv >/dev/null 2>&1; then

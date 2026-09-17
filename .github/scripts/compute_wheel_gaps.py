@@ -29,13 +29,21 @@ TARGETS = [
      ["cp310", "cp311", "cp312", "cp313"]),
     ("win_amd64",         "windows", "AMD64",     "windows-latest", "win_amd64",
      ["cp310", "cp311", "cp312", "cp313"]),
-    # Android: arm64_v8a is the ONLY supported --archs value for this
-    # platform in cibuildwheel today, and cp313 is CPython-on-Android's
-    # actual floor — confirmed by hand, not assumed. Do not add
-    # armv7/x86_64/x86 rows here until cibuildwheel actually supports them.
     ("android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",  "android_24_arm64_v8a",
      ["cp313"]),
 ]
+
+
+def cibw_build_id_for(platform_, tag_hint, py_tag):
+    """Return a CIBW_BUILD selector that scopes to exactly one libc flavour.
+
+    On linux, `cp313-*` matches BOTH manylinux and musllinux, which would
+    make the two target rows indistinguishable. Everything else is
+    single-flavour per platform, so the wildcard is fine.
+    """
+    if platform_ == "linux":
+        return f"{py_tag}-{tag_hint}_*"   # cp313-manylinux_* / cp313-musllinux_*
+    return f"{py_tag}-*"
 
 ABI3_RE = re.compile(r"-(cp3\d+)-abi3-")
 
@@ -142,10 +150,11 @@ def main():
                 matrix.append({
                     "package": pkg_name,
                     "version": version,
+                    "target": target_name,          # e.g. "manylinux_x86_64"
                     "cibw_platform": platform_,
                     "cibw_archs": archs,
-                    "cibw_build_id": f"{py_tag}-*",
-                    "py_tag": py_tag,   # clean, no wildcard — safe for artifact names
+                    "cibw_build_id": cibw_build_id_for(platform_, tag_hint, py_tag),
+                    "py_tag": py_tag,
                     "runner": runner,
                 })
 
