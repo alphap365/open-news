@@ -2,21 +2,14 @@
 # open-news installer for Termux / Android
 #
 #   curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install-on-android.sh | bash
-#   ./install-on-android.sh --yes               # non-interactive
-#   ./install-on-android.sh --uv                # use uv instead of pip
-#   ./install-on-android.sh --version 1.0.3a2   # pin a version
+#   ./install-on-android.sh --yes
+#   ./install-on-android.sh --uv
+#   ./install-on-android.sh --version 1.0.3a2
 #   ./install-on-android.sh --dry-run
 #   ./install-on-android.sh --uninstall
 #
-# Environment:
-#   GITHUB_TOKEN   Optional. Used for the GitHub release lookup to avoid
-#                  the unauthenticated 60 requests/hour rate limit.
-#
 set -euo pipefail
 
-# ---------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------
 REPO="alphap365/open-news"
 PKG="open-news-api"
 VENV_DIR="${HOME}/.open-news/venv"
@@ -25,22 +18,15 @@ CONFIG_FILE="${CONFIG_DIR}/config.json"
 STATE_FILE="${HOME}/.open-news/install-state.json"
 WHEELHOUSE_DIR="${HOME}/.open-news/wheelhouse"
 
-# Termux always sets PREFIX, but be defensive.
 : "${PREFIX:=/data/data/com.termux/files/usr}"
 
-# ---------------------------------------------------------------------
-# State
-# ---------------------------------------------------------------------
 ASSUME_YES=0
-JS_MODE="ask"          # ask | yes | no
-PACKAGE_MANAGER="ask"  # ask | pip | uv
+JS_MODE="ask"
+PACKAGE_MANAGER="ask"
 DRY_RUN=0
 DO_UNINSTALL=0
 PIN_VERSION=""
 
-# ---------------------------------------------------------------------
-# Argument parsing
-# ---------------------------------------------------------------------
 while [ $# -gt 0 ]; do
   case "$1" in
     --yes|-y)    ASSUME_YES=1 ;;
@@ -50,15 +36,12 @@ while [ $# -gt 0 ]; do
     --pip)       PACKAGE_MANAGER="pip" ;;
     --dry-run)   DRY_RUN=1 ;;
     --uninstall) DO_UNINSTALL=1 ;;
-
     --dev)
       printf 'Error: --dev is not supported on Termux.\n' >&2
-      printf '       Developer installs should clone manually:\n' >&2
-      printf '         git clone https://github.com/%s.git ~/open-news\n' "$REPO" >&2
-      printf '         cd ~/open-news && python -m venv .venv && .venv/bin/pip install -e ".[dev]"\n' >&2
+      printf '       git clone https://github.com/%s.git ~/open-news\n' "$REPO" >&2
+      printf '       cd ~/open-news && python -m venv .venv && .venv/bin/pip install -e ".[dev]"\n' >&2
       exit 2
       ;;
-
     --version)
       if [ $# -lt 2 ] || [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
         printf 'Error: --version requires a value, e.g. --version 1.0.3a2\n' >&2
@@ -71,12 +54,10 @@ while [ $# -gt 0 ]; do
       PIN_VERSION="${1#--version=}"
       [ -n "$PIN_VERSION" ] || { printf 'Error: --version= requires a value\n' >&2; exit 2; }
       ;;
-
     -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
-
     *)
       printf 'Unknown option: %s\n' "$1" >&2
       exit 2
@@ -85,9 +66,6 @@ while [ $# -gt 0 ]; do
   shift
 done
 
-# ---------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------
 info()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
 warn()  { printf '\033[33m!!\033[0m %s\n' "$1" >&2; }
 fail()  { printf '\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -125,18 +103,27 @@ ask_text() {
   echo "${reply:-$default}"
 }
 
-# ---------------------------------------------------------------------
-# Uninstall path (short-circuits everything else)
-# ---------------------------------------------------------------------
 if [ "$DO_UNINSTALL" -eq 1 ]; then
   info "Removing ${HOME}/.open-news"
   rm -rf "${HOME}/.open-news"
+
+  # Remove wrappers we installed
+  for cmd in open-news open-news-tui; do
+    if [ -f "$PREFIX/bin/$cmd" ]; then
+      # Only remove if it's our wrapper (contains our marker comment)
+      if grep -q 'added by open-news installer' "$PREFIX/bin/$cmd" 2>/dev/null; then
+        rm -f "$PREFIX/bin/$cmd"
+        ok "Removed $PREFIX/bin/$cmd"
+      fi
+    fi
+  done
+
   read -r -p "Also remove preferences at $CONFIG_FILE? [y/N]: " reply || true
   if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
     rm -rf "$CONFIG_DIR"
     ok "Removed $CONFIG_DIR"
   fi
-  ok "Uninstalled. Remove any PATH line from your shell rc file manually."
+  ok "Uninstalled."
   exit 0
 fi
 
@@ -150,10 +137,10 @@ if ! command -v pkg >/dev/null 2>&1; then
 fi
 
 info "Ensuring Python is installed..."
-run pkg install -y python || fail "Could not install Python. Try 'pkg update && pkg install python' manually."
+run pkg install -y python || fail "Could not install Python."
 
 PYTHON_BIN="$(command -v python3 || command -v python || true)"
-[ -n "$PYTHON_BIN" ] || fail "No python3 on PATH after 'pkg install python'."
+[ -n "$PYTHON_BIN" ] || fail "No python3 on PATH."
 
 PY_VERSION="$("$PYTHON_BIN" -c 'import sys; print("%d.%d" % sys.version_info[:2])')"
 PY_MINOR="${PY_VERSION#3.}"
@@ -168,12 +155,36 @@ fi
 ok "Python $PY_VERSION ($PYTHON_BIN)"
 
 # ---------------------------------------------------------------------
-# 1. Resolve the open-news-api version we're installing
+# 0b. TLS trust store for Python
 # ---------------------------------------------------------------------
-# Deliberately NOT using PyPI's info.version: that tracks only the latest
-# stable release, so a prerelease like 1.0.3a2 on top of 1.0.2 leaves
-# info.version pointing at 1.0.2. Instead we ask GitHub for the newest
-# release that actually contains an android_arm64_v8a wheel.
+# Termux's Python does not automatically locate Termux's CA bundle. Without
+# SSL_CERT_FILE set, every HTTPS request from Python raises
+# SSLCertVerificationError — sometimes silently, depending on the caller.
+# curl works because it reads the system store directly. Set the vars here
+# so they cover:
+#   - the inline Python scripts below (GitHub release lookup)
+#   - pip's own HTTPS calls
+#   - the venv Python for the rest of this script
+# and persist them (see step 3) into the venv's activate script and the
+# launcher wrappers (step 10) so future `open-news` invocations inherit them.
+info "Ensuring CA certificates are installed..."
+run pkg install -y ca-certificates || warn "Could not install ca-certificates."
+
+CERT_FILE="${PREFIX}/etc/tls/cert.pem"
+if [ -f "$CERT_FILE" ]; then
+  export SSL_CERT_FILE="$CERT_FILE"
+  export REQUESTS_CA_BUNDLE="$CERT_FILE"
+  export CURL_CA_BUNDLE="$CERT_FILE"
+  export PIP_CERT="$CERT_FILE"
+  ok "Using Termux CA bundle: $CERT_FILE"
+else
+  warn "CA bundle not found at $CERT_FILE — HTTPS may fail."
+  warn "If it does, run: pkg install ca-certificates"
+fi
+
+# ---------------------------------------------------------------------
+# 1. Resolve the open-news-api version
+# ---------------------------------------------------------------------
 if [ -n "$PIN_VERSION" ]; then
   V="$PIN_VERSION"
   info "Using pinned version: $V"
@@ -195,27 +206,17 @@ try:
     with urllib.request.urlopen(req, timeout=30) as r:
         releases = json.load(r)
 except urllib.error.HTTPError as e:
-    if e.code == 403:
-        print("ERROR: GitHub API rate limit (HTTP 403).", file=sys.stderr)
-        print("       Set GITHUB_TOKEN to raise the limit, or pass --version X.Y.Z.",
-              file=sys.stderr)
-    else:
-        print(f"ERROR: GitHub API HTTP {e.code}.", file=sys.stderr)
-    sys.exit(1)
+    print(f"ERROR: GitHub API HTTP {e.code}", file=sys.stderr); sys.exit(1)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
-    sys.exit(1)
-
+    print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
 
 def semver_key(tag):
     v = tag.removeprefix("wheelhouse-v")
     m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:([abc]|rc)(\d+))?$", v)
-    if not m:
-        return (0, 0, 0, 0, 0)
+    if not m: return (0, 0, 0, 0, 0)
     major, minor, patch, pre, pre_n = m.groups()
-    pre_rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
-    return (int(major), int(minor), int(patch), pre_rank, int(pre_n or 0))
-
+    rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
+    return (int(major), int(minor), int(patch), rank, int(pre_n or 0))
 
 wh_all = [r for r in releases if r.get("tag_name", "").startswith("wheelhouse-v")]
 candidates = [
@@ -223,31 +224,24 @@ candidates = [
     if any("android_" in a["name"] and "arm64_v8a" in a["name"]
            for a in r.get("assets", []))
 ]
-
 if not candidates:
-    print("ERROR: no GitHub release with android_arm64_v8a wheels found.",
-          file=sys.stderr)
+    print("ERROR: no release with android_arm64_v8a wheels found.", file=sys.stderr)
     if not wh_all:
         print("       No wheelhouse-v* releases exist at all.", file=sys.stderr)
-        print("       -> build_dep_wheel.yml has never published successfully.",
-              file=sys.stderr)
     else:
-        print(f"       {len(wh_all)} wheelhouse release(s) exist, none with android wheels:",
+        print(f"       {len(wh_all)} wheelhouse release(s), none with android wheels:",
               file=sys.stderr)
         for r in wh_all[:10]:
-            n_total = len(r.get("assets", []))
-            n_android = sum(1 for a in r.get("assets", []) if "android" in a["name"])
-            print(f"         {r['tag_name']}: {n_total} assets, {n_android} android",
-                  file=sys.stderr)
-    print("       Pass --version X.Y.Z if you know a specific version exists.",
-          file=sys.stderr)
+            n = sum(1 for a in r.get("assets", []) if "android" in a["name"])
+            print(f"         {r['tag_name']}: {n} android", file=sys.stderr)
+    print("       Pass --version X.Y.Z to pin a version.", file=sys.stderr)
     sys.exit(1)
 
 best = max(candidates, key=semver_key)
 print(best.removeprefix("wheelhouse-v"))
 PY
 )"
-  [ -n "$V" ] || fail "Could not resolve version. Pass --version X.Y.Z to specify one."
+  [ -n "$V" ] || fail "Could not resolve version. Pass --version X.Y.Z."
   ok "Latest Android-wheelhouse version: $V"
 fi
 
@@ -255,13 +249,11 @@ TAG="wheelhouse-v${V}"
 info "Fetching release: $TAG"
 
 # ---------------------------------------------------------------------
-# 2. Download the Android wheels from the GitHub release
+# 2. Download the Android wheels
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$WHEELHOUSE_DIR"
   rm -f "$WHEELHOUSE_DIR"/*.whl 2>/dev/null || true
-
-  info "Querying GitHub release $TAG for Android wheel assets..."
 
   ASSETS="$(REPO="$REPO" TAG="$TAG" "$PYTHON_BIN" - <<'PY'
 import json, os, sys, urllib.request, urllib.error
@@ -280,54 +272,38 @@ try:
     with urllib.request.urlopen(req, timeout=30) as r:
         release = json.load(r)
 except urllib.error.HTTPError as e:
-    if e.code == 404:
-        print(f"ERROR: release '{tag}' not found.", file=sys.stderr)
-    elif e.code == 403:
-        print("ERROR: GitHub API rate limit (HTTP 403).", file=sys.stderr)
-    else:
-        print(f"ERROR: HTTP {e.code} for '{tag}'.", file=sys.stderr)
-    sys.exit(1)
+    print(f"ERROR: HTTP {e.code} for release '{tag}'", file=sys.stderr); sys.exit(1)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
-    sys.exit(1)
+    print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
 
 assets = [a for a in release.get("assets", [])
           if a["name"].endswith(".whl")
-          and "android_" in a["name"]
-          and "arm64_v8a" in a["name"]]
-
+          and "android_" in a["name"] and "arm64_v8a" in a["name"]]
 if not assets:
-    print(f"ERROR: release '{tag}' has no android_arm64_v8a wheels.", file=sys.stderr)
-    print(f"       Total assets: {len(release.get('assets', []))}", file=sys.stderr)
-    for a in release.get("assets", [])[:10]:
-        print(f"         - {a['name']}", file=sys.stderr)
+    print(f"ERROR: release '{tag}' has no android wheels.", file=sys.stderr)
     sys.exit(1)
-
 for a in assets:
     print(a["browser_download_url"])
 PY
 )"
-  [ -n "$ASSETS" ] || fail "No Android wheel assets found in release $TAG."
+  [ -n "$ASSETS" ] || fail "No Android wheels in release $TAG."
 
   while IFS= read -r url; do
     [ -n "$url" ] || continue
-    fname="$(basename "$url")"
-    info "Downloading $fname"
+    info "Downloading $(basename "$url")"
     run curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
-      -o "$WHEELHOUSE_DIR/$fname" "$url"
+      -o "$WHEELHOUSE_DIR/$(basename "$url")" "$url"
   done <<< "$ASSETS"
 
   count=$(find "$WHEELHOUSE_DIR" -maxdepth 1 -name '*.whl' | wc -l)
-  [ "$count" -gt 0 ] || fail "No wheels landed in $WHEELHOUSE_DIR."
-  ok "Downloaded $count Android wheel(s)."
-else
-  info "[dry-run] would download android wheels for $TAG into $WHEELHOUSE_DIR"
+  [ "$count" -gt 0 ] || fail "No wheels downloaded."
+  ok "Downloaded $count wheel(s)."
 fi
 
 # ---------------------------------------------------------------------
-# 3. Create the venv
+# 3. Create venv
 # ---------------------------------------------------------------------
-info "Creating virtual environment at $VENV_DIR"
+info "Creating venv at $VENV_DIR"
 run "$PYTHON_BIN" -m venv "$VENV_DIR"
 
 if [ -d "$VENV_DIR/Scripts" ]; then
@@ -338,15 +314,28 @@ else
   VENV_PYTHON="$VENV_DIR/bin/python"
 fi
 
+# Persist cert env vars into the venv's activate script so any shell that
+# sources it (e.g. `source ~/.open-news/venv/bin/activate`) inherits them.
+if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$VENV_DIR/bin/activate" ]; then
+  if ! grep -qs 'SSL_CERT_FILE' "$VENV_DIR/bin/activate"; then
+    cat >> "$VENV_DIR/bin/activate" <<EOF
+
+# added by open-news installer — Termux CA bundle for httpx/requests
+export SSL_CERT_FILE="$SSL_CERT_FILE"
+export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
+export CURL_CA_BUNDLE="$SSL_CERT_FILE"
+EOF
+    ok "Persisted CA bundle path into venv activate script."
+  fi
+fi
+
 # ---------------------------------------------------------------------
-# 4. Select the installer (pip or uv)
+# 4. Choose installer (pip or uv)
 # ---------------------------------------------------------------------
 if [ "$PACKAGE_MANAGER" = "ask" ]; then
   if command -v uv >/dev/null 2>&1; then
-    pm_choice=$(ask_choice \
-      "Which installer should be used for the venv?" 2 \
-      "pip (bundled with the venv)" \
-      "uv (faster; uses the uv on PATH)")
+    pm_choice=$(ask_choice "Which installer for the venv?" 2 \
+      "pip (venv's own)" "uv (system)")
     [ "$pm_choice" = "1" ] && PACKAGE_MANAGER="pip" || PACKAGE_MANAGER="uv"
   else
     PACKAGE_MANAGER="pip"
@@ -354,34 +343,23 @@ if [ "$PACKAGE_MANAGER" = "ask" ]; then
 fi
 
 if [ "$PACKAGE_MANAGER" = "uv" ]; then
-  command -v uv >/dev/null 2>&1 || fail "--uv requested but 'uv' is not on PATH."
-  UV_BIN="$(command -v uv)"
-  PIP_PREFIX=("$UV_BIN" pip install --python "$VENV_PYTHON")
+  command -v uv >/dev/null 2>&1 || fail "--uv requested but uv not on PATH."
+  PIP_PREFIX=("$(command -v uv)" pip install --python "$VENV_PYTHON")
 else
   PIP_PREFIX=("$BIN_DIR/pip" install)
 fi
 
-info "Upgrading packaging tools in the venv..."
 run "${PIP_PREFIX[@]}" --upgrade pip wheel setuptools
 
 # ---------------------------------------------------------------------
 # 5. Reconcile wheel tags with this interpreter (ask pip directly)
 # ---------------------------------------------------------------------
-# We do NOT parse `pip debug --verbose` output — that goes to stderr, its
-# format is unstable across pip versions, and the tag strings it prints
-# may differ from wheel filenames (Termux pip reports cp314-314-... for
-# what should be cp314-cp314-...). Instead, for each wheel we ask pip's
-# own resolver whether it would accept the file, via --dry-run. pip's
-# answer IS the ground truth. If rejected, we try the one known rename
-# (cpNN-cpNN -> cpNN-NN) and re-check. Anything still rejected is dropped
-# so section 6 installs only wheels pip will actually accept.
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Checking each wheel against this interpreter..."
   interp_py="$("$VENV_PYTHON" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
   info "  interpreter: $interp_py"
 
   accepts_pip() {
-    # Exit 0 if pip would install this wheel, nonzero otherwise.
     "$VENV_PYTHON" -m pip install --dry-run --no-deps --quiet \
       --disable-pip-version-check "$1" >/dev/null 2>&1
   }
@@ -399,8 +377,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
     fi
   done
 
-  # Try the cpNN-cpNN -> cpNN-NN rename on any rejected wheel whose
-  # pytag and abitag are the same cpNN value.
+  # Try cpNN-cpNN -> cpNN-NN rename on any rejected wheel where pytag == abitag.
   for whl in "${reject[@]}"; do
     [ -e "$whl" ] || continue
     base="$(basename "$whl")"
@@ -419,12 +396,12 @@ if [ "$DRY_RUN" -eq 0 ]; then
         info "  OK   $newname (after rename)"
         accept+=("$whl")
       else
-        warn "  FAIL $newname (still rejected after rename)"
+        warn "  FAIL $newname (still rejected)"
       fi
     fi
   done
 
-  # Keep only accepted wheels; drop everything else with a log line.
+  # Drop anything not accepted.
   for whl in "$WHEELHOUSE_DIR"/*.whl; do
     [ -e "$whl" ] || continue
     b="$(basename "$whl")"
@@ -440,9 +417,7 @@ if [ "$DRY_RUN" -eq 0 ]; then
   done
 
   remaining=$(find "$WHEELHOUSE_DIR" -maxdepth 1 -name '*.whl' | wc -l)
-  if [ "$remaining" -eq 0 ]; then
-    fail "No wheels in $WHEELHOUSE_DIR survived the compatibility check. This interpreter does not match any wheel in release $TAG. The wheelhouse was built for a different Python version."
-  fi
+  [ "$remaining" -gt 0 ] || fail "No wheels survived compatibility check for $interp_py."
   ok "$remaining wheel(s) usable on $interp_py."
 fi
 
@@ -457,27 +432,20 @@ if [ "$DRY_RUN" -eq 0 ]; then
 
   info "Installing ${#wheels[@]} pre-built wheel(s)..."
   if ! run "${PIP_PREFIX[@]}" --no-deps --force-reinstall "${wheels[@]}"; then
-    warn "pip rejected the wheels. Diagnostics:"
+    warn "pip rejected the wheels."
     warn "  interpreter: $VENV_PYTHON"
     warn "  platform:    $("$VENV_PYTHON" -c 'import sysconfig; print(sysconfig.get_platform())')"
-    warn "  py tag:      $("$VENV_PYTHON" -c 'import sys; print(f"cp{sys.version_info.major}{sys.version_info.minor}")')"
     warn "  pip version: $("$VENV_PYTHON" -m pip --version)"
     fail "Wheel install failed."
   fi
-else
-  info "[dry-run] would install wheels from $WHEELHOUSE_DIR"
 fi
 
 # ---------------------------------------------------------------------
-# 7. Build lxml from source — strategy ladder
+# 7. Build lxml from source
 # ---------------------------------------------------------------------
-# lxml is deliberately not in the wheelhouse (its Android cross-compile
-# is broken upstream), so we build it here against Termux's libxml2/libxslt.
 info "Installing lxml (5–20 minutes on a phone)..."
-
-info "Installing lxml build dependencies..."
 run pkg install -y clang libxml2 libxslt libiconv make python-dev pkg-config || \
-  warn "Some build dependencies failed to install; lxml may fail."
+  warn "Some build dependencies failed."
 
 BASE_CFLAGS="-I${PREFIX}/include/libxml2 -I${PREFIX}/include"
 export CFLAGS="$BASE_CFLAGS"
@@ -486,58 +454,32 @@ export XML2_CONFIG="${PREFIX}/bin/xml2-config"
 export XSLT_CONFIG="${PREFIX}/bin/xslt-config"
 
 LXML_OK=0
-
-reset_lxml() {
-  if [ "$DRY_RUN" -eq 0 ]; then
-    "${PIP_PREFIX[@]}" uninstall -y lxml >/dev/null 2>&1 || true
-  fi
-}
-
+reset_lxml() { [ "$DRY_RUN" -eq 0 ] && "${PIP_PREFIX[@]}" uninstall -y lxml >/dev/null 2>&1 || true; }
 try_lxml() {
   local label="$1"; shift
   info "lxml attempt: $label"
   reset_lxml
   if run "${PIP_PREFIX[@]}" --no-cache-dir "$@"; then
-    ok "lxml built successfully ($label)"
-    LXML_OK=1
-    return 0
+    ok "lxml OK ($label)"; LXML_OK=1; return 0
   fi
-  warn "lxml attempt failed ($label)"
-  return 1
+  warn "lxml failed ($label)"; return 1
 }
 
-# Attempt 1: plain source build.
+[ "$LXML_OK" -eq 0 ] && { try_lxml "plain" lxml || true; }
+[ "$LXML_OK" -eq 0 ] && { try_lxml "no build isolation" --no-build-isolation lxml || true; }
 if [ "$LXML_OK" -eq 0 ]; then
-  try_lxml "plain source build" lxml || true
-fi
-
-# Attempt 2: no build isolation — uses Termux's Cython/setuptools.
-if [ "$LXML_OK" -eq 0 ]; then
-  try_lxml "without build isolation" --no-build-isolation lxml || true
-fi
-
-# Attempt 3: -O0 (ARM optimisation workaround). Uses an env-var prefix
-# rather than a re-parsed bash -c string, so paths with spaces or shell
-# metacharacters are handled correctly.
-if [ "$LXML_OK" -eq 0 ]; then
-  info "lxml attempt: with -O0 (ARM optimisation workaround)"
+  info "lxml attempt: with -O0"
   reset_lxml
   if CFLAGS="$BASE_CFLAGS -O0" run "${PIP_PREFIX[@]}" --no-cache-dir lxml; then
-    ok "lxml built successfully (with -O0)"
-    LXML_OK=1
+    ok "lxml OK (with -O0)"; LXML_OK=1
   else
-    warn "lxml attempt failed (with -O0)"
+    warn "lxml failed (with -O0)"
   fi
 fi
-
-# Attempt 4: pinned older lxml — last resort if the tip release regressed.
-if [ "$LXML_OK" -eq 0 ]; then
-  try_lxml "pinned lxml==5.2.2" "lxml==5.2.2" || true
-fi
+[ "$LXML_OK" -eq 0 ] && { try_lxml "pinned 5.2.2" "lxml==5.2.2" || true; }
 
 if [ "$LXML_OK" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
-  fail "lxml could not be built. open-news-api cannot be installed without it.
-Manual fallback:
+  fail "lxml could not be built. Manual fallback:
   pkg install -y clang libxml2 libxslt libiconv make python-dev pkg-config
   export CFLAGS='-I\$PREFIX/include/libxml2 -I\$PREFIX/include'
   export LDFLAGS='-L\$PREFIX/lib -Wl,-rpath,\$PREFIX/lib'
@@ -545,15 +487,12 @@ Manual fallback:
 fi
 
 # ---------------------------------------------------------------------
-# 8. Install open-news-api (deps NOT skipped)
+# 8. Install open-news-api
 # ---------------------------------------------------------------------
-# pip now sees all compiled deps satisfied and pulls only the pure-Python
-# ones from PyPI.
 if [ "$JS_MODE" = "ask" ]; then
   js_choice=$(ask_choice \
-    "Install the optional JavaScript-rendering extra (Playwright + Chromium, ~300MB)?" 2 \
-    "Yes, now" \
-    "No, I can add it later with: pip install \"open-news-api[js]\" && playwright install chromium")
+    "Install the JS extra (Playwright + Chromium, ~300MB)?" 2 \
+    "Yes" "No")
   [ "$js_choice" = "1" ] && JS_MODE="yes" || JS_MODE="no"
 fi
 
@@ -563,11 +502,8 @@ SPEC="${PKG}==${V}"
 info "Installing $SPEC"
 run "${PIP_PREFIX[@]}" "$SPEC"
 
-# ---------------------------------------------------------------------
-# 9. Playwright browser (only if the JS extra was requested)
-# ---------------------------------------------------------------------
 if [ "$JS_MODE" = "yes" ]; then
-  info "Installing Playwright's Chromium browser (~300MB download)..."
+  info "Installing Playwright's Chromium..."
   if [ -x "${BIN_DIR}/playwright" ]; then
     run "${BIN_DIR}/playwright" install chromium
   else
@@ -576,31 +512,67 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 10. PATH handling
+# 9. Quick network sanity check (uses venv Python + cert env vars)
 # ---------------------------------------------------------------------
-OPEN_NEWS_BIN="$BIN_DIR/open-news"
-if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/dev/null 2>&1; then
-  case "$(basename "${SHELL:-bash}")" in
-    zsh)  SHELL_RC="${HOME}/.zshrc" ;;
-    fish) SHELL_RC="${HOME}/.config/fish/config.fish" ;;
-    *)    SHELL_RC="${HOME}/.bashrc" ;;
-  esac
-  if [ "$(basename "${SHELL:-bash}")" = "fish" ]; then
-    LINE="set -gx PATH \"$BIN_DIR\" \$PATH"
+if [ "$DRY_RUN" -eq 0 ]; then
+  info "Verifying Python HTTPS works..."
+  if SSL_CERT_FILE="${SSL_CERT_FILE:-}" "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
+import sys
+try:
+    import httpx
+    r = httpx.get("https://news.google.com/rss", timeout=15)
+    print(f"  RSS fetch: HTTP {r.status_code}, {len(r.content)} bytes")
+    sys.exit(0)
+except Exception as e:
+    print(f"  RSS fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+    sys.exit(1)
+PY
+  then
+    ok "HTTPS reachable from the venv Python."
   else
-    LINE="export PATH=\"$BIN_DIR:\$PATH\""
-  fi
-  if ! grep -qsF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
-    printf '\n# added by open-news installer\n%s\n' "$LINE" >> "$SHELL_RC"
-    warn "Added $BIN_DIR to PATH in $SHELL_RC — restart your shell, or run:"
-    warn "  $LINE"
+    warn "HTTPS from Python failed. First 5 lines of the error:"
+    sed -n '1,5p' /tmp/net-check.err >&2 || true
+    warn "If this shows SSLCertVerificationError, run: pkg install ca-certificates"
   fi
 fi
 
 # ---------------------------------------------------------------------
-# 11. First-run preferences -> config.json
+# 10. Install launcher wrappers in $PREFIX/bin
 # ---------------------------------------------------------------------
-info "A few defaults — written once and used by the CLI/TUI unless overridden per-run."
+# Termux keeps $PREFIX/bin on PATH already, so a wrapper there makes the
+# command available in any new shell without editing .bashrc. The wrapper
+# also re-exports the CA bundle env vars so `open-news` works regardless
+# of whether the venv's activate script was sourced.
+if [ "$DRY_RUN" -eq 0 ] && [ -d "$PREFIX/bin" ] && [ -w "$PREFIX/bin" ]; then
+  for cmd in open-news open-news-tui; do
+    if [ -x "$BIN_DIR/$cmd" ]; then
+      wrapper="$PREFIX/bin/$cmd"
+      # Do not clobber an unrelated file.
+      if [ -e "$wrapper" ] && ! grep -q 'added by open-news installer' "$wrapper" 2>/dev/null; then
+        warn "$wrapper exists and is not ours — skipping."
+        continue
+      fi
+      cat > "$wrapper" <<EOF
+#!${PREFIX}/bin/bash
+# added by open-news installer
+export SSL_CERT_FILE="${PREFIX}/etc/tls/cert.pem"
+export REQUESTS_CA_BUNDLE="\$SSL_CERT_FILE"
+export CURL_CA_BUNDLE="\$SSL_CERT_FILE"
+exec "$BIN_DIR/$cmd" "\$@"
+EOF
+      chmod +x "$wrapper"
+      ok "Installed launcher: $wrapper"
+    fi
+  done
+else
+  warn "$PREFIX/bin not writable — open-news not added to PATH."
+  warn "Run directly: $BIN_DIR/open-news"
+fi
+
+# ---------------------------------------------------------------------
+# 11. First-run preferences
+# ---------------------------------------------------------------------
+info "A few defaults — used by CLI/TUI unless overridden per-run."
 PREF_LANGUAGE=$(ask_text "Default language filter (ISO 639-1, blank = none)" "")
 PREF_CATEGORY=$(ask_text "Default fetch category" "general")
 PREF_SORT=$(ask_text "Default sort (date/relevance/popularity)" "date")
@@ -626,6 +598,7 @@ EOF
   "version": "$V",
   "venv_dir": "$VENV_DIR",
   "bin_dir": "$BIN_DIR",
+  "cert_file": "${SSL_CERT_FILE:-}",
   "js_extra": $( [ "$JS_MODE" = "yes" ] && printf 'true' || printf 'false' ),
   "installed_at": "$(date -u +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo unknown)"
 }
@@ -636,26 +609,19 @@ fi
 # 12. Verify
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 1 ]; then
-  ok "Dry run complete — nothing was installed."
+  ok "Dry run complete."
   exit 0
 fi
 
 info "Verifying install..."
-if [ -x "$OPEN_NEWS_BIN" ]; then
-  "$OPEN_NEWS_BIN" --version
-  ok "Install verified."
-  echo
-  echo "Run it with:"
-  if command -v open-news >/dev/null 2>&1; then
-    echo "  open-news --help"
-  else
-    echo "  $OPEN_NEWS_BIN --help   (or restart your shell / re-source your rc file)"
-  fi
+if command -v open-news >/dev/null 2>&1; then
+  open-news --version && ok "Install verified."
+  echo "Run it with: open-news --help"
+elif [ -x "$BIN_DIR/open-news" ]; then
+  "$BIN_DIR/open-news" --version && ok "Install verified."
+  echo "Run it with: $BIN_DIR/open-news --help (or restart your shell)"
 else
-  warn "No open-news binary found at $OPEN_NEWS_BIN — falling back to module invocation."
-  "$VENV_PYTHON" -m open_news.cli --version || \
-    fail "Verification failed. Try: $VENV_PYTHON -m open_news.cli --version"
-  echo "Run it with: $VENV_PYTHON -m open_news.cli --help"
+  fail "No open-news binary found."
 fi
 
 # ---------------------------------------------------------------------
@@ -664,7 +630,9 @@ fi
 if [ "$ASSUME_YES" -eq 0 ]; then
   read -r -p $'\nLaunch the terminal interface now? [y/N]: ' launch || true
   if [ "${launch:-N}" = "y" ] || [ "${launch:-N}" = "Y" ]; then
-    if [ -x "${BIN_DIR}/open-news-tui" ]; then
+    if command -v open-news-tui >/dev/null 2>&1; then
+      exec open-news-tui
+    elif [ -x "${BIN_DIR}/open-news-tui" ]; then
       exec "${BIN_DIR}/open-news-tui"
     else
       exec "$VENV_PYTHON" -m open_news.tui
