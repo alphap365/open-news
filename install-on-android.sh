@@ -499,128 +499,113 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 8b. Patch certifi's CA bundle with Termux's root certificates
+# 8b. Patch ddgs/primp to use httpx on Termux
 # ---------------------------------------------------------------------
-if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
-  info "Patching certifi's CA bundle with Termux root certificates..."
+# On Termux/Android, ddgs >= 7.x pulls primp (a Rust HTTP client) which
+# panics with "android context was not initialized" (ndk-context) and
+# SIGABRTs the process on the first network call. This patch replaces
+# the primp-based HTTP client with an httpx-based HTML scraper for
+# DuckDuckGo, which works reliably on Termux.
+if [ "$DRY_RUN" -eq 0 ]; then
+  info "Patching ddgs to use httpx-based DuckDuckGo scraper (Termux fix)..."
 
-  if SSL_CERT_FILE="$SSL_CERT_FILE" "$VENV_PYTHON" - <<'PY'
-import certifi, os, shutil, sys
+  DDGS_DIR="$("$VENV_PYTHON" -c 'import ddgs, os; print(os.path.dirname(ddgs.__file__))')"
+  PATCH_FILE="$DDGS_DIR/_ddg_httpx_fallback.py"
+  INIT_FILE="$DDGS_DIR/__init__.py"
 
-certifi_path = certifi.where()
-termux_cert = os.environ.get("SSL_CERT_FILE", "")
-
-if not termux_cert or not os.path.exists(termux_cert):
-    print("  SKIP: no Termux CA bundle to append")
-    sys.exit(0)
-
-with open(certifi_path, "r") as f:
-    existing = f.read()
-
-with open(termux_cert, "r") as f:
-    termux_certs = f.read()
-
-marker = "# Termux CA bundle appended by open-news installer"
-if marker in existing:
-    print("  SKIP: Termux CA bundle already appended to certifi")
-    sys.exit(0)
-
-backup = certifi_path + ".open-news.bak"
-if not os.path.exists(backup):
-    shutil.copy2(certifi_path, backup)
-
-with open(certifi_path, "a") as f:
-    f.write(f"\n{marker}\n")
-    f.write(termux_certs)
-
-print(f"  Appended Termux CA bundle to {certifi_path}")
-print(f"  Backup saved to {backup}")
-PY
-  then
-    ok "certifi CA bundle patched."
+  if [ -f "$INIT_FILE" ] && grep -q "PATCHED_BY_OPEN_NEWS_INSTALLER" "$INIT_FILE" 2>/dev/null; then
+    ok "ddgs already patched."
   else
-    warn "Could not patch certifi — HTTPS may still work via SSL_CERT_FILE."
+    cat > "$PATCH_FILE" <<'PY'
+# added by open-news installer
+# Termux/Android fallback for ddgs: avoids primp (Rust) which panics
+# with "android context was not initialized" on Termux.
+import httpx
+from typing import List, Dict
+
+_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
+
+def _decode_uddg(url: str) -> str:
+    """Decode DuckDuckGo's uddg= redirect wrapper."""
+    from urllib.parse import urlparse, parse_qs, unquote
+    if "uddg=" not in url:
+        return url
+    try:
+        parsed = urlparse(url)
+        qs = parse_qs(parsed.query)
+        return unquote(qs.get("uddg", [url])[0])
+    except Exception:
+        return url
+
+def ddgs_news(query: str, region: str = "wt-wt", timelimit: str = "d",
+              max_results: int = 10) -> List[Dict]:
+    """DuckDuckGo news search via HTML endpoint (httpx-based)."""
+    results = []
+    try:
+        with httpx.Client(follow_redirects=True, timeout=15) as client:
+            resp = client.post(_HTML_ENDPOINT, data={
+                "q": query,
+                "kl": region if region != "wt-wt" else "us-en",
+                "df": timelimit,
+            })
+            resp.raise_for_status()
+            from lxml.html import fromstring
+            doc = fromstring(resp.text)
+            for result in doc.xpath("//div[contains(@class,'result')]")[:max_results]:
+                title_el = result.xpath(".//a[contains(@class,'result__a')]")
+                snippet_el = result.xpath(".//a[contains(@class,'result__snippet')]")
+                if not title_el:
+                    continue
+                link = title_el[0].get("href", "")
+                if link:
+                    link = _decode_uddg(link)
+                results.append({
+                    "title": title_el[0].text_content().strip() if title_el else "",
+                    "url": link,
+                    "body": snippet_el[0].text_content().strip() if snippet_el else "",
+                })
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).warning(f"ddgs httpx fallback failed: {e}")
+    return results
+PY
+
+    # Patch __init__.py to use the fallback on Termux
+    if [ -f "$INIT_FILE" ]; then
+      cat >> "$INIT_FILE" <<'PY'
+
+# PATCHED_BY_OPEN_NEWS_INSTALLER: Termux/Android httpx fallback
+import os as _os
+if _os.environ.get("TERMUX_VERSION") or _os.path.isdir("/data/data/com.termux"):
+    try:
+        from ddgs._ddg_httpx_fallback import ddgs_news as _fallback_news
+        import ddgs as _ddgs_module
+        _ddgs_module.DDGS._original_news = _ddgs_module.DDGS.news
+        def _patched_news(self, *args, **kwargs):
+            return _fallback_news(
+                query=kwargs.get("query", args[0] if args else ""),
+                region=kwargs.get("region", "wt-wt"),
+                timelimit=kwargs.get("timelimit", "d"),
+                max_results=kwargs.get("max_results", 10),
+            )
+        _ddgs_module.DDGS.news = _patched_news
+    except Exception:
+        pass
+PY
+      ok "Patched ddgs to use httpx fallback on Termux."
+    else
+      warn "Could not find ddgs __init__.py to patch."
+    fi
   fi
 fi
 
 # ---------------------------------------------------------------------
-# 8c. Patch httpx to ALWAYS use Termux CA bundle
-# ---------------------------------------------------------------------
-# This is the definitive fix. Even if open-news creates an httpx client
-# with trust_env=False, this patch forces the default SSL context to use
-# Termux's CA bundle. It modifies httpx's _config.py in the venv.
-if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$SSL_CERT_FILE" ]; then
-  info "Patching httpx to force Termux CA bundle..."
-
-  "$VENV_PYTHON" - <<'PY'
-import httpx, os, sys, importlib.util
-
-# Find httpx's _config.py
-spec = importlib.util.find_spec("httpx._config")
-if spec is None or spec.origin is None:
-    print("  SKIP: httpx._config not found")
-    sys.exit(0)
-
-config_path = spec.origin
-cert_file = os.environ.get("SSL_CERT_FILE", "")
-
-if not cert_file or not os.path.exists(cert_file):
-    print("  SKIP: no Termux CA bundle")
-    sys.exit(0)
-
-with open(config_path, "r") as f:
-    content = f.read()
-
-marker = "# PATCHED_BY_OPEN_NEWS_INSTALLER"
-if marker in content:
-    print("  SKIP: httpx._config already patched")
-    sys.exit(0)
-
-# Find the _default_ssl_context function and patch it to always use
-# Termux's CA bundle, regardless of trust_env.
-old = '''def _default_ssl_context() -> ssl.SSLContext:
-    context = ssl.create_default_context()
-    return context'''
-
-new = f'''def _default_ssl_context() -> ssl.SSLContext:
-    # PATCHED_BY_OPEN_NEWS_INSTALLER
-    # Force use of Termux CA bundle for all httpx clients,
-    # even when trust_env=False is set.
-    import os
-    cert = os.environ.get("SSL_CERT_FILE", "")
-    if cert and os.path.exists(cert):
-        context = ssl.create_default_context(cafile=cert)
-    else:
-        context = ssl.create_default_context()
-    return context'''
-
-if old not in content:
-    print("  WARN: could not find _default_ssl_context in httpx._config")
-    print("  The httpx version may differ. Patch skipped.")
-    sys.exit(0)
-
-content = content.replace(old, new)
-
-with open(config_path, "w") as f:
-    f.write(content)
-
-print(f"  Patched httpx._config at {config_path}")
-PY
-
-  if [ $? -eq 0 ]; then
-    ok "httpx patched to force Termux CA bundle."
-  else
-    warn "Could not patch httpx — HTTPS may still fail."
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# 9. Verify Python HTTPS works
+# 9. Verify network connectivity from the venv Python
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Verifying Python HTTPS works..."
 
-  # Test 1: with environment variables set
+  # Test 1: with environment variables set (how the wrapper runs it)
   if "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
 import httpx, sys
 try:
@@ -638,22 +623,22 @@ PY
     sed -n '1,5p' /tmp/net-check.err >&2 || true
   fi
 
-  # Test 2: without environment variables, relying on the httpx patch alone
+  # Test 2: without environment variables, relying on certifi alone.
   if env -u SSL_CERT_FILE -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE \
        "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check2.err
 import httpx, sys
 try:
     r = httpx.get("https://news.google.com/rss", timeout=15)
-    print(f"  httpx-patched fetch: HTTP {r.status_code}, {len(r.content)} bytes")
+    print(f"  certifi-only fetch: HTTP {r.status_code}, {len(r.content)} bytes")
     sys.exit(0)
 except Exception as e:
-    print(f"  httpx-patched fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
+    print(f"  certifi-only fetch failed: {type(e).__name__}: {e}", file=sys.stderr)
     sys.exit(1)
 PY
   then
-    ok "HTTPS works via httpx patch alone (trust_env=False safe)."
+    ok "HTTPS works via certifi alone."
   else
-    warn "HTTPS via httpx patch alone failed. First 5 lines:"
+    warn "HTTPS via certifi alone failed. First 5 lines:"
     sed -n '1,5p' /tmp/net-check2.err >&2 || true
   fi
 fi
