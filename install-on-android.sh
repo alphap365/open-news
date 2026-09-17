@@ -417,37 +417,27 @@ info "Upgrading packaging tools in the venv..."
 run "${PIP_PREFIX[@]}" --upgrade pip wheel setuptools
 
 # ---------------------------------------------------------------------
-# 4b. Rewrite wheel platform tags to match this interpreter
+# 4b. Reconcile wheel platform tags with what pip actually accepts
 # ---------------------------------------------------------------------
-# Termux's Python reports a "linux_aarch64" platform tag; the cibuildwheel
-# android wheels carry "android_24_arm64_v8a". The binaries are the same
-# architecture and libc, so once the wheel's platform segment matches what
-# pip expects, they install. Rather than hardcoding the replacement, we
-# ask pip which tags it actually accepts and rewrite each wheel based on
-# its own (python, abi) pair. This handles cp313-cp313, cp310-abi3, and
-# anything else the interpreter advertises, without per-package logic.
+# Read pip's own compatible-tag list, then for each wheel:
+#   - if the wheel's native tag is in that list, leave it alone
+#   - otherwise, look for the same (python, abi) pair with any platform
+#     pip advertises; for abi3 wheels, also try the interpreter's own
+#     py version with abi3 (the stable ABI is forward-compatible)
+#   - if nothing matches, leave the wheel as-is and warn; pip will
+#     produce a clear error at install time
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Reconciling wheel platform tags with this interpreter..."
-
-  if "$VENV_PYTHON" - "$WHEELHOUSE_DIR" <<'PY'
+  if ! "$VENV_PYTHON" - "$WHEELHOUSE_DIR" <<'PY'
 import os, re, subprocess, sys
 
 wheelhouse = sys.argv[1]
 venv_python = sys.executable
 
-if not os.path.isdir(wheelhouse):
-    print(f"ERROR: not a directory: {wheelhouse}", file=sys.stderr)
-    sys.exit(1)
-
-# ---- 1. Get pip's full compatible-tag list --------------------------
-try:
-    out = subprocess.run(
-        [venv_python, "-m", "pip", "debug", "--verbose"],
-        capture_output=True, text=True, check=True,
-    ).stdout
-except Exception as e:
-    print(f"ERROR: could not query pip: {e}", file=sys.stderr)
-    sys.exit(1)
+out = subprocess.run(
+    [venv_python, "-m", "pip", "debug", "--verbose"],
+    capture_output=True, text=True, check=True,
+).stdout
 
 tags = []
 in_tags = False
@@ -468,104 +458,87 @@ if not tags:
     print("ERROR: pip advertised no compatible tags.", file=sys.stderr)
     sys.exit(1)
 
-# Interpreter's own (python, abi) tags — used for the abi3 fallback.
+tagset = set(tags)
 interp_py = f"cp{sys.version_info.major}{sys.version_info.minor}"
-
-# Sanity: show what we found so a failure is diagnosable at a glance.
-print(f"  pip advertises {len(tags)} compatible tags; first is {tags[0]}",
+print(f"  pip advertises {len(tags)} compatible tags (first: {tags[0]})",
       file=sys.stderr)
-print(f"  interpreter is {interp_py} on {sys.platform}", file=sys.stderr)
+print(f"  interpreter tag: {interp_py}", file=sys.stderr)
 
-# ---- 2. Pick the best tag for a given (pytag, abitag) pair ----------
-def best_tag_for(pytag, abitag):
-    """Return the first compatible tag matching (pytag, abitag), or None.
 
-    Order of preference:
-      1. Exact (pytag, abitag, *) — the wheel's declared pair.
-      2. For abi3 wheels only: (interp_py, abi3, *) — the stable-ABI
-         promise means a cp310-abi3 wheel works on cp313 too; if the
-         interpreter's tag list doesn't carry the older cp310-abi3
-         combination, this is the correct substitute.
-      3. For abi3 wheels only: (interp_py, interp_py, *) — last resort.
-         Formally the wheel was built against the stable ABI, but the
-         stable ABI is a subset of the version-specific ABI, so a
-         cp310-abi3 binary loads correctly under cp313-cp313.
+def find_platform_for(pytag, abitag):
+    """Return a platform segment pip accepts for (pytag, abitag), or None.
+
+    Preference order:
+      1. Any tag whose prefix matches the wheel's own (pytag, abitag).
+      2. For abi3 wheels: (interp_py, abi3, *) — the stable-ABI promise.
+      3. For abi3 wheels: (interp_py, interp_py, *) — a cpXX-abi3 binary
+         loads under the interpreter's own version-specific ABI, since
+         the stable ABI is a subset.
     """
     prefix = f"{pytag}-{abitag}-"
     for t in tags:
         if t.startswith(prefix):
-            return t
+            return t.split("-", 2)[2]
 
     if abitag == "abi3":
-        for fallback in (f"{interp_py}-abi3-", f"{interp_py}-{interp_py}-"):
+        for alt_abi in ("abi3", interp_py):
+            prefix = f"{interp_py}-{alt_abi}-"
             for t in tags:
-                if t.startswith(fallback):
-                    return t
+                if t.startswith(prefix):
+                    return t.split("-", 2)[2]
 
     return None
 
-# ---- 3. Walk the wheelhouse and rewrite platform segments -----------
-renamed = 0
-skipped = 0
-failed = 0
+
+renamed = skipped = failed = 0
 
 for whl in sorted(os.listdir(wheelhouse)):
     if not whl.endswith(".whl"):
         continue
 
-    stem = whl[:-4]
-    # Wheel filename spec: name-version(-build)?-pytag-abitag-platformtag.whl
-    # rsplit from the right — the last three dash-separated fields are
-    # always pytag, abitag, platformtag.
-    parts = stem.rsplit("-", 3)
+    parts = whl[:-4].rsplit("-", 3)
     if len(parts) != 4:
         print(f"  WARN: unparseable wheel name: {whl}", file=sys.stderr)
         failed += 1
         continue
-
     name_version, pytag, abitag, platformtag = parts
 
-    # Already compatible as-is?
-    if f"{pytag}-{abitag}-{platformtag}" in tags:
-        print(f"  OK: {whl} (already compatible)", file=sys.stderr)
+    native = f"{pytag}-{abitag}-{platformtag}"
+    if native in tagset:
+        print(f"  OK:   {whl}  (native tag accepted)", file=sys.stderr)
         skipped += 1
         continue
 
-    best = best_tag_for(pytag, abitag)
-    if best is None:
-        print(f"  FAIL: no compatible tag for {whl} "
-              f"(looked for {pytag}-{abitag}-*)", file=sys.stderr)
+    new_platform = find_platform_for(pytag, abitag)
+    if new_platform is None:
+        print(f"  FAIL: {whl}  (no compatible tag for {pytag}-{abitag}-*)",
+              file=sys.stderr)
         failed += 1
         continue
 
-    # Extract the platform segment from the chosen tag.
-    # A tag is "pytag-abitag-platformtag"; platform may contain dashes?
-    # No — wheels use underscores, so splitting on the first two dashes
-    # is safe.
-    _, _, new_platform = best.split("-", 2)
     if new_platform == platformtag:
+        print(f"  OK:   {whl}  (no change needed)", file=sys.stderr)
         skipped += 1
         continue
 
     new_name = f"{name_version}-{pytag}-{abitag}-{new_platform}.whl"
     src = os.path.join(wheelhouse, whl)
     dst = os.path.join(wheelhouse, new_name)
-    print(f"  {whl}\n    -> {new_name}", file=sys.stderr)
+    print(f"  TAG:  {whl}\n     -> {new_name}", file=sys.stderr)
     os.rename(src, dst)
     renamed += 1
 
-print(f"  Rewrote {renamed} wheel(s), {skipped} already ok, {failed} failed.",
+print(f"  {renamed} renamed, {skipped} unchanged, {failed} failed.",
       file=sys.stderr)
-
-if failed:
-    sys.exit(1)
+sys.exit(1 if failed else 0)
 PY
   then
     ok "Wheel platform tags reconciled."
   else
-    warn "Some wheels could not be reconciled — the install may fail."
+    warn "Some wheels could not be reconciled — install may fail."
   fi
 fi
+
 # ---------------------------------------------------------------------
 # 5. Pre-install the compiled dependencies from the wheelhouse
 # ---------------------------------------------------------------------
