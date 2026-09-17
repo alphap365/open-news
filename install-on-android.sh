@@ -389,7 +389,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# 4. Select the installer (pip or uv)
+# 4a. Select the installer (pip or uv)
 # ---------------------------------------------------------------------
 if [ "$PACKAGE_MANAGER" = "ask" ]; then
   if command -v uv >/dev/null 2>&1; then
@@ -415,6 +415,40 @@ fi
 
 info "Upgrading packaging tools in the venv..."
 run "${PIP_PREFIX[@]}" --upgrade pip wheel setuptools
+
+# ---------------------------------------------------------------------
+# 4b. Reconcile platform tags between the wheels and this interpreter
+# ---------------------------------------------------------------------
+# Termux's Python historically reports a "linux_aarch64" platform tag
+# rather than the "android_24_arm64_v8a" tag used by cibuildwheel's
+# android wheels. The binary inside is aarch64/bionic either way, so
+# installing works — but pip's tag check rejects it first. If pip does
+# not advertise an android_* tag for arm64, rewrite the downloaded wheel
+# filenames to use linux_aarch64, which pip will accept.
+if [ "$DRY_RUN" -eq 0 ]; then
+  if "$VENV_PYTHON" -m pip debug --verbose 2>/dev/null \
+       | grep -qE "android_[0-9]+_arm64_v8a"; then
+    info "pip accepts android_* platform tags — leaving wheels unmodified."
+  else
+    warn "This Python does not advertise an android_* platform tag."
+    warn "Rewriting android_24_arm64_v8a -> linux_aarch64 in the wheel"
+    warn "filenames so pip will accept them. The binary contents are"
+    warn "unchanged; only the platform tag string differs."
+    renamed=0
+    for whl in "$WHEELHOUSE_DIR"/*.whl; do
+      [ -e "$whl" ] || continue
+      newname="$(printf '%s' "$whl" \
+        | sed -E 's/-android_[0-9]+_arm64_v8a\.whl$/-linux_aarch64.whl/')"
+      if [ "$whl" != "$newname" ]; then
+        mv "$whl" "$newname"
+        info "  $(basename "$whl") -> $(basename "$newname")"
+        renamed=$((renamed + 1))
+      fi
+    done
+    [ "$renamed" -gt 0 ] || warn "No wheels needed renaming (unexpected)."
+    ok "Renamed $renamed wheel(s) for this interpreter's platform tag."
+  fi
+fi
 
 # ---------------------------------------------------------------------
 # 5. Pre-install the compiled dependencies from the wheelhouse
