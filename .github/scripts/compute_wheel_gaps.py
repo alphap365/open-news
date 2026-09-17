@@ -143,8 +143,9 @@ def main():
                     "package": pkg_name,
                     "version": version,
                     "cibw_platform": platform_,
-                    "cibw_archs": archs,   # comma-separated already fine, single value here
+                    "cibw_archs": archs,
                     "cibw_build_id": f"{py_tag}-*",
+                    "py_tag": py_tag,   # clean, no wildcard — safe for artifact names
                     "runner": runner,
                 })
 
