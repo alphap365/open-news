@@ -1,19 +1,26 @@
 #!/usr/bin/env bash
-# open-news installer for Termux/Android
+# open-news installer for Termux / Android
 #
-# This is the Termux-specific counterpart to install.sh. It is invoked
-# automatically by install.sh when Termux is detected, and can also be run
-# directly:
+# The Termux-specific counterpart to install.sh. Invoked automatically by
+# install.sh when Termux is detected, or run directly:
 #
 #   curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install-on-android.sh | bash
-#   ./install-on-android.sh --yes          # non-interactive
-#   ./install-on-android.sh --uv           # use uv instead of pip
-#   ./install-on-android.sh --version 0.3.2
+#   ./install-on-android.sh --yes               # non-interactive
+#   ./install-on-android.sh --uv                # use uv instead of pip
+#   ./install-on-android.sh --version 1.0.3a1   # pin a version
+#   ./install-on-android.sh --version=1.0.3a1   # same, equals form
 #   ./install-on-android.sh --dry-run
 #   ./install-on-android.sh --uninstall
 #
+# Environment:
+#   GITHUB_TOKEN   Optional. Used for the GitHub release lookup to avoid
+#                  the unauthenticated 60 requests/hour rate limit.
+#
 set -euo pipefail
 
+# ---------------------------------------------------------------------
+# Constants
+# ---------------------------------------------------------------------
 REPO="alphap365/open-news"
 PKG="open-news-api"
 VENV_DIR="${HOME}/.open-news/venv"
@@ -25,28 +32,64 @@ ANDROID_API="24"
 ARCH_TAG="arm64_v8a"
 PLATFORM_TAG="android_${ANDROID_API}_${ARCH_TAG}"
 
+# Termux always sets PREFIX, but be defensive — a non-Termux shell that
+# somehow reaches this script should fail cleanly, not reference /lib.
+: "${PREFIX:=/data/data/com.termux/files/usr}"
+
+# ---------------------------------------------------------------------
+# State
+# ---------------------------------------------------------------------
 ASSUME_YES=0
-JS_MODE="ask"       # ask | yes | no
-PACKAGE_MANAGER="ask" # ask | pip | uv
+JS_MODE="ask"          # ask | yes | no
+PACKAGE_MANAGER="ask"  # ask | pip | uv
 DRY_RUN=0
 DO_UNINSTALL=0
 PIN_VERSION=""
 
-# ---- arg parsing (while-loop, since --version takes a value) --------
+# ---------------------------------------------------------------------
+# Argument parsing
+# ---------------------------------------------------------------------
+# Robust: handles --version <value>, --version=<value>, missing value,
+# and prevents a subsequent flag from being swallowed as the value.
 while [ $# -gt 0 ]; do
   case "$1" in
-    --yes|-y) ASSUME_YES=1 ;;
-    --js) JS_MODE="yes" ;;
-    --no-js) JS_MODE="no" ;;
-    --uv) PACKAGE_MANAGER="uv" ;;
-    --pip) PACKAGE_MANAGER="pip" ;;
-    --version) PIN_VERSION="$2"; shift ;;
+    --yes|-y)  ASSUME_YES=1 ;;
+    --js)      JS_MODE="yes" ;;
+    --no-js)   JS_MODE="no" ;;
+    --uv)      PACKAGE_MANAGER="uv" ;;
+    --pip)     PACKAGE_MANAGER="pip" ;;
     --dry-run) DRY_RUN=1 ;;
     --uninstall) DO_UNINSTALL=1 ;;
+
+    --dev)
+      printf 'Error: --dev is not supported on Termux.\n' >&2
+      printf '       Developer installs should clone the repo and use uv/pip manually:\n' >&2
+      printf '         git clone https://github.com/%s.git ~/open-news\n' "$REPO" >&2
+      printf '         cd ~/open-news && python -m venv .venv && .venv/bin/pip install -e ".[dev]"\n' >&2
+      exit 2
+      ;;
+
+    --version)
+      if [ $# -lt 2 ] || [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
+        printf 'Error: --version requires a value, e.g. --version 1.0.3a1\n' >&2
+        exit 2
+      fi
+      PIN_VERSION="$2"
+      shift
+      ;;
+    --version=*)
+      PIN_VERSION="${1#--version=}"
+      if [ -z "$PIN_VERSION" ]; then
+        printf 'Error: --version= requires a value, e.g. --version=1.0.3a1\n' >&2
+        exit 2
+      fi
+      ;;
+
     -h|--help)
       sed -n '2,20p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
+
     *)
       printf 'Unknown option: %s\n' "$1" >&2
       exit 2
@@ -108,7 +151,7 @@ ask_text() {
 }
 
 # ---------------------------------------------------------------------
-# Uninstall path (mirrors install.sh; short-circuits everything else)
+# Uninstall path (short-circuits everything else)
 # ---------------------------------------------------------------------
 if [ "$DO_UNINSTALL" -eq 1 ]; then
   info "Removing ${HOME}/.open-news"
@@ -128,7 +171,7 @@ printf '\033[1m open-news installer (Android / Termux)\033[0m\n'
 printf ' Fetch, search, discover, understand.\n\n'
 
 # ---------------------------------------------------------------------
-# 0. Sanity: we really are on Termux, and Python is new enough
+# 0. Sanity checks
 # ---------------------------------------------------------------------
 if ! command -v pkg >/dev/null 2>&1; then
   fail "This installer is for Termux (the 'pkg' command was not found). Use install.sh instead."
@@ -154,79 +197,105 @@ if [ "$PY_MINOR" -lt 13 ]; then
 fi
 ok "Python $PY_VERSION ($PYTHON_BIN)"
 
-# Verify pip actually recognises the Android platform tag. If it doesn't,
-# the pre-built wheels will be rejected no matter how we fetch them.
+# Confirm pip advertises an android_* platform tag. If it doesn't, the
+# pre-built wheels will be rejected no matter how we fetch them.
 if ! "$PYTHON_BIN" -m pip debug --verbose 2>/dev/null | grep -qi "android"; then
-  warn "pip does not appear to advertise any 'android_*' platform tag."
-  warn "The pre-built wheels may be rejected. Continuing anyway — if the"
-  warn "install fails with 'not a supported wheel', that is why."
+  warn "pip does not advertise any 'android_*' platform tag."
+  warn "The pre-built wheels may be rejected. Continuing — if the install"
+  warn "fails with 'not a supported wheel', this is why."
+else
+  ok "pip advertises an android_* platform tag."
 fi
 
 # ---------------------------------------------------------------------
 # 1. Resolve the open-news-api version we're installing
 # ---------------------------------------------------------------------
-# We deliberately do NOT use PyPI's info.version here. That field tracks
-# only the latest STABLE release, so a prerelease like 1.0.3a1 uploaded on
-# top of 1.0.2 leaves info.version pointing at 1.0.2 — which would send us
-# looking for a wheelhouse-v1.0.2 release that may not exist. Instead we
-# ask GitHub directly: "newest release tagged wheelhouse-v* that actually
-# contains an android_arm64_v8a wheel?" That is the set of versions the
-# user can actually install on this platform.
+# Deliberately NOT using PyPI's info.version: that tracks only the latest
+# STABLE release, so a prerelease like 1.0.3a1 on top of 1.0.2 leaves
+# info.version pointing at 1.0.2 — sending us to a wheelhouse-v1.0.2 tag
+# that may not exist. We ask GitHub directly for the newest release that
+# actually contains an android_arm64_v8a wheel; that is the set of versions
+# installable on this platform.
 if [ -n "$PIN_VERSION" ]; then
   V="$PIN_VERSION"
-  info "Using pinned version $V"
+  info "Using pinned version: $V"
+  info "Looking for Android wheels in release: wheelhouse-v${V}"
 else
-  V="$("$PYTHON_BIN" - <<EOF
-import json, sys, urllib.request, urllib.error
+  info "Resolving latest version with Android wheels from GitHub releases..."
+  V="$(REPO="$REPO" "$PYTHON_BIN" - <<'PY'
+import json, os, re, sys, urllib.request, urllib.error
 
-url = "https://api.github.com/repos/$REPO/releases?per_page=100"
+REPO = os.environ["REPO"]
+url = f"https://api.github.com/repos/{REPO}/releases?per_page=100"
+req = urllib.request.Request(url, headers={
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "open-news-installer",
+})
+token = os.environ.get("GITHUB_TOKEN")
+if token:
+    req.add_header("Authorization", f"Bearer {token}")
+
 try:
-    with urllib.request.urlopen(url, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         releases = json.load(r)
+except urllib.error.HTTPError as e:
+    if e.code == 403:
+        print("ERROR: GitHub API rate limit reached (HTTP 403).", file=sys.stderr)
+        print("       Set GITHUB_TOKEN to raise the limit, or pass", file=sys.stderr)
+        print("       --version X.Y.Z to skip the lookup.", file=sys.stderr)
+    else:
+        print(f"ERROR: could not list GitHub releases (HTTP {e.code}).", file=sys.stderr)
+    sys.exit(1)
 except Exception as e:
     print(f"ERROR: could not list GitHub releases: {e}", file=sys.stderr)
     sys.exit(1)
 
+
 def semver_key(tag):
-    # Strip prefix, split on '.', coerce to comparable tuples. Prerelease
-    # suffixes (a1, b2, rc3) sort BELOW the final release of the same x.y.z,
-    # which matches PEP 440 / packaging semantics closely enough here.
-    import re
+    """Sort key: a < b < rc < final for the same x.y.z."""
     v = tag.removeprefix("wheelhouse-v")
     m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:([abc]|rc)(\d+))?$", v)
     if not m:
         return (0, 0, 0, 0, 0)
     major, minor, patch, pre, pre_n = m.groups()
-    # pre="" sorts after any pre-release marker for the same x.y.z
     pre_rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
     return (int(major), int(minor), int(patch), pre_rank, int(pre_n or 0))
 
-candidates = []
-for r in releases:
-    tag = r.get("tag_name", "")
-    if not tag.startswith("wheelhouse-v"):
-        continue
-    if not any("android_arm64_v8a" in a["name"] for a in r.get("assets", [])):
-        continue
-    candidates.append(tag)
+
+wh_all = [r for r in releases if r.get("tag_name", "").startswith("wheelhouse-v")]
+candidates = [
+    r["tag_name"] for r in wh_all
+    if any("android_arm64_v8a" in a["name"] for a in r.get("assets", []))
+]
 
 if not candidates:
-    print("ERROR: no GitHub release with android_arm64_v8a wheels found.",
-          file=sys.stderr)
-    print("       The wheel-build workflow has not published an Android",
-          file=sys.stderr)
-    print("       wheelhouse release yet. Pass --version X.Y.Z if you know",
-          file=sys.stderr)
-    print("       a specific version should exist.", file=sys.stderr)
+    print("ERROR: no GitHub release with android_arm64_v8a wheels found.", file=sys.stderr)
+    if not wh_all:
+        print("       No wheelhouse-v* releases exist at all.", file=sys.stderr)
+        print("       -> build_dep_wheel.yml has never published successfully.", file=sys.stderr)
+        print("       -> Check the workflow's last run under the Actions tab;", file=sys.stderr)
+        print("          a 403 on 'publish' means it needs 'permissions: contents: write'.", file=sys.stderr)
+    else:
+        print(f"       {len(wh_all)} wheelhouse release(s) exist, but none carry android wheels:", file=sys.stderr)
+        for r in wh_all[:10]:
+            n_total = len(r.get("assets", []))
+            n_android = sum(1 for a in r.get("assets", []) if "android" in a["name"])
+            print(f"         {r['tag_name']}: {n_total} assets, {n_android} android", file=sys.stderr)
+        print("       -> The android row in compute_wheel_gaps.py may have been", file=sys.stderr)
+        print("          added after these releases were built. Re-run the workflow.", file=sys.stderr)
+    print("       Pass --version X.Y.Z if you know a specific version exists.", file=sys.stderr)
     sys.exit(1)
 
 best = max(candidates, key=semver_key)
 print(best.removeprefix("wheelhouse-v"))
-EOF
+PY
 )"
-  [ -n "$V" ] || fail "Could not resolve a version with Android wheels from GitHub releases. Pass --version X.Y.Z to specify one."
-  info "Latest Android-wheelhouse version: $V"
+  [ -n "$V" ] || fail "Could not resolve a version with Android wheels. Pass --version X.Y.Z to specify one."
+  ok "Latest Android-wheelhouse version: $V"
+  info "Looking for Android wheels in release: wheelhouse-v${V}"
 fi
+
+TAG="wheelhouse-v${V}"
 
 # ---------------------------------------------------------------------
 # 2. Fetch the Android wheels from the GitHub release
@@ -234,26 +303,40 @@ fi
 if [ "$DRY_RUN" -eq 0 ]; then
   mkdir -p "$WHEELHOUSE_DIR"
   # Clean previous run so a stale wheel can't shadow a new one.
-  rm -f "$WHEELHOUSE_DIR"/*.whl
+  rm -f "$WHEELHOUSE_DIR"/*.whl 2>/dev/null || true
 
   info "Querying GitHub release $TAG for Android wheel assets..."
 
-  ASSETS="$("$PYTHON_BIN" - <<EOF
-import json, sys, urllib.request, urllib.error
+  ASSETS="$(REPO="$REPO" TAG="$TAG" "$PYTHON_BIN" - <<'PY'
+import json, os, sys, urllib.request, urllib.error
 
-tag = "$TAG"
-url = f"https://api.github.com/repos/$REPO/releases/tags/{tag}"
+repo = os.environ["REPO"]
+tag = os.environ["TAG"]
+url = f"https://api.github.com/repos/{repo}/releases/tags/{tag}"
+req = urllib.request.Request(url, headers={
+    "Accept": "application/vnd.github+json",
+    "User-Agent": "open-news-installer",
+})
+token = os.environ.get("GITHUB_TOKEN")
+if token:
+    req.add_header("Authorization", f"Bearer {token}")
 
 try:
-    with urllib.request.urlopen(url, timeout=30) as r:
+    with urllib.request.urlopen(req, timeout=30) as r:
         release = json.load(r)
 except urllib.error.HTTPError as e:
-    print(f"ERROR: release '{tag}' not found (HTTP {e.code}).", file=sys.stderr)
-    print("       The monthly wheel-build workflow may not have run yet,", file=sys.stderr)
-    print("       or this version was published before wheels were built.", file=sys.stderr)
+    if e.code == 404:
+        print(f"ERROR: release '{tag}' not found.", file=sys.stderr)
+        print("       The wheel-build workflow may not have published yet, or", file=sys.stderr)
+        print("       this version predates the Android wheelhouse pipeline.", file=sys.stderr)
+    elif e.code == 403:
+        print("ERROR: GitHub API rate limit reached (HTTP 403).", file=sys.stderr)
+        print("       Set GITHUB_TOKEN to raise the limit.", file=sys.stderr)
+    else:
+        print(f"ERROR: could not fetch release '{tag}' (HTTP {e.code}).", file=sys.stderr)
     sys.exit(1)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
+    print(f"ERROR: could not fetch release '{tag}': {e}", file=sys.stderr)
     sys.exit(1)
 
 assets = [a for a in release.get("assets", [])
@@ -261,11 +344,14 @@ assets = [a for a in release.get("assets", [])
 
 if not assets:
     print(f"ERROR: release '{tag}' has no android_arm64_v8a wheels.", file=sys.stderr)
+    print(f"       It has {len(release.get('assets', []))} asset(s) total.", file=sys.stderr)
+    for a in release.get("assets", [])[:10]:
+        print(f"         - {a['name']}", file=sys.stderr)
     sys.exit(1)
 
 for a in assets:
     print(a["browser_download_url"])
-EOF
+PY
 )"
   [ -n "$ASSETS" ] || fail "No Android wheel assets found in release $TAG."
 
@@ -273,10 +359,11 @@ EOF
     [ -n "$url" ] || continue
     fname="$(basename "$url")"
     info "Downloading $fname"
-    run curl -fL --retry 3 --retry-delay 2 -o "$WHEELHOUSE_DIR/$fname" "$url"
+    run curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
+      -o "$WHEELHOUSE_DIR/$fname" "$url"
   done <<< "$ASSETS"
 
-  count=$(find "$WHEELHOUSE_DIR" -name '*.whl' | wc -l)
+  count=$(find "$WHEELHOUSE_DIR" -maxdepth 1 -name '*.whl' | wc -l)
   [ "$count" -gt 0 ] || fail "No wheels landed in $WHEELHOUSE_DIR."
   ok "Downloaded $count Android wheel(s) into $WHEELHOUSE_DIR"
 else
@@ -290,7 +377,7 @@ info "Creating virtual environment at $VENV_DIR"
 run "$PYTHON_BIN" -m venv "$VENV_DIR"
 
 if [ -d "$VENV_DIR/Scripts" ]; then
-  # Non-standard, but keep the branch for symmetry with install.sh.
+  # Non-standard for Termux; kept for symmetry with install.sh.
   BIN_DIR="$VENV_DIR/Scripts"
   VENV_PYTHON="$VENV_DIR/Scripts/python.exe"
 else
@@ -298,22 +385,36 @@ else
   VENV_PYTHON="$VENV_DIR/bin/python"
 fi
 
-# Pick the installer binary for the venv.
+# ---------------------------------------------------------------------
+# 4. Select the installer (pip or uv)
+# ---------------------------------------------------------------------
+if [ "$PACKAGE_MANAGER" = "ask" ]; then
+  if command -v uv >/dev/null 2>&1; then
+    pm_choice=$(ask_choice \
+      "Which installer should be used for the venv?" 2 \
+      "pip (bundled with the venv)" \
+      "uv (faster, uses the uv on PATH)")
+    [ "$pm_choice" = "1" ] && PACKAGE_MANAGER="pip" || PACKAGE_MANAGER="uv"
+  else
+    PACKAGE_MANAGER="pip"
+  fi
+fi
+
 if [ "$PACKAGE_MANAGER" = "uv" ]; then
   if ! command -v uv >/dev/null 2>&1; then
     fail "--uv was requested but 'uv' is not on PATH. Install it or drop --uv."
   fi
-  PIP_BIN="$(command -v uv)"
-  PIP_PREFIX=("$PIP_BIN" pip install --python "$VENV_PYTHON")
+  UV_BIN="$(command -v uv)"
+  PIP_PREFIX=("$UV_BIN" pip install --python "$VENV_PYTHON")
 else
-  PIP_BIN="$BIN_DIR/pip"
-  PIP_PREFIX=("$PIP_BIN" install)
+  PIP_PREFIX=("$BIN_DIR/pip" install)
 fi
 
+info "Upgrading packaging tools in the venv..."
 run "${PIP_PREFIX[@]}" --upgrade pip wheel setuptools
 
 # ---------------------------------------------------------------------
-# 4. Pre-install the compiled dependencies from the wheelhouse
+# 5. Pre-install the compiled dependencies from the wheelhouse
 # ---------------------------------------------------------------------
 # --no-deps so lxml (which is not in the wheelhouse) is not pulled in yet.
 # Passing all wheels in one invocation lets pip resolve inter-wheel deps.
@@ -321,17 +422,20 @@ if [ "$DRY_RUN" -eq 0 ]; then
   shopt -s nullglob
   wheels=("$WHEELHOUSE_DIR"/*.whl)
   shopt -u nullglob
+
   if [ "${#wheels[@]}" -eq 0 ]; then
     fail "No wheels found in $WHEELHOUSE_DIR."
   fi
+
   info "Installing ${#wheels[@]} pre-built Android wheel(s)..."
-  run "${PIP_PREFIX[@]}" --no-deps "${wheels[@]}"
+  # --force-reinstall so a partial previous run cannot leave a stale copy.
+  run "${PIP_PREFIX[@]}" --no-deps --force-reinstall "${wheels[@]}"
 else
   info "[dry-run] would install wheels from $WHEELHOUSE_DIR"
 fi
 
 # ---------------------------------------------------------------------
-# 5. Build lxml from source — strategy ladder
+# 6. Build lxml from source — strategy ladder
 # ---------------------------------------------------------------------
 # lxml is deliberately not in the wheelhouse (its Android cross-compile is
 # broken upstream), so we build it here against Termux's libxml2/libxslt.
@@ -341,17 +445,27 @@ info "Installing lxml build dependencies..."
 run pkg install -y clang libxml2 libxslt libiconv make python-dev pkg-config || \
   warn "Some build dependencies failed to install; lxml may fail."
 
-export CFLAGS="-I${PREFIX}/include/libxml2 -I${PREFIX}/include"
+BASE_CFLAGS="-I${PREFIX}/include/libxml2 -I${PREFIX}/include"
+export CFLAGS="$BASE_CFLAGS"
 export LDFLAGS="-L${PREFIX}/lib -Wl,-rpath,${PREFIX}/lib"
 export XML2_CONFIG="${PREFIX}/bin/xml2-config"
 export XSLT_CONFIG="${PREFIX}/bin/xslt-config"
 
 LXML_OK=0
 
+# Reset any partial state a previous attempt might have left behind, so
+# that a reported success reflects a genuinely successful build.
+reset_lxml() {
+  if [ "$DRY_RUN" -eq 0 ]; then
+    "${PIP_PREFIX[@]}" uninstall -y lxml >/dev/null 2>&1 || true
+  fi
+}
+
 try_lxml() {
   local label="$1"; shift
   info "lxml attempt: $label"
-  if run "${PIP_PREFIX[@]}" "$@"; then
+  reset_lxml
+  if run "${PIP_PREFIX[@]}" --no-cache-dir "$@"; then
     ok "lxml built successfully ($label)"
     LXML_OK=1
     return 0
@@ -360,20 +474,38 @@ try_lxml() {
   return 1
 }
 
-# Attempt 1: plain build.
-try_lxml "plain source build" lxml || \
-# Attempt 2: no build isolation (uses Termux's Cython/setuptools).
-try_lxml "without build isolation" --no-build-isolation lxml || \
-# Attempt 3: -O0 (known workaround for ARM optimisation crashes).
-{
-  info "lxml attempt: -O0 (ARM optimisation workaround)"
-  if run bash -c "CFLAGS='-O0' ${PIP_PREFIX[*]} lxml"; then
-    ok "lxml built successfully (-O0)"
+# Attempt 1: plain source build (works when Termux's libxml2/libxslt are
+# current and picked up via pkg-config).
+if [ "$LXML_OK" -eq 0 ]; then
+  try_lxml "plain source build" lxml || true
+fi
+
+# Attempt 2: no build isolation (uses Termux's Cython/setuptools instead
+# of pip's isolated build environment).
+if [ "$LXML_OK" -eq 0 ]; then
+  try_lxml "without build isolation" --no-build-isolation lxml || true
+fi
+
+# Attempt 3: -O0. Known workaround when Termux's clang at -O2 miscompiles
+# or crashes on some Android toolchains. Uses an env-var prefix, not a
+# re-parsed bash -c string, so paths with spaces or shell metacharacters
+# are handled correctly.
+if [ "$LXML_OK" -eq 0 ]; then
+  info "lxml attempt: with -O0 (ARM optimisation workaround)"
+  reset_lxml
+  if CFLAGS="$BASE_CFLAGS -O0" run "${PIP_PREFIX[@]}" --no-cache-dir lxml; then
+    ok "lxml built successfully (with -O0)"
     LXML_OK=1
+  else
+    warn "lxml attempt failed (with -O0)"
   fi
-} || \
-# Attempt 4: known-good older version.
-try_lxml "pinned lxml==5.2.2" "lxml==5.2.2" || true
+fi
+
+# Attempt 4: pinned older lxml — last-resort known-good version if the
+# current tip release has regressed against Termux's libxml2.
+if [ "$LXML_OK" -eq 0 ]; then
+  try_lxml "pinned lxml==5.2.2" "lxml==5.2.2" || true
+fi
 
 if [ "$LXML_OK" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   fail "lxml could not be built. open-news-api cannot be installed without it.
@@ -385,10 +517,10 @@ Manual fallback:
 fi
 
 # ---------------------------------------------------------------------
-# 6. Install open-news-api normally (deps NOT skipped)
+# 7. Install open-news-api (deps NOT skipped)
 # ---------------------------------------------------------------------
-# pip now sees all compiled deps satisfied and will only pull the
-# pure-Python ones from PyPI.
+# pip now sees all compiled deps satisfied and pulls only the pure-Python
+# ones from PyPI.
 if [ "$JS_MODE" = "ask" ]; then
   js_choice=$(ask_choice \
     "Install the optional JavaScript-rendering extra (Playwright + Chromium, ~300MB)?" 2 \
@@ -403,24 +535,32 @@ SPEC="${PKG}==${V}"
 info "Installing $SPEC"
 run "${PIP_PREFIX[@]}" "$SPEC"
 
+# ---------------------------------------------------------------------
+# 8. Playwright browser (only if the JS extra was requested)
+# ---------------------------------------------------------------------
 if [ "$JS_MODE" = "yes" ]; then
   info "Installing Playwright's Chromium browser (~300MB download)..."
-  run "$BIN_DIR/playwright" install chromium
+  if [ -x "${BIN_DIR}/playwright" ]; then
+    run "${BIN_DIR}/playwright" install chromium
+  else
+    run "$VENV_PYTHON" -m playwright install chromium
+  fi
 fi
 
 # ---------------------------------------------------------------------
-# 7. PATH handling (same logic as install.sh)
+# 9. PATH handling
 # ---------------------------------------------------------------------
 OPEN_NEWS_BIN="$BIN_DIR/open-news"
 if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/dev/null 2>&1; then
   case "$(basename "${SHELL:-bash}")" in
-    zsh) SHELL_RC="${HOME}/.zshrc" ;;
+    zsh)  SHELL_RC="${HOME}/.zshrc" ;;
     fish) SHELL_RC="${HOME}/.config/fish/config.fish" ;;
-    *) SHELL_RC="${HOME}/.bashrc" ;;
+    *)    SHELL_RC="${HOME}/.bashrc" ;;
   esac
-  LINE="export PATH=\"$BIN_DIR:\$PATH\""
   if [ "$(basename "${SHELL:-bash}")" = "fish" ]; then
     LINE="set -gx PATH \"$BIN_DIR\" \$PATH"
+  else
+    LINE="export PATH=\"$BIN_DIR:\$PATH\""
   fi
   if ! grep -qsF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
     printf '\n# added by open-news installer\n%s\n' "$LINE" >> "$SHELL_RC"
@@ -430,9 +570,9 @@ if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/d
 fi
 
 # ---------------------------------------------------------------------
-# 8. First-run preferences -> config.json
+# 10. First-run preferences -> config.json
 # ---------------------------------------------------------------------
-info "A few defaults — these are written once and used by the CLI/TUI unless overridden per-run."
+info "A few defaults — written once and used by the CLI/TUI unless overridden per-run."
 PREF_LANGUAGE=$(ask_text "Default language filter (ISO 639-1, blank = none)" "")
 PREF_CATEGORY=$(ask_text "Default fetch category" "general")
 PREF_SORT=$(ask_text "Default sort (date/relevance/popularity)" "date")
@@ -465,7 +605,7 @@ EOF
 fi
 
 # ---------------------------------------------------------------------
-# 9. Verify
+# 11. Verify
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 1 ]; then
   ok "Dry run complete — nothing was installed."
@@ -485,12 +625,13 @@ if [ -x "$OPEN_NEWS_BIN" ]; then
   fi
 else
   warn "No open-news binary found at $OPEN_NEWS_BIN — falling back to module invocation."
-  "$VENV_PYTHON" -m open_news.cli --version || fail "Verification failed. Try: $VENV_PYTHON -m open_news.cli --version"
+  "$VENV_PYTHON" -m open_news.cli --version || \
+    fail "Verification failed. Try: $VENV_PYTHON -m open_news.cli --version"
   echo "Run it with: $VENV_PYTHON -m open_news.cli --help"
 fi
 
 # ---------------------------------------------------------------------
-# 10. Offer to launch the TUI
+# 12. Offer to launch the TUI
 # ---------------------------------------------------------------------
 if [ "$ASSUME_YES" -eq 0 ]; then
   read -r -p $'\nLaunch the terminal interface now? [y/N]: ' launch || true
