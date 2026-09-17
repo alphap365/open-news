@@ -165,26 +165,68 @@ fi
 # ---------------------------------------------------------------------
 # 1. Resolve the open-news-api version we're installing
 # ---------------------------------------------------------------------
+# We deliberately do NOT use PyPI's info.version here. That field tracks
+# only the latest STABLE release, so a prerelease like 1.0.3a1 uploaded on
+# top of 1.0.2 leaves info.version pointing at 1.0.2 — which would send us
+# looking for a wheelhouse-v1.0.2 release that may not exist. Instead we
+# ask GitHub directly: "newest release tagged wheelhouse-v* that actually
+# contains an android_arm64_v8a wheel?" That is the set of versions the
+# user can actually install on this platform.
 if [ -n "$PIN_VERSION" ]; then
   V="$PIN_VERSION"
   info "Using pinned version $V"
 else
-  V="$("$PYTHON_BIN" - <<'EOF'
-import json, urllib.request, sys
+  V="$("$PYTHON_BIN" - <<EOF
+import json, sys, urllib.request, urllib.error
+
+url = "https://api.github.com/repos/$REPO/releases?per_page=100"
 try:
-    with urllib.request.urlopen("https://pypi.org/pypi/open-news-api/json", timeout=30) as r:
-        print(json.load(r)["info"]["version"])
+    with urllib.request.urlopen(url, timeout=30) as r:
+        releases = json.load(r)
 except Exception as e:
-    print(f"ERROR: {e}", file=sys.stderr)
+    print(f"ERROR: could not list GitHub releases: {e}", file=sys.stderr)
     sys.exit(1)
+
+def semver_key(tag):
+    # Strip prefix, split on '.', coerce to comparable tuples. Prerelease
+    # suffixes (a1, b2, rc3) sort BELOW the final release of the same x.y.z,
+    # which matches PEP 440 / packaging semantics closely enough here.
+    import re
+    v = tag.removeprefix("wheelhouse-v")
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:([abc]|rc)(\d+))?$", v)
+    if not m:
+        return (0, 0, 0, 0, 0)
+    major, minor, patch, pre, pre_n = m.groups()
+    # pre="" sorts after any pre-release marker for the same x.y.z
+    pre_rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
+    return (int(major), int(minor), int(patch), pre_rank, int(pre_n or 0))
+
+candidates = []
+for r in releases:
+    tag = r.get("tag_name", "")
+    if not tag.startswith("wheelhouse-v"):
+        continue
+    if not any("android_arm64_v8a" in a["name"] for a in r.get("assets", [])):
+        continue
+    candidates.append(tag)
+
+if not candidates:
+    print("ERROR: no GitHub release with android_arm64_v8a wheels found.",
+          file=sys.stderr)
+    print("       The wheel-build workflow has not published an Android",
+          file=sys.stderr)
+    print("       wheelhouse release yet. Pass --version X.Y.Z if you know",
+          file=sys.stderr)
+    print("       a specific version should exist.", file=sys.stderr)
+    sys.exit(1)
+
+best = max(candidates, key=semver_key)
+print(best.removeprefix("wheelhouse-v"))
 EOF
 )"
-  [ -n "$V" ] || fail "Could not resolve the latest open-news-api version from PyPI. Pass --version X.Y.Z to specify one."
-  info "Latest open-news-api version on PyPI: $V"
+  [ -n "$V" ] || fail "Could not resolve a version with Android wheels from GitHub releases. Pass --version X.Y.Z to specify one."
+  info "Latest Android-wheelhouse version: $V"
 fi
-
-TAG="wheelhouse-v${V}"
-info "Looking for Android wheels in release: $TAG"
 
 # ---------------------------------------------------------------------
 # 2. Fetch the Android wheels from the GitHub release
