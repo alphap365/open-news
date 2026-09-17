@@ -18,31 +18,25 @@ import httpx
 # ----------------------------------------------------------------------
 TARGETS = [
     ("manylinux_x86_64",  "linux",   "x86_64",    "ubuntu-latest",  "manylinux",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("manylinux_aarch64", "linux",   "aarch64",   "ubuntu-latest",  "manylinux",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("musllinux_x86_64",  "linux",   "x86_64",    "ubuntu-latest",  "musllinux",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("macosx_arm64",      "macos",   "arm64",     "macos-latest",   "macosx",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("macosx_x86_64",     "macos",   "x86_64",    "macos-latest",   "macosx",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("win_amd64",         "windows", "AMD64",     "windows-latest", "win_amd64",
-     ["cp310", "cp311", "cp312", "cp313"]),
+     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",  "android_24_arm64_v8a",
-     ["cp313"]),
+     ["cp313", "cp314"]),
 ]
 
 
 def cibw_build_id_for(platform_, tag_hint, py_tag):
-    """Return a CIBW_BUILD selector that scopes to exactly one libc flavour.
-
-    On linux, `cp313-*` matches BOTH manylinux and musllinux, which would
-    make the two target rows indistinguishable. Everything else is
-    single-flavour per platform, so the wildcard is fine.
-    """
     if platform_ == "linux":
-        return f"{py_tag}-{tag_hint}_*"   # cp313-manylinux_* / cp313-musllinux_*
+        return f"{py_tag}-{tag_hint}_*"
     return f"{py_tag}-*"
 
 ABI3_RE = re.compile(r"-(cp3\d+)-abi3-")
