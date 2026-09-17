@@ -389,7 +389,7 @@ else
 fi
 
 # ---------------------------------------------------------------------
-# 4a. Select the installer (pip or uv)
+# 4. Select the installer (pip or uv)
 # ---------------------------------------------------------------------
 if [ "$PACKAGE_MANAGER" = "ask" ]; then
   if command -v uv >/dev/null 2>&1; then
@@ -417,125 +417,195 @@ info "Upgrading packaging tools in the venv..."
 run "${PIP_PREFIX[@]}" --upgrade pip wheel setuptools
 
 # ---------------------------------------------------------------------
-# 4b. Reconcile wheel platform tags with what pip actually accepts
+# 4a/4b/4c. Reconcile wheel platform tags with this interpreter
 # ---------------------------------------------------------------------
-# Read pip's own compatible-tag list, then for each wheel:
-#   - if the wheel's native tag is in that list, leave it alone
-#   - otherwise, look for the same (python, abi) pair with any platform
-#     pip advertises; for abi3 wheels, also try the interpreter's own
-#     py version with abi3 (the stable ABI is forward-compatible)
-#   - if nothing matches, leave the wheel as-is and warn; pip will
-#     produce a clear error at install time
-if [ "$DRY_RUN" -eq 0 ]; then
-  info "Reconciling wheel platform tags with this interpreter..."
-  if ! "$VENV_PYTHON" - "$WHEELHOUSE_DIR" <<'PY'
+#   4a. Compatibility check — read pip's own tag list and classify every
+#       wheel in the wheelhouse as already-ok / needs-rename / incompatible.
+#       Renames are never inferred from a hardcoded platform string; the
+#       target platform comes from what pip actually advertises.
+#   4b. Rename — apply the plan from 4a. Wheels marked already-ok are
+#       never touched.
+#   4c. Verify — re-run the compatibility check. Catches the case where a
+#       rename produced a tag pip doesn't accept for that wheel's own
+#       (python, abi) pair.
+if [ "$DRY_RUN" -eq 0 ] && [ -d "$WHEELHOUSE_DIR" ]; then
+  info "Reconciling wheel platform tags with this interpreter (4a/4b/4c)..."
+
+  if WHEELHOUSE_DIR="$WHEELHOUSE_DIR" VENV_PYTHON="$VENV_PYTHON" \
+       "$VENV_PYTHON" - <<'PY'
 import os, re, subprocess, sys
 
-wheelhouse = sys.argv[1]
-venv_python = sys.executable
+wheelhouse = os.environ["WHEELHOUSE_DIR"]
+venv_python = os.environ["VENV_PYTHON"]
 
-out = subprocess.run(
-    [venv_python, "-m", "pip", "debug", "--verbose"],
-    capture_output=True, text=True, check=True,
-).stdout
 
-tags = []
-in_tags = False
-for line in out.splitlines():
-    if line.startswith("Compatible tags:"):
-        in_tags = True
-        continue
-    if in_tags:
-        s = line.strip()
-        if not s:
-            if tags:
-                break
+# ---- shared helpers -------------------------------------------------
+def pip_compatible_tags():
+    out = subprocess.run(
+        [venv_python, "-m", "pip", "debug", "--verbose"],
+        capture_output=True, text=True, check=True,
+    ).stdout
+    tags = []
+    in_tags = False
+    for line in out.splitlines():
+        if line.startswith("Compatible tags:"):
+            in_tags = True
             continue
-        if re.match(r"^(cp|py|pp)\d", s):
-            tags.append(s)
-
-if not tags:
-    print("ERROR: pip advertised no compatible tags.", file=sys.stderr)
-    sys.exit(1)
-
-tagset = set(tags)
-interp_py = f"cp{sys.version_info.major}{sys.version_info.minor}"
-print(f"  pip advertises {len(tags)} compatible tags (first: {tags[0]})",
-      file=sys.stderr)
-print(f"  interpreter tag: {interp_py}", file=sys.stderr)
+        if in_tags:
+            s = line.strip()
+            if not s:
+                if tags:
+                    break
+                continue
+            if re.match(r"^(cp|py|pp)\d", s):
+                tags.append(s)
+    return tags
 
 
-def find_platform_for(pytag, abitag):
-    """Return a platform segment pip accepts for (pytag, abitag), or None.
+def parse_wheel(name):
+    """Return (name_version, pytag, abitag, platformtag) or None."""
+    if not name.endswith(".whl"):
+        return None
+    parts = name[:-4].rsplit("-", 3)
+    if len(parts) != 4:
+        return None
+    return tuple(parts)
 
-    Preference order:
-      1. Any tag whose prefix matches the wheel's own (pytag, abitag).
-      2. For abi3 wheels: (interp_py, abi3, *) — the stable-ABI promise.
-      3. For abi3 wheels: (interp_py, interp_py, *) — a cpXX-abi3 binary
-         loads under the interpreter's own version-specific ABI, since
-         the stable ABI is a subset.
+
+def find_new_platform(tags, interp_py, pytag, abitag):
+    """Pick a platform segment pip accepts for (pytag, abitag), or None.
+
+    Preference:
+      1. Exact (pytag, abitag) with any platform pip advertises.
+      2. For abi3 wheels only: (interp_py, abi3) — stable-ABI promise.
+      3. For abi3 wheels only: (interp_py, interp_py) — a cpXX-abi3
+         binary loads under the interpreter's own version-specific ABI.
     """
-    prefix = f"{pytag}-{abitag}-"
     for t in tags:
-        if t.startswith(prefix):
+        if t.startswith(f"{pytag}-{abitag}-"):
             return t.split("-", 2)[2]
-
     if abitag == "abi3":
-        for alt_abi in ("abi3", interp_py):
-            prefix = f"{interp_py}-{alt_abi}-"
+        for alt in ("abi3", interp_py):
             for t in tags:
-                if t.startswith(prefix):
+                if t.startswith(f"{interp_py}-{alt}-"):
                     return t.split("-", 2)[2]
-
     return None
 
 
-renamed = skipped = failed = 0
+# =====================================================================
+# 4a. Compatibility check
+# =====================================================================
+tags = pip_compatible_tags()
+tagset = set(tags)
+if not tags:
+    print("4a: FAIL — pip advertised no compatible tags", file=sys.stderr)
+    sys.exit(1)
+
+interp_py = f"cp{sys.version_info.major}{sys.version_info.minor}"
+print(f"4a: pip advertises {len(tags)} tags (first: {tags[0]})",
+      file=sys.stderr)
+print(f"4a: interpreter tag {interp_py}, platform {sys.platform}",
+      file=sys.stderr)
+
+already_ok = []    # [name, ...]
+plan = []          # [(old_name, new_name), ...]
+incompatible = []  # [(name, reason), ...]
 
 for whl in sorted(os.listdir(wheelhouse)):
-    if not whl.endswith(".whl"):
+    parsed = parse_wheel(whl)
+    if parsed is None:
+        if whl.endswith(".whl"):
+            incompatible.append((whl, "unparseable filename"))
         continue
-
-    parts = whl[:-4].rsplit("-", 3)
-    if len(parts) != 4:
-        print(f"  WARN: unparseable wheel name: {whl}", file=sys.stderr)
-        failed += 1
+    nv, pytag, abitag, plat = parsed
+    if f"{pytag}-{abitag}-{plat}" in tagset:
+        already_ok.append(whl)
         continue
-    name_version, pytag, abitag, platformtag = parts
-
-    native = f"{pytag}-{abitag}-{platformtag}"
-    if native in tagset:
-        print(f"  OK:   {whl}  (native tag accepted)", file=sys.stderr)
-        skipped += 1
+    new_plat = find_new_platform(tags, interp_py, pytag, abitag)
+    if new_plat is None:
+        incompatible.append(
+            (whl, f"no pip tag matches {pytag}-{abitag}-*"))
         continue
-
-    new_platform = find_platform_for(pytag, abitag)
-    if new_platform is None:
-        print(f"  FAIL: {whl}  (no compatible tag for {pytag}-{abitag}-*)",
-              file=sys.stderr)
-        failed += 1
+    if new_plat == plat:
+        already_ok.append(whl)
         continue
+    plan.append((whl, f"{nv}-{pytag}-{abitag}-{new_plat}.whl"))
 
-    if new_platform == platformtag:
-        print(f"  OK:   {whl}  (no change needed)", file=sys.stderr)
-        skipped += 1
+print(f"4a: {len(already_ok)} already-compatible, "
+      f"{len(plan)} need-rename, {len(incompatible)} incompatible",
+      file=sys.stderr)
+for w in already_ok:
+    print(f"4a:   OK   {w}", file=sys.stderr)
+for old, new in plan:
+    print(f"4a:   TAG  {old}", file=sys.stderr)
+    print(f"4a:     -> {new}", file=sys.stderr)
+for w, why in incompatible:
+    print(f"4a:   FAIL {w}  ({why})", file=sys.stderr)
+
+
+# =====================================================================
+# 4b. Apply renames
+# =====================================================================
+renamed = 0
+rename_errors = 0
+for old, new in plan:
+    src = os.path.join(wheelhouse, old)
+    dst = os.path.join(wheelhouse, new)
+    if not os.path.exists(src):
+        print(f"4b: WARN {old} disappeared before rename", file=sys.stderr)
+        rename_errors += 1
         continue
-
-    new_name = f"{name_version}-{pytag}-{abitag}-{new_platform}.whl"
-    src = os.path.join(wheelhouse, whl)
-    dst = os.path.join(wheelhouse, new_name)
-    print(f"  TAG:  {whl}\n     -> {new_name}", file=sys.stderr)
+    if os.path.exists(dst):
+        print(f"4b: WARN {new} already exists, skipping", file=sys.stderr)
+        rename_errors += 1
+        continue
     os.rename(src, dst)
     renamed += 1
 
-print(f"  {renamed} renamed, {skipped} unchanged, {failed} failed.",
-      file=sys.stderr)
-sys.exit(1 if failed else 0)
+print(f"4b: renamed {renamed}, errors {rename_errors}", file=sys.stderr)
+
+
+# =====================================================================
+# 4c. Verify
+# =====================================================================
+ok = bad = 0
+for whl in sorted(os.listdir(wheelhouse)):
+    parsed = parse_wheel(whl)
+    if parsed is None:
+        continue
+    _, pytag, abitag, plat = parsed
+    if f"{pytag}-{abitag}-{plat}" in tagset:
+        ok += 1
+    else:
+        print(f"4c: BAD  {whl}  (not in pip's compatible tags)",
+              file=sys.stderr)
+        bad += 1
+
+print(f"4c: {ok} compatible, {bad} incompatible", file=sys.stderr)
+
+
+# =====================================================================
+# Exit code: 0 = clean, 2 = some wheels still incompatible
+# =====================================================================
+if bad or rename_errors or incompatible:
+    sys.exit(2)
+sys.exit(0)
 PY
   then
-    ok "Wheel platform tags reconciled."
+    ok "Wheel platform tags reconciled (4a/4b/4c clean)."
   else
-    warn "Some wheels could not be reconciled — install may fail."
+    rc=$?
+    if [ "$rc" -eq 2 ]; then
+      warn "Some wheels are not compatible with this interpreter."
+      warn "pip will report a detailed error at install time."
+      warn ""
+      warn "If a wheel shows 'no pip tag matches <py>-<abi>-*', the fix is"
+      warn "in the wheelhouse, not here: add the interpreter's python tag"
+      warn "to the android row in compute_wheel_gaps.py and rebuild the"
+      warn "wheelhouse release."
+    else
+      warn "Wheel reconciliation failed unexpectedly (rc=$rc)."
+    fi
   fi
 fi
 
