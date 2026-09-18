@@ -4,6 +4,7 @@ on:
   push:
     branches: [main]
   pull_request:
+    branches: [main]
 
 jobs:
   test:
@@ -37,11 +38,10 @@ jobs:
       - name: Compile package
         run: uv run --python ${{ matrix.python-version }} python -m compileall -q open_news
 
-  build:
-    name: Build distribution
+  build-check:
+    name: Build sanity check
     runs-on: ubuntu-latest
     needs: test
-
     steps:
       - name: Check out repository
         uses: actions/checkout@v4
@@ -62,9 +62,3 @@ jobs:
 
       - name: Validate metadata
         run: uv run --with twine twine check dist/*
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: python-distributions
-          path: dist/

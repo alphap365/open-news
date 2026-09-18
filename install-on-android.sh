@@ -8,6 +8,12 @@
 #   ./install-on-android.sh --dry-run
 #   ./install-on-android.sh --uninstall
 #
+# News-fetch backend note: on Termux, `ddgs` is skipped automatically at
+# runtime (its `primp` dependency panics with SIGABRT on Android — see
+# open_news/feeds/duckduckgo_engine.py). `duckpy` (pure Python/httpx) is
+# the primary DDG backend here instead, with a manual HTML scraper as
+# the last-resort fallback. Both install normally via pip; no special
+# handling needed in this script.
 set -euo pipefail
 
 REPO="alphap365/open-news"
@@ -55,7 +61,7 @@ while [ $# -gt 0 ]; do
       [ -n "$PIN_VERSION" ] || { printf 'Error: --version= requires a value\n' >&2; exit 2; }
       ;;
     -h|--help)
-      sed -n '2,12p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -200,41 +206,44 @@ except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
 
 def semver_key(tag):
-    v = tag.removeprefix("wheelhouse-v")
+    v = tag.removeprefix("v")
     m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:([abc]|rc)(\d+))?$", v)
     if not m: return (0, 0, 0, 0, 0)
     major, minor, patch, pre, pre_n = m.groups()
     rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
     return (int(major), int(minor), int(patch), rank, int(pre_n or 0))
 
-wh_all = [r for r in releases if r.get("tag_name", "").startswith("wheelhouse-v")]
+# Single tag scheme now: every release (vX.Y.Z) may carry both the
+# package's own dist and depwheel-*.whl dependency wheels side by side.
+all_releases = [r for r in releases if re.match(r"^v\d+\.\d+\.\d+", r.get("tag_name", ""))]
 candidates = [
-    r["tag_name"] for r in wh_all
-    if any("android_" in a["name"] and "arm64_v8a" in a["name"]
+    r["tag_name"] for r in all_releases
+    if any(a["name"].startswith("depwheel-") and "android_" in a["name"] and "arm64_v8a" in a["name"]
            for a in r.get("assets", []))
 ]
 if not candidates:
-    print("ERROR: no release with android_arm64_v8a wheels found.", file=sys.stderr)
-    if not wh_all:
-        print("       No wheelhouse-v* releases exist at all.", file=sys.stderr)
+    print("ERROR: no release with depwheel-*android_arm64_v8a* wheels found.", file=sys.stderr)
+    if not all_releases:
+        print("       No v* releases exist at all.", file=sys.stderr)
     else:
-        print(f"       {len(wh_all)} wheelhouse release(s), none with android wheels:",
+        print(f"       {len(all_releases)} release(s), none with android depwheels:",
               file=sys.stderr)
-        for r in wh_all[:10]:
-            n = sum(1 for a in r.get("assets", []) if "android" in a["name"])
-            print(f"         {r['tag_name']}: {n} android", file=sys.stderr)
+        for r in all_releases[:10]:
+            n = sum(1 for a in r.get("assets", [])
+                    if a["name"].startswith("depwheel-") and "android" in a["name"])
+            print(f"         {r['tag_name']}: {n} android depwheel(s)", file=sys.stderr)
     print("       Pass --version X.Y.Z to pin a version.", file=sys.stderr)
     sys.exit(1)
 
 best = max(candidates, key=semver_key)
-print(best.removeprefix("wheelhouse-v"))
+print(best.removeprefix("v"))
 PY
 )"
   [ -n "$V" ] || fail "Could not resolve version. Pass --version X.Y.Z."
-  ok "Latest Android-wheelhouse version: $V"
+  ok "Latest Android-depwheel version: $V"
 fi
 
-TAG="wheelhouse-v${V}"
+TAG="v${V}"
 info "Fetching release: $TAG"
 
 # ---------------------------------------------------------------------
@@ -265,11 +274,15 @@ except urllib.error.HTTPError as e:
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
 
+# Only depwheel-*.whl assets, further scoped to android_*arm64_v8a — this
+# is also what stops us ever grabbing the release's own open_news_api-*
+# package wheel by accident, since both now live in the same release.
 assets = [a for a in release.get("assets", [])
           if a["name"].endswith(".whl")
+          and a["name"].startswith("depwheel-")
           and "android_" in a["name"] and "arm64_v8a" in a["name"]]
 if not assets:
-    print(f"ERROR: release '{tag}' has no android wheels.", file=sys.stderr)
+    print(f"ERROR: release '{tag}' has no depwheel-*android* wheels.", file=sys.stderr)
     sys.exit(1)
 for a in assets:
     print(a["browser_download_url"])
@@ -279,9 +292,13 @@ PY
 
   while IFS= read -r url; do
     [ -n "$url" ] || continue
-    info "Downloading $(basename "$url")"
+    fname="$(basename "$url")"
+    # Strip the depwheel- prefix locally so downstream tag-parsing
+    # (cut -d- -f1-2, etc. in step 5) sees the real wheel filename.
+    real_name="${fname#depwheel-}"
+    info "Downloading $real_name"
     run curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
-      -o "$WHEELHOUSE_DIR/$(basename "$url")" "$url"
+      -o "$WHEELHOUSE_DIR/$real_name" "$url"
   done <<< "$ASSETS"
 
   count=$(find "$WHEELHOUSE_DIR" -maxdepth 1 -name '*.whl' | wc -l)
@@ -499,134 +516,7 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 8b. Patch ddgs to use a robust httpx-based DuckDuckGo scraper
-# ---------------------------------------------------------------------
-# On Termux/Android, ddgs >= 7.x pulls primp (a Rust HTTP client) which
-# panics with "android context was not initialized" (ndk-context) and
-# SIGABRTs the process on the first network call. This patch replaces
-# the primp-based HTTP client with a robust httpx-based HTML scraper for
-# DuckDuckGo that handles the uddg= redirect and DuckDuckGo's rate limits.
-if [ "$DRY_RUN" -eq 0 ]; then
-  info "Patching ddgs to use robust httpx-based DuckDuckGo scraper (Termux fix)..."
-
-  DDGS_DIR="$("$VENV_PYTHON" -c 'import ddgs, os; print(os.path.dirname(ddgs.__file__))')"
-  PATCH_FILE="$DDGS_DIR/_ddg_httpx_fallback.py"
-  INIT_FILE="$DDGS_DIR/__init__.py"
-
-  if [ -f "$INIT_FILE" ] && grep -q "PATCHED_BY_OPEN_NEWS_INSTALLER" "$INIT_FILE" 2>/dev/null; then
-    ok "ddgs already patched."
-  else
-    cat > "$PATCH_FILE" <<'PY'
-# added by open-news installer
-# Termux/Android fallback for ddgs: avoids primp (Rust) which panics
-# with "android context was not initialized" on Termux.
-# Uses httpx against DuckDuckGo's HTML endpoint with retry logic.
-import httpx
-import logging
-import time
-from typing import List, Dict, Optional
-from urllib.parse import urlparse, parse_qs, unquote
-
-logger = logging.getLogger(__name__)
-
-_HTML_ENDPOINT = "https://html.duckduckgo.com/html/"
-
-def _decode_uddg(url: str) -> str:
-    """Decode DuckDuckGo's uddg= redirect wrapper."""
-    if "uddg=" not in url:
-        return url
-    try:
-        parsed = urlparse(url)
-        qs = parse_qs(parsed.query)
-        return unquote(qs.get("uddg", [url])[0])
-    except Exception:
-        return url
-
-def ddgs_news(query: str, region: str = "wt-wt", timelimit: str = "d",
-              max_results: int = 10) -> List[Dict]:
-    """DuckDuckGo news search via HTML endpoint (httpx-based) with retries."""
-    results = []
-    headers = {
-        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
-        "Accept-Language": "en-US,en;q=0.9",
-    }
-    data = {
-        "q": query,
-        "kl": region if region != "wt-wt" else "us-en",
-        "df": timelimit,
-    }
-
-    for attempt in range(3):
-        try:
-            with httpx.Client(follow_redirects=True, timeout=20, headers=headers) as client:
-                resp = client.post(_HTML_ENDPOINT, data=data)
-                if resp.status_code == 202:
-                    wait = 2 ** attempt
-                    logger.warning(f"DDG rate limit hit, retrying in {wait}s...")
-                    time.sleep(wait)
-                    continue
-                resp.raise_for_status()
-                from lxml.html import fromstring
-                doc = fromstring(resp.text)
-                for result in doc.xpath("//div[contains(@class,'result')]")[:max_results]:
-                    title_el = result.xpath(".//a[contains(@class,'result__a')]")
-                    snippet_el = result.xpath(".//a[contains(@class,'result__snippet')]")
-                    if not title_el:
-                        continue
-                    link = title_el[0].get("href", "")
-                    if link:
-                        link = _decode_uddg(link)
-                    results.append({
-                        "title": title_el[0].text_content().strip() if title_el else "",
-                        "url": link,
-                        "body": snippet_el[0].text_content().strip() if snippet_el else "",
-                    })
-                break
-        except httpx.HTTPStatusError as e:
-            if e.response.status_code == 202 and attempt < 2:
-                wait = 2 ** attempt
-                logger.warning(f"DDG rate limit hit, retrying in {wait}s...")
-                time.sleep(wait)
-                continue
-            logger.warning(f"ddgs httpx fallback failed: {e}")
-            break
-        except Exception as e:
-            logger.warning(f"ddgs httpx fallback failed: {e}")
-            break
-    return results
-PY
-
-    # Patch __init__.py to use the fallback on Termux
-    if [ -f "$INIT_FILE" ]; then
-      cat >> "$INIT_FILE" <<'PY'
-
-# PATCHED_BY_OPEN_NEWS_INSTALLER: Termux/Android httpx fallback
-import os as _os
-if _os.environ.get("TERMUX_VERSION") or _os.path.isdir("/data/data/com.termux"):
-    try:
-        from ddgs._ddg_httpx_fallback import ddgs_news as _fallback_news
-        import ddgs as _ddgs_module
-        _ddgs_module.DDGS._original_news = _ddgs_module.DDGS.news
-        def _patched_news(self, *args, **kwargs):
-            return _fallback_news(
-                query=kwargs.get("query", args[0] if args else ""),
-                region=kwargs.get("region", "wt-wt"),
-                timelimit=kwargs.get("timelimit", "d"),
-                max_results=kwargs.get("max_results", 10),
-            )
-        _ddgs_module.DDGS.news = _patched_news
-    except Exception:
-        pass
-PY
-      ok "Patched ddgs to use httpx fallback on Termux."
-    else
-      warn "Could not find ddgs __init__.py to patch."
-    fi
-  fi
-fi
-
-# ---------------------------------------------------------------------
-# 9. Verify network connectivity from the venv Python
+# 9. Verify network connectivity and DDG backend availability
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Verifying Python HTTPS works..."
@@ -667,6 +557,29 @@ PY
     warn "HTTPS via certifi alone failed. First 5 lines:"
     sed -n '1,5p' /tmp/net-check2.err >&2 || true
   fi
+
+  # Test 3: report which DuckDuckGo news backends are importable here.
+  # ddgs is expected to be present but is skipped at runtime on Termux
+  # (its `primp` dependency SIGABRTs) — duckpy is the real primary path.
+  info "Checking DuckDuckGo backend availability..."
+  "$VENV_PYTHON" - <<'PY' || true
+checks = []
+try:
+    import ddgs  # noqa: F401
+    checks.append(("ddgs", True, "installed (skipped at runtime on Termux)"))
+except ImportError:
+    checks.append(("ddgs", False, "not installed"))
+
+try:
+    import duckpy  # noqa: F401
+    checks.append(("duckpy", True, "installed — primary backend on Termux"))
+except ImportError:
+    checks.append(("duckpy", False, "not installed — falls back to HTML scraper"))
+
+for name, ok_, note in checks:
+    mark = "OK  " if ok_ else "MISS"
+    print(f"  [{mark}] {name}: {note}")
+PY
 fi
 
 # ---------------------------------------------------------------------

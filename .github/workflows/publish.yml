@@ -1,60 +1,88 @@
 name: Publish to PyPI
 
 on:
-  push:
-    tags:
-      - "v*"
+  release:
+    types: [published]
 
 permissions:
   contents: read
   id-token: write
 
 jobs:
-  build:
-    name: Build release distributions
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install build tools
-        run: uv pip install --system --upgrade build twine
-
-      - name: Build distributions
-        run: uv build
-
-      - name: Validate metadata
-        run: uv run --with twine twine check dist/*
-
-      - name: Upload distributions
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-distributions
-          path: dist/
-
   publish:
-    name: Publish to PyPI
     runs-on: ubuntu-latest
-    needs: build
     environment:
       name: pypi
       url: https://pypi.org/p/open-news-api
-
     steps:
-      - name: Download distributions
-        uses: actions/download-artifact@v4
-        with:
-          name: release-distributions
-          path: dist/
+      - name: Guard against channel/tag mismatch
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+          IS_PRERELEASE: ${{ github.event.release.prerelease }}
+        run: |
+          python3 - <<'EOF'
+          import os, re, sys
 
-      - name: Publish distributions
-        uses: pypa/gh-action-pypi-publish@release/v1
+          tag = os.environ["TAG"]
+          ui_prerelease = os.environ["IS_PRERELEASE"] == "true"
+          version = tag.lstrip("v")
+
+          tag_is_pre = bool(re.search(r"(a|b|rc)\d+|\.dev\d+", version))
+
+          if tag_is_pre != ui_prerelease:
+              print(
+                  f"Refusing: tag {tag} implies pre-release={tag_is_pre} "
+                  f"but release UI says prerelease={ui_prerelease}",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+
+          if tag_is_pre:
+              print(f"{tag} is a pre-release — not auto-publishing to PyPI.")
+              # Exit 0 so this doesn't look like a failure; downstream step
+              # is skipped via the 'if' below instead.
+          EOF
+
+      - name: Check channel
+        id: channel
+        env:
+          TAG: ${{ github.event.release.tag_name }}
+        run: |
+          version="${TAG#v}"
+          if echo "$version" | grep -qE '(a|b|rc)[0-9]+|\.dev[0-9]+'; then
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Download only PyPI-eligible assets
+        if: steps.channel.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p dist
+          gh release download ${{ github.event.release.tag_name }} \
+            --repo ${{ github.repository }} \
+            --pattern 'open_news_api-*' \
+            --dir dist/
+
+      - name: Sanity check — nothing unexpected in dist/
+        if: steps.channel.outputs.publish == 'true'
+        run: |
+          shopt -s nullglob
+          files=(dist/*)
+          if [ ${#files[@]} -eq 0 ]; then
+            echo "No matching assets found in release — aborting." >&2
+            exit 1
+          fi
+          for f in "${files[@]}"; do
+            case "$(basename "$f")" in
+              open_news_api-*) ;;
+              *) echo "Refusing to publish unexpected file: $f" >&2; exit 1 ;;
+            esac
+          done
+          echo "Verified dist/ contents:"
+          ls -la dist/
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        if: steps.channel.outputs.publish == 'true'

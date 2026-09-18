@@ -1,0 +1,246 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "pyproject.toml"
+
+permissions:
+  contents: write
+
+jobs:
+  # ------------------------------------------------------------------
+  # 0. Detect a version bump; decide stable vs pre-release
+  # ------------------------------------------------------------------
+  detect-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Read version and classify
+        id: check
+        run: |
+          python3 - <<'EOF'
+          import os, re, tomllib, subprocess
+
+          version = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          tag = f"v{version}"
+
+          existing = subprocess.run(
+              ["git", "tag", "-l", tag], capture_output=True, text=True
+          ).stdout.strip()
+
+          should_release = "false" if existing else "true"
+
+          # PEP 440 pre-release markers: aN, bN, rcN, .devN, .postN is NOT pre-release
+          is_pre = bool(re.search(r"(a|b|rc)\d+|\.dev\d+", version))
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={version}\n")
+              f.write(f"tag={tag}\n")
+              f.write(f"is_prerelease={'true' if is_pre else 'false'}\n")
+              f.write(f"should_release={should_release}\n")
+
+          print(f"version={version} tag={tag} prerelease={is_pre} should_release={should_release}")
+          EOF
+
+      - name: Create tag
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          git tag ${{ steps.check.outputs.tag }}
+          git push origin ${{ steps.check.outputs.tag }}
+
+  # ------------------------------------------------------------------
+  # 1. Test + build the package itself
+  # ------------------------------------------------------------------
+  test:
+    needs: detect-version
+    if: needs.detect-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ['3.10', '3.11', '3.12', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --python ${{ matrix.python-version }}
+      - run: uv run --python ${{ matrix.python-version }} pytest -q
+      - run: uv run --python ${{ matrix.python-version }} python -m compileall -q open_news
+
+  build-package:
+    needs: [detect-version, test]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: astral-sh/setup-uv@v6
+      - run: uv pip install --system --upgrade build twine
+      - run: uv build
+      - run: uv run --with twine twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/
+
+  # ------------------------------------------------------------------
+  # 2. Dependency wheel gaps (Android, manylinux, etc.)
+  # ------------------------------------------------------------------
+  matrix-gen:
+    needs: detect-version
+    if: needs.detect-version.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+      has_gaps: ${{ steps.filter.outputs.has_gaps }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install httpx
+      - id: gen
+        run: python .github/scripts/compute_wheel_gaps.py
+      - id: filter
+        env:
+          MATRIX_IN: ${{ steps.gen.outputs.matrix }}
+        run: |
+          python3 - <<'EOF'
+          import json, os
+          matrix = json.loads(os.environ["MATRIX_IN"])
+          EXCLUDE = {"lxml"}  # handled by install script, not here
+          matrix = [m for m in matrix if m["package"].lower() not in EXCLUDE]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(matrix)}\n")
+              f.write(f"has_gaps={'true' if matrix else 'false'}\n")
+          print(f"After exclusion: {len(matrix)} combinations remain.")
+          for m in matrix:
+              print(" -", m)
+          EOF
+
+  build-dep-wheels:
+    needs: matrix-gen
+    if: needs.matrix-gen.outputs.has_gaps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix-gen.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Fetch sdist for ${{ matrix.package }}==${{ matrix.version }}
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import json, urllib.request
+          pkg = "${{ matrix.package }}"
+          version = "${{ matrix.version }}"
+          data = json.load(urllib.request.urlopen(
+              f"https://pypi.org/pypi/{pkg}/{version}/json"
+          ))
+          sdist = next(u for u in data["urls"] if u["packagetype"] == "sdist")
+          with open("sdist_url.txt", "w") as f:
+              f.write(sdist["url"])
+          EOF
+          URL=$(cat sdist_url.txt)
+          curl -fL --retry 3 --retry-delay 2 -o src_archive "$URL"
+          mkdir -p pkgsrc
+          case "$URL" in
+            *.tar.gz|*.tgz) tar xf src_archive -C pkgsrc --strip-components=1 ;;
+            *.zip)
+              mkdir -p pkgsrc_tmp
+              unzip -q src_archive -d pkgsrc_tmp
+              mv pkgsrc_tmp/*/* pkgsrc/ ;;
+            *) echo "Unrecognized sdist archive type: $URL" >&2; exit 1 ;;
+          esac
+
+      - uses: pypa/cibuildwheel@v4.2.0
+        with:
+          package-dir: pkgsrc
+        env:
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          CIBW_BUILD: ${{ matrix.cibw_build_id }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: wheel-${{ matrix.package }}-${{ matrix.target }}-${{ matrix.py_tag }}
+          path: wheelhouse/*.whl
+          if-no-files-found: warn
+
+  verify-dep-wheels:
+    needs: build-dep-wheels
+    if: always() && needs.build-dep-wheels.result != 'skipped'
+    runs-on: ubuntu-latest
+    outputs:
+      any_wheels: ${{ steps.check.outputs.any_wheels }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: all-wheels
+      - id: check
+        run: |
+          count=$(find all-wheels -name "*.whl" | wc -l)
+          echo "any_wheels=$([ "$count" -gt 0 ] && echo true || echo false)" >> "$GITHUB_OUTPUT"
+          echo "Found $count dependency wheel(s)."
+      - name: Sanity-check wheel filenames
+        if: steps.check.outputs.any_wheels == 'true'
+        run: |
+          pip install check-wheel-contents --quiet
+          find all-wheels -name "*.whl" -exec check-wheel-contents {} \; || true
+
+  # ------------------------------------------------------------------
+  # 3. Draft release, single tag, everything attached with a naming
+  #    convention that keeps package assets and dep wheels unambiguous
+  # ------------------------------------------------------------------
+  release:
+    needs:
+      - detect-version
+      - build-package
+      - verify-dep-wheels
+    if: always() && needs.build-package.result == 'success'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: all-artifacts
+
+      - name: Assemble release assets
+        run: |
+          mkdir -p release-assets
+          cp all-artifacts/python-distributions/* release-assets/ 2>/dev/null || true
+          if [ -d all-artifacts ]; then
+            for f in all-artifacts/wheel-*/*.whl; do
+              [ -e "$f" ] || continue
+              cp "$f" "release-assets/depwheel-$(basename "$f")"
+            done
+          fi
+          echo "Assets to publish:"
+          ls -la release-assets/
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.detect-version.outputs.tag }}
+          name: "v${{ needs.detect-version.outputs.version }}"
+          draft: true
+          prerelease: ${{ needs.detect-version.outputs.is_prerelease }}
+          files: release-assets/*
