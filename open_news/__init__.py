@@ -15,7 +15,7 @@ from .processing.batch import batch_summarize, search_and_summarize
 from .processing.summarizer import summarize_text, summarize_with_keywords
 from .processing.dedupe import dedupe_articles
 
-__version__ = "1.0.3a5"
+__version__ = "1.0.3a6"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 

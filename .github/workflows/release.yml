@@ -175,11 +175,12 @@ jobs:
             *) echo "Unrecognized sdist archive type: $URL" >&2; exit 1 ;;
           esac
 
-      # Some aio-libs sdists ship [tool.cibuildwheel] with
-      # enable = ["cpython-freethreading"], which cibuildwheel >=4 rejects.
-      # Env vars override the *merged* config, but the invalid literal is
-      # validated while parsing the file — so the file itself must be patched.
-      - name: Strip deprecated cibuildwheel enable group from dependency
+      # Dependency sdists (aio-libs, etc.) ship [tool.cibuildwheel] sections
+      # written for their own repo layout: enable groups that cibuildwheel v4
+      # rejects, and constraint paths like `requirements/cython.txt` that
+      # don't exist inside our extracted pkgsrc/. Strip the whole table so
+      # cibuildwheel only sees the config we pass via CIBW_* env vars.
+      - name: Strip dependency [tool.cibuildwheel] config
         shell: bash
         run: |
           python3 - <<'EOF'
@@ -191,29 +192,22 @@ jobs:
               sys.exit(0)
 
           original = p.read_text(encoding="utf-8")
-          text = original
 
-          # 1. Remove the token wherever it appears inside a list.
-          text, n_list = re.subn(
-              r'["\']cpython-freethreading["\']\s*,?\s*',
+          # Matches [tool.cibuildwheel], [tool.cibuildwheel.android], etc.
+          # and consumes everything up to the next top-level table or EOF.
+          text, n = re.subn(
+              r'(?ms)^\[tool\.cibuildwheel(?:\.[^\]]+)*\][^\n]*\n.*?(?=^\[|\Z)',
               '',
-              text,
-          )
-
-          # 2. Handle a bare string form: enable = "cpython-freethreading"
-          text, n_str = re.subn(
-              r'enable\s*=\s*["\']cpython-freethreading["\']',
-              'enable = []',
-              text,
+              original,
           )
 
           if text != original:
               p.write_text(text, encoding="utf-8")
-              print(f"Patched {p} (list removals: {n_list}, string replacements: {n_str})")
+              print(f"Removed {n} [tool.cibuildwheel*] section(s) from {p}")
           else:
-              print(f"No cpython-freethreading found in {p} — left unchanged.")
+              print(f"No [tool.cibuildwheel*] sections found in {p}")
           EOF
-
+        
       - uses: pypa/cibuildwheel@v4.2.0
         with:
           package-dir: pkgsrc
