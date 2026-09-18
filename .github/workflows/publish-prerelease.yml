@@ -1,0 +1,48 @@
+name: Publish pre-release to PyPI
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to build and publish (e.g. v1.0.3a3)'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  id-token: write   # required for trusted publishing (OIDC)
+
+jobs:
+  publish-prerelease:
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/p/open-news-api
+    steps:
+      - name: Check out the tag
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+
+      - name: Verify pre-release version
+        run: |
+          version=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          if ! echo "$version" | grep -qE '(a|b|rc)[0-9]+|\.dev[0-9]+'; then
+            echo "Refusing: version $version is not a pre-release." >&2
+            exit 1
+          fi
+          echo "Version $version is a pre-release. Proceeding."
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Publish to PyPI (trusted publishing)
+        run: uv publish --trusted-publishing always
