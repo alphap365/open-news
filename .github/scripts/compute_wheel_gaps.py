@@ -5,6 +5,14 @@ actually missing — scoped to runtime dependencies only.
 Confirmed via `cibuildwheel --platform android --help`:
   - Android's only supported --archs value is `arm64_v8a` (no armv7/x86_64/x86).
   - Android build identifiers start at cp313 (CPython's Android port floor).
+
+Android tag note:
+  PyPI filenames use `android_<api>_<arch>` (e.g. `android_21_arm64_v8a`,
+  `android_24_arm64_v8a`). The API level varies per project and is
+  forward-compatible at runtime, so we match on `arm64_v8a` alone rather
+  than pinning to a specific API level. Pinning to `android_24_...`
+  produced false positives for aiohttp, which ships `android_21_arm64_v8a`
+  wheels that are perfectly usable on API 24+.
 """
 import json
 import os
@@ -29,7 +37,7 @@ TARGETS = [
      ["cp310", "cp311", "cp312", "cp313", "cp314"]),
     ("win_amd64",         "windows", "AMD64",     "windows-latest", "win_amd64",
      ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",  "android_24_arm64_v8a",
+    ("android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",  "arm64_v8a",
      ["cp313", "cp314"]),
 ]
 

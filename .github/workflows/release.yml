@@ -145,6 +145,10 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      # uv is required because cibuildwheel's build_frontend is "build[uv]"
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+
       - name: Fetch sdist for ${{ matrix.package }}==${{ matrix.version }}
         shell: bash
         run: |
@@ -170,6 +174,45 @@ jobs:
               mv pkgsrc_tmp/*/* pkgsrc/ ;;
             *) echo "Unrecognized sdist archive type: $URL" >&2; exit 1 ;;
           esac
+
+      # Some aio-libs sdists ship [tool.cibuildwheel] with
+      # enable = ["cpython-freethreading"], which cibuildwheel >=4 rejects.
+      # Env vars override the *merged* config, but the invalid literal is
+      # validated while parsing the file — so the file itself must be patched.
+      - name: Strip deprecated cibuildwheel enable group from dependency
+        shell: bash
+        run: |
+          python3 - <<'EOF'
+          import pathlib, re, sys
+
+          p = pathlib.Path("pkgsrc/pyproject.toml")
+          if not p.exists():
+              print("No pkgsrc/pyproject.toml — nothing to patch.")
+              sys.exit(0)
+
+          original = p.read_text(encoding="utf-8")
+          text = original
+
+          # 1. Remove the token wherever it appears inside a list.
+          text, n_list = re.subn(
+              r'["\']cpython-freethreading["\']\s*,?\s*',
+              '',
+              text,
+          )
+
+          # 2. Handle a bare string form: enable = "cpython-freethreading"
+          text, n_str = re.subn(
+              r'enable\s*=\s*["\']cpython-freethreading["\']',
+              'enable = []',
+              text,
+          )
+
+          if text != original:
+              p.write_text(text, encoding="utf-8")
+              print(f"Patched {p} (list removals: {n_list}, string replacements: {n_str})")
+          else:
+              print(f"No cpython-freethreading found in {p} — left unchanged.")
+          EOF
 
       - uses: pypa/cibuildwheel@v4.2.0
         with:
