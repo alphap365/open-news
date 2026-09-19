@@ -1,110 +1,214 @@
-# 📦 Installation
+# 📦 Installation Guide
 
-## The interactive installer (recommended)
+> **Stable target: v1.0.3**
+
+Open News is distributed as **`open-news-api`** and requires **Python 3.10 or newer**.
+
+---
+
+## ⚡ Recommended: interactive installer
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install.sh | bash
 ```
 
-This is a wizard, not a silent script. It will:
+The installer is designed as a guided setup rather than a silent one.
 
-1. Detect your OS/shell (Linux, macOS, Termux, WSL/Git Bash) and check Python ≥3.10.
-2. Ask whether to use `pip` or `uv` when `uv` is installed (`pip` remains the default otherwise).
-3. Ask whether you want a **Quick install** (package install) or a **Developer install** (git clone + editable).
-4. Ask whether to use an isolated virtual environment (recommended, default) or your current Python environment.
-5. Ask whether to install the optional JS-rendering extra (Playwright + Chromium, ~300MB).
-6. Fix `PATH` automatically if the `open-news` command isn't reachable yet.
-7. Ask a few first-run preferences (default language / category / sort / output format) and save them to `~/.config/open-news/config.json` — the CLI reads these as defaults, so you don't have to repeat `--language en --sort date` every time.
-8. Install, then verify with `open-news --version` before declaring success.
-9. Offer to launch the TUI immediately.
+### What it handles
 
-### Non-interactive / flags
+1. Detects Linux, macOS, Termux, WSL, or Git Bash environments.
+2. Finds a usable Python `3.10+` interpreter.
+3. Lets you choose `pip` or `uv` when both are available.
+4. Offers a quick package installation or developer installation.
+5. Can create an isolated virtual environment.
+6. Optionally installs the JavaScript/Playwright extra.
+7. Repairs PATH configuration when required.
+8. Saves CLI preferences to `~/.config/open-news/config.json`.
+9. Verifies the installation with `open-news --version`.
+10. Offers to launch the TUI after installation.
+
+> 💡 **Tip:** The isolated environment is the safest default for a normal user installation because it avoids modifying unrelated Python packages.
+
+---
+
+## 🧰 Installer flags
+
+The installer supports non-interactive and maintenance modes:
 
 ```bash
-./install.sh --yes            # all defaults, no prompts (CI-friendly)
-./install.sh --dev            # developer install: git clone + editable
-./install.sh --uv             # use uv instead of pip
-./install.sh --pip            # use pip (default)
-./install.sh --js             # always install the JS/Playwright extra
-./install.sh --no-js          # never offer it
-./install.sh --dry-run        # print what would happen, run nothing
-./install.sh --uninstall      # remove the venv + optionally the config
+./install.sh --yes
+./install.sh --dev
+./install.sh --uv
+./install.sh --pip
+./install.sh --js
+./install.sh --no-js
+./install.sh --dry-run
+./install.sh --uninstall
 ```
 
-> **Native Windows note:** `install.sh` needs a POSIX-style shell — it works under **WSL** or **Git Bash**, but not raw `cmd.exe`/PowerShell. On native Windows, use the manual install below inside PowerShell.
+| Flag | Meaning |
+|---|---|
+| `--yes` | Accept default answers without prompts |
+| `--dev` | Install from a Git clone in editable mode |
+| `--uv` | Prefer `uv` |
+| `--pip` | Prefer `pip` |
+| `--js` | Install JavaScript rendering automatically |
+| `--no-js` | Do not offer JavaScript rendering |
+| `--dry-run` | Show planned actions without changing the system |
+| `--uninstall` | Remove the installer-managed installation |
 
-## Manual install
+---
+
+## 🐍 Manual pip installation
 
 ```bash
 pip install open-news-api
 ```
 
-With `uv`, install into the active virtual environment:
+Pin the stable release explicitly:
+
+```bash
+pip install open-news-api==1.0.3
+```
+
+Verify:
+
+```bash
+open-news --version
+```
+
+Expected form:
+
+```text
+open-news 1.0.3
+```
+
+---
+
+## ⚡ Manual uv installation
+
+For a project:
+
+```bash
+uv add open-news-api
+```
+
+For the active environment:
 
 ```bash
 uv pip install open-news-api
 ```
 
-For a standalone CLI installation, `uv` can also manage an isolated tool environment:
+For an isolated CLI tool:
 
 ```bash
 uv tool install open-news-api
 ```
 
-For local development:
+---
+
+## 🛠️ Developer installation
 
 ```bash
 git clone https://github.com/alphap365/open-news.git
 cd open-news
+
 python -m venv .venv
-# Windows: .venv\Scripts\activate
-# macOS/Linux/Termux: source .venv/bin/activate
+source .venv/bin/activate
+
 python -m pip install -e ".[dev]"
+pytest -q
 ```
 
-Or let `uv` create and manage the project environment:
+Windows:
+
+```powershell
+.venv\Scripts\activate
+python -m pip install -e ".[dev]"
+pytest -q
+```
+
+With `uv`:
 
 ```bash
 uv sync --group dev
 uv run pytest -q
 ```
 
-## Optional: JavaScript rendering
+---
 
-Needed for sites whose article content or links only appear after client-side rendering (crawler `js=True`, `get_article(..., js=True)`).
+## 🌐 Optional JavaScript rendering
+
+Most news pages can be handled without a browser. Some sites require client-side rendering.
+
+Install the optional extra:
 
 ```bash
 pip install "open-news-api[js]"
 playwright install chromium
 ```
 
-With `uv`:
+Or with `uv`:
 
 ```bash
-uv pip install "open-news-api[js]"
+uv add "open-news-api[js]"
 playwright install chromium
 ```
 
-This is a genuinely large download (~300MB for Chromium) — it's optional for a reason. Most feeds and article pages don't need it.
+Then enable it through the API or CLI where supported:
 
-## Termux
+```python
+get_article(url, js=True)
+```
 
-`lxml` needs a compiler and headers to build on Termux. The installer handles this automatically; doing it by hand:
+```bash
+open-news extract https://example.com/article --js
+```
+
+### What this costs
+
+Chromium is a large download. The browser is therefore intentionally **optional** rather than a mandatory Open News dependency.
+
+---
+
+## 📱 Termux / Android
+
+v1.0.3 includes a dedicated Android installation script:
+
+```bash
+./install-on-android.sh
+```
+
+The general installer also recognizes Termux.
+
+For a manual setup, the native XML dependencies used by `lxml` may need to be installed first:
 
 ```bash
 pkg install clang libxml2 libxslt python-pip
 pip install open-news-api
 ```
 
-If `uv` is already installed, the package install is:
+With an existing `uv` environment:
 
 ```bash
 uv pip install open-news-api
 ```
 
-## Preferences file
+### Why Termux is special
 
-Written by the installer wizard at `~/.config/open-news/config.json`:
+The v1.0.3 acquisition layer does not assume that the native DDGS route is always suitable on Termux. `fetch()` can therefore start with the portable fallback chain instead of forcing the native route.
+
+---
+
+## ⚙️ CLI preferences
+
+The interactive installer can create:
+
+```text
+~/.config/open-news/config.json
+```
+
+Example:
 
 ```json
 {
@@ -115,14 +219,54 @@ Written by the installer wizard at `~/.config/open-news/config.json`:
 }
 ```
 
-These become the CLI's argparse **defaults** — any flag you pass explicitly on the command line still overrides them. Safe to hand-edit or delete.
+These values become CLI defaults. Explicit command-line options override them.
 
-## Uninstalling
+You can safely edit or delete this file.
+
+---
+
+## 🧹 Uninstalling
+
+### Installer-managed installation
 
 ```bash
 ./install.sh --uninstall
 ```
 
-Removes the venv the installer created (`~/.open-news/`) and offers to remove your preferences (`~/.config/open-news/`). If you installed manually via `pip`, just `pip uninstall open-news-api`.
+The installer records its installation state so that uninstall can distinguish package and developer installations.
 
-For a manual `uv` installation, use `uv pip uninstall open-news-api` or `uv tool uninstall open-news-api` when it was installed as a standalone tool.
+### pip
+
+```bash
+pip uninstall open-news-api
+```
+
+### uv project dependency
+
+Remove the package from the project with your normal `uv` workflow.
+
+### uv tool
+
+```bash
+uv tool uninstall open-news-api
+```
+
+---
+
+## 🧪 Verify before use
+
+After installation:
+
+```bash
+open-news --version
+open-news --help
+open-news fetch --category tech --limit 3
+```
+
+For development:
+
+```bash
+pytest -q
+```
+
+A stable release should be verified in the environment where it will actually run, especially when using Termux, JavaScript rendering, or unusual Python installations.

@@ -1,131 +1,228 @@
 # 🌍 Parameters Reference
 
-Consolidated reference for parameter formats that are used in more than one
-place across `fetch()`, `search()`, `search_site()`, `get_article()`, the
-CLI, and the TUI, but weren't documented in one spot before.
+This page collects parameter formats and validation rules that appear across the Open News API and CLI.
 
-## Country / region codes
+---
 
-Used by `search(country=...)` / `open-news search --country CC` (v1.0.2)
-and by `fetch(location=...)` / `open-news fetch --location CC`.
+## 🌐 Country / region codes
 
-- **Format:** ISO 3166-1 **alpha-2**, case-insensitive (`"in"`, `"IN"`, and
-  `"In"` are all accepted and normalized internally).
-- **`fetch()`/`location`:** passed straight through to DuckDuckGo News as
-  its `region` parameter (internally suffixed to `xx-en` when no explicit
-  sub-region is given, e.g. `in` → `in-en`). DuckDuckGo accepts most
-  standard two-letter country codes; there's no fixed enumerated list —
-  an unrecognized code degrades to DuckDuckGo's global/worldwide results
-  rather than erroring.
-- **`search()`/`country`:** maps to Google News RSS's `gl` (geolocation)
-  and `ceid` (country:language edition) parameters. Defaults to `"US"`
-  when omitted. Common values:
+### `search(country=...)`
 
-  | Code | Region | Code | Region |
-  |---|---|---|---|
-  | `us` | United States | `gb` | United Kingdom |
-  | `in` | India | `ca` | Canada |
-  | `au` | Australia | `de` | Germany |
-  | `fr` | France | `jp` | Japan |
-  | `br` | Brazil | `za` | South Africa |
-  | `sg` | Singapore | `ae` | UAE |
+`country` is an ISO 3166-1 alpha-2 style region code such as:
 
-  This isn't an exhaustive list — Google News supports the same
-  country set as its own edition picker. If a code isn't a recognized
-  Google News edition, results silently fall back to a broader/global
-  match rather than raising.
-- **Not currently supported:** `discover_and_get()` and `search_site()`
-  have no country/region parameter — both search the target site/domain
-  directly regardless of locale.
+```text
+us · in · gb · ca · au · de · fr · jp · br · za · sg · ae
+```
 
-## Language codes
+The value controls Google News locale parameters (`gl` / `ceid`) and is case-insensitive.
 
-Used by `language=...` across `fetch()`, `search()`, `search_site()`, and
-`get_article()`'s extracted `meta.language`.
-
-- **Format:** ISO 639-1 two-letter code (`"en"`, `"hi"`, `"es"`, `"fr"`,
-  `"ja"`, ...), lowercase.
-- Applied as a **post-download filter** (`processing/language_guard.py`)
-  using `langdetect` — it doesn't change what the underlying engine
-  searches for, it drops results whose detected title+description
-  language doesn't match. Very short text is undetectable and is kept
-  rather than dropped (see `language_guard.py`'s docstring).
-- In `search()`, `language` also feeds Google News' `hl` parameter
-  (interface/results language hint) alongside `country`'s `gl`/`ceid`.
-- If `langdetect` isn't installed, language filtering is skipped
-  entirely (with a one-time warning) rather than silently dropping all
-  results.
-
-## Date formats
-
-### `search(start_date=..., end_date=...)` — custom date range (v1.0.2)
-
-Accepts any of:
-- A `'YYYY-MM-DD'` string (preferred, unambiguous): `"2026-08-01"`
-- Any ISO-8601 datetime string `datetime.fromisoformat()` understands,
-  e.g. `"2026-08-01T14:30:00"` — only the date portion is used, the time
-  is discarded
-- A Python `date` or `datetime` object
-
-Both bounds are optional and independent:
-- Only `start_date` → "everything published on/after that date"
-- Only `end_date` → "everything published on/before that date"
-- Both → an inclusive range
-
-`start_date`/`end_date` **take precedence over `time_limit`** — if either
-is set, the coarse `d`/`w`/`m` recency window is ignored. Internally these
-map to Google News RSS's `after:YYYY-MM-DD` / `before:YYYY-MM-DD` search
-operators.
+Example:
 
 ```python
+search("monsoon", country="in", language="hi")
+```
+
+### `fetch(location=...)`
+
+`location` is passed to the live acquisition layer as a region hint. Common examples include:
+
+```text
+in · us · gb · au · ca · nz · pk · bd · lk
+```
+
+The fetch engine does not enforce a fixed Python enum for location values. Unrecognized values may degrade to broader results rather than producing a validation error.
+
+> `discover_and_get()` does not currently expose a country/region parameter.
+
+---
+
+## 🗣️ Language codes
+
+`language` uses ISO 639-1-style two-letter language codes:
+
+```text
+en · hi · es · fr · de · ja · ...
+```
+
+Language filtering is performed by the processing layer using `langdetect` when available.
+
+The guard operates on downloaded title/description text rather than acting as a hard upstream query constraint.
+
+Very short text may be kept when language detection cannot reliably identify a language.
+
+---
+
+## 📅 Date formats
+
+### `search(start_date=..., end_date=...)`
+
+Accepted forms:
+
+```python
+"2026-08-01"
+"2026-08-01T14:30:00"
+date(2026, 8, 1)
+datetime(2026, 8, 1, 14, 30)
+```
+
+Both bounds are optional:
+
+```python
+search("elections", start_date="2026-08-01")
+search("elections", end_date="2026-08-31")
 search("elections", start_date="2026-08-01", end_date="2026-08-31")
-search("elections", start_date=date(2026, 8, 1))          # open-ended: since Aug 1
 ```
 
-Invalid strings (anything `datetime.fromisoformat()` rejects) raise
-`ValueError` at `SearchConfig` construction time — before any network
-call — same as other config validation.
+When either custom bound is supplied, it takes precedence over `time_limit`.
 
-### `time_limit` — coarse recency window
+Internally, the search engine maps these bounds to Google News RSS date operators.
 
-Used by both `fetch()` and `search()` when no custom date range is given.
+### `time_limit`
 
-| Value | Meaning |
+| Value | Window |
 |---|---|
-| `"d"` (default) | last 24 hours |
-| `"w"` | last 7 days |
-| `"m"` | last 30 days |
+| `d` | Last day |
+| `w` | Last week |
+| `m` | Last month |
 
-### Article `publish_date` (output field)
+---
 
-`get_article()`, `fetch()`, `search()`, and `discover_and_get()` results
-report `publish_date` as an **ISO-8601 string** (`YYYY-MM-DDTHH:MM:SS[+TZ]`)
-when a date could be extracted and passed `core/strategies.py`'s
-`_valid_date()` sanity check (rejects pre-1995 dates and anything more
-than ~2 days in the future), or `None` if no publish date was found.
-Raw search-engine results (before extraction) instead carry a `published`
-field, which is whatever free-text date string the engine itself returned
-(not guaranteed to be ISO-8601) — `processing/ranker.py` parses this
-leniently with `dateutil` for sorting.
+## 🕐 Publication dates
 
-## Category values
+Extracted article results use `publish_date` as an ISO-style datetime string when a valid date is available.
 
-Used by `fetch(category=...)` / `open-news fetch --category ...`:
+Raw search/fetch engine records may instead carry a `published` field containing the source engine's original date representation.
 
+Ranking uses tolerant date parsing for ordering.
+
+---
+
+## 📰 Categories
+
+`fetch(category=...)` accepts exactly:
+
+```text
+general
+business
+tech
+sports
+health
+science
+entertainment
 ```
-general · business · tech · sports · health · science · entertainment
-```
 
-Any other value raises `ValueError` from `FetchConfig` — this is a closed
-enum, unlike `language`/`country` which are open-ended codes.
+An unsupported category raises a configuration validation error.
 
-## Sort values
+---
 
-| Function | Accepted `sort_by` values |
+## 📊 Sorting
+
+| Function | Values |
 |---|---|
 | `fetch()` | `date`, `relevance`, `popularity` |
-| `search()` | `date`, `relevance` *(no `popularity` — clustering isn't run on keyword search results)* |
+| `search()` | `date`, `relevance` |
 
-Passing `"popularity"` to `search()` raises `ValueError` at config
-construction (the CLI/TUI both narrow their own `--sort`/menu choices to
-avoid this ever reaching the API layer).
+`search()` does not support popularity sorting because its processing path does not run the popularity clustering stage.
+
+---
+
+## 🔎 Search modes
+
+`search(query_mode=...)` accepts:
+
+```text
+any
+all
+exact_phrase
+```
+
+CLI equivalent:
+
+```bash
+--mode any
+--mode all
+--mode exact_phrase
+```
+
+---
+
+## ⏱️ Streaming intervals
+
+`fetch(refresh_interval=...)`, `search(refresh_interval=...)`, and `stream_search(..., refresh_interval=...)` use seconds.
+
+The documented minimum interval is **5 seconds**.
+
+Example:
+
+```python
+stream_search("AI", refresh_interval=30)
+```
+
+CLI:
+
+```bash
+open-news search "AI" --stream 30
+```
+
+Streaming yields only articles not previously seen by that generator instance.
+
+---
+
+## 🌐 Domain filters
+
+`whitelist` and `blacklist` accept lists of domain names:
+
+```python
+fetch(
+    whitelist=["reuters.com", "bbc.com"],
+    blacklist=["example.com"],
+)
+```
+
+At the processing layer, a whitelist restricts the surviving domain set; a blacklist removes matching domains.
+
+CLI form:
+
+```bash
+--whitelist reuters.com,bbc.com
+--blacklist example.com
+```
+
+---
+
+## 📄 Full content
+
+`full_content=True` performs additional article retrieval and extraction after the normal result-processing stages.
+
+This ordering is intentional:
+
+```text
+raw results
+ → filters
+ → dedupe
+ → ranking
+ → max_results
+ → full-content enrichment
+```
+
+It avoids expensive crawling of articles that will not be returned.
+
+---
+
+## 🌐 JavaScript rendering
+
+`js=True` enables Playwright-backed rendering where supported.
+
+It is useful for sites whose content is generated client-side.
+
+It is not required for normal RSS/search or static HTML workflows.
+
+---
+
+## 🧹 Deduplication
+
+`dedupe=True` is the default on public fetch/search flows.
+
+The processing system can use exact URL deduplication and, where requested, fuzzy title matching.
+
+The streaming layer additionally tracks normalized URLs and normalized titles so previously yielded articles are not emitted again.
