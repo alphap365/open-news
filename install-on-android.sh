@@ -4,16 +4,16 @@
 #   curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install-on-android.sh | bash
 #   ./install-on-android.sh --yes
 #   ./install-on-android.sh --uv
-#   ./install-on-android.sh --version 1.0.3a2
+#   ./install-on-android.sh --version 1.0.3
 #   ./install-on-android.sh --dry-run
 #   ./install-on-android.sh --uninstall
 #
-# News-fetch backend note: on Termux, `ddgs` is skipped automatically at
-# runtime (its `primp` dependency panics with SIGABRT on Android — see
-# open_news/feeds/duckduckgo_engine/). The engine falls through to a
-# pure-Python chain: `duckpy` first when present, then a DDG HTML
-# scraper, then Bing News RSS. None of those need primp, so no special
-# handling is required in this script — pip installs everything.
+# Notes:
+#   * ddgs is optional and skipped at runtime on Termux (its `primp`
+#     dependency aborts on Android). The fetch chain falls through to
+#     Google News -> Bing News -> Yahoo News -> DDG HTML.
+#   * By default the newest STABLE release that carries Android wheels is
+#     used. Pre-releases must be requested explicitly with --version.
 set -euo pipefail
 
 REPO="alphap365/open-news"
@@ -26,12 +26,67 @@ WHEELHOUSE_DIR="${HOME}/.open-news/wheelhouse"
 
 : "${PREFIX:=/data/data/com.termux/files/usr}"
 
+# Termux has no /tmp; use its own temp dir.
+TMP_BASE="${TMPDIR:-$PREFIX/tmp}"
+mkdir -p "$TMP_BASE"
+
 ASSUME_YES=0
 JS_MODE="ask"
 PACKAGE_MANAGER="ask"
 DRY_RUN=0
 DO_UNINSTALL=0
 PIN_VERSION=""
+
+info()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
+warn()  { printf '\033[33m!!\033[0m %s\n' "$1" >&2; }
+fail()  { printf '\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
+ok()    { printf '\033[32m✓\033[0m %s\n' "$1"; }
+
+run() {
+  if [ "$DRY_RUN" -eq 1 ]; then
+    printf '\033[2m$ %s\033[0m\n' "$*"
+  else
+    "$@"
+  fi
+}
+
+# Read from the terminal even when the script itself is piped (curl | bash).
+_tty_read() {   # usage: _tty_read "prompt" varname
+  if [ -r /dev/tty ]; then
+    read -r -p "$1" "$2" </dev/tty || true
+  else
+    read -r -p "$1" "$2" || true
+  fi
+}
+
+ask_choice() {
+  local prompt="$1"; shift
+  local default_idx="$1"; shift
+  local options=("$@")
+  if [ "$ASSUME_YES" -eq 1 ]; then echo "$default_idx"; return; fi
+  printf '\n%s\n' "$prompt" >&2
+  local i=1
+  for opt in "${options[@]}"; do
+    local marker=" "
+    [ "$i" -eq "$default_idx" ] && marker="*"
+    printf '  [%s%d] %s\n' "$marker" "$i" "$opt" >&2
+    i=$((i + 1))
+  done
+  local reply=""
+  _tty_read "Choose [default ${default_idx}]: " reply
+  if [ -z "$reply" ]; then echo "$default_idx"; else echo "$reply"; fi
+}
+
+ask_text() {
+  local prompt="$1" default="$2" reply=""
+  if [ "$ASSUME_YES" -eq 1 ]; then echo "$default"; return; fi
+  _tty_read "$prompt [$default]: " reply
+  echo "${reply:-$default}"
+}
+
+# NOTE: main() opens here and closes at the end of block 5.
+# The body is intentionally not indented so heredoc terminators stay valid.
+main() {
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -50,7 +105,7 @@ while [ $# -gt 0 ]; do
       ;;
     --version)
       if [ $# -lt 2 ] || [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
-        printf 'Error: --version requires a value, e.g. --version 1.0.3a2\n' >&2
+        printf 'Error: --version requires a value, e.g. --version 1.0.3\n' >&2
         exit 2
       fi
       PIN_VERSION="$2"
@@ -61,7 +116,7 @@ while [ $# -gt 0 ]; do
       [ -n "$PIN_VERSION" ] || { printf 'Error: --version= requires a value\n' >&2; exit 2; }
       ;;
     -h|--help)
-      sed -n '2,15p' "$0" | sed 's/^# \{0,1\}//'
+      sed -n '2,9p' "$0" | sed 's/^# \{0,1\}//'
       exit 0
       ;;
     *)
@@ -71,43 +126,6 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
-
-info()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
-warn()  { printf '\033[33m!!\033[0m %s\n' "$1" >&2; }
-fail()  { printf '\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
-ok()    { printf '\033[32m✓\033[0m %s\n' "$1"; }
-
-run() {
-  if [ "$DRY_RUN" -eq 1 ]; then
-    printf '\033[2m$ %s\033[0m\n' "$*"
-  else
-    "$@"
-  fi
-}
-
-ask_choice() {
-  local prompt="$1"; shift
-  local default_idx="$1"; shift
-  local options=("$@")
-  if [ "$ASSUME_YES" -eq 1 ]; then echo "$default_idx"; return; fi
-  printf '\n%s\n' "$prompt" >&2
-  local i=1
-  for opt in "${options[@]}"; do
-    local marker=" "
-    [ "$i" -eq "$default_idx" ] && marker="*"
-    printf '  [%s%d] %s\n' "$marker" "$i" "$opt" >&2
-  done
-  local reply
-  read -r -p "Choose [default ${default_idx}]: " reply
-  if [ -z "$reply" ]; then echo "$default_idx"; else echo "$reply"; fi
-}
-
-ask_text() {
-  local prompt="$1" default="$2" reply
-  if [ "$ASSUME_YES" -eq 1 ]; then echo "$default"; return; fi
-  read -r -p "$prompt [$default]: " reply >&2 || true
-  echo "${reply:-$default}"
-}
 
 if [ "$DO_UNINSTALL" -eq 1 ]; then
   info "Removing ${HOME}/.open-news"
@@ -122,7 +140,8 @@ if [ "$DO_UNINSTALL" -eq 1 ]; then
     fi
   done
 
-  read -r -p "Also remove preferences at $CONFIG_FILE? [y/N]: " reply || true
+  reply=""
+  _tty_read "Also remove preferences at $CONFIG_FILE? [y/N]: " reply
   if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
     rm -rf "$CONFIG_DIR"
     ok "Removed $CONFIG_DIR"
@@ -184,7 +203,7 @@ if [ -n "$PIN_VERSION" ]; then
   V="$PIN_VERSION"
   info "Using pinned version: $V"
 else
-  info "Resolving latest version with Android wheels from GitHub releases..."
+  info "Resolving latest stable version with Android wheels from GitHub releases..."
   V="$(REPO="$REPO" "$PYTHON_BIN" - <<'PY'
 import json, os, re, sys, urllib.request, urllib.error
 
@@ -207,32 +226,36 @@ except Exception as e:
 
 def semver_key(tag):
     v = tag.removeprefix("v")
-    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:([abc]|rc)(\d+))?$", v)
+    m = re.match(r"^(\d+)\.(\d+)\.(\d+)(?:(a|b|rc)(\d+))?$", v)
     if not m: return (0, 0, 0, 0, 0)
     major, minor, patch, pre, pre_n = m.groups()
     rank = {"a": 1, "b": 2, "rc": 3, "": 4}[pre or ""]
     return (int(major), int(minor), int(patch), rank, int(pre_n or 0))
 
-# Single tag scheme now: every release (vX.Y.Z) may carry both the
-# package's own dist and depwheel-*.whl dependency wheels side by side.
-all_releases = [r for r in releases if re.match(r"^v\d+\.\d+\.\d+", r.get("tag_name", ""))]
+# Stable releases only: pre-releases are published to PyPI manually, so a
+# GitHub pre-release may not exist on PyPI. Use --version to pin one.
+all_releases = [
+    r for r in releases
+    if re.match(r"^v\d+\.\d+\.\d+", r.get("tag_name", ""))
+    and not r.get("prerelease")
+]
 candidates = [
     r["tag_name"] for r in all_releases
     if any(a["name"].startswith("depwheel-") and "android_" in a["name"] and "arm64_v8a" in a["name"]
            for a in r.get("assets", []))
 ]
 if not candidates:
-    print("ERROR: no release with depwheel-*android_arm64_v8a* wheels found.", file=sys.stderr)
+    print("ERROR: no stable release with depwheel-*android_arm64_v8a* wheels found.", file=sys.stderr)
     if not all_releases:
-        print("       No v* releases exist at all.", file=sys.stderr)
+        print("       No stable v* releases exist.", file=sys.stderr)
     else:
-        print(f"       {len(all_releases)} release(s), none with android depwheels:",
+        print(f"       {len(all_releases)} stable release(s), none with android depwheels:",
               file=sys.stderr)
         for r in all_releases[:10]:
             n = sum(1 for a in r.get("assets", [])
                     if a["name"].startswith("depwheel-") and "android" in a["name"])
             print(f"         {r['tag_name']}: {n} android depwheel(s)", file=sys.stderr)
-    print("       Pass --version X.Y.Z to pin a version.", file=sys.stderr)
+    print("       Pass --version X.Y.Z to pin a version (pre-releases included).", file=sys.stderr)
     sys.exit(1)
 
 best = max(candidates, key=semver_key)
@@ -240,7 +263,7 @@ print(best.removeprefix("v"))
 PY
 )"
   [ -n "$V" ] || fail "Could not resolve version. Pass --version X.Y.Z."
-  ok "Latest Android-depwheel version: $V"
+  ok "Latest stable Android-depwheel version: $V"
 fi
 
 TAG="v${V}"
@@ -274,9 +297,8 @@ except urllib.error.HTTPError as e:
 except Exception as e:
     print(f"ERROR: {e}", file=sys.stderr); sys.exit(1)
 
-# Only depwheel-*.whl assets, further scoped to android_*arm64_v8a — this
-# is also what stops us ever grabbing the release's own open_news_api-*
-# package wheel by accident, since both now live in the same release.
+# Only depwheel-*.whl assets scoped to android_*arm64_v8a, which also keeps
+# us from grabbing the release's own open_news_api-* wheel by accident.
 assets = [a for a in release.get("assets", [])
           if a["name"].endswith(".whl")
           and a["name"].startswith("depwheel-")
@@ -293,8 +315,7 @@ PY
   while IFS= read -r url; do
     [ -n "$url" ] || continue
     fname="$(basename "$url")"
-    # Strip the depwheel- prefix locally so downstream tag-parsing
-    # (cut -d- -f1-2, etc. in step 5) sees the real wheel filename.
+    # Strip the depwheel- prefix so wheel filenames are valid for pip.
     real_name="${fname#depwheel-}"
     info "Downloading $real_name"
     run curl -fL --retry 3 --retry-delay 2 --retry-connrefused \
@@ -329,7 +350,7 @@ if [ "$DRY_RUN" -eq 0 ] && [ -n "${SSL_CERT_FILE:-}" ] && [ -f "$VENV_DIR/bin/ac
 export SSL_CERT_FILE="$SSL_CERT_FILE"
 export REQUESTS_CA_BUNDLE="$SSL_CERT_FILE"
 export CURL_CA_BUNDLE="$SSL_CERT_FILE"
-export SSL_CERT_DIR="$SSL_CERT_DIR"
+export SSL_CERT_DIR="${SSL_CERT_DIR:-}"
 EOF
     ok "Persisted CA bundle path into venv activate script."
   fi
@@ -418,7 +439,10 @@ export XML2_CONFIG="${PREFIX}/bin/xml2-config"
 export XSLT_CONFIG="${PREFIX}/bin/xslt-config"
 
 LXML_OK=0
-reset_lxml() { [ "$DRY_RUN" -eq 0 ] && "${PIP_PREFIX[@]}" uninstall -y lxml >/dev/null 2>&1 || true; }
+reset_lxml() {
+  [ "$DRY_RUN" -eq 0 ] || return 0
+  "$VENV_PYTHON" -m pip uninstall -y lxml >/dev/null 2>&1 || true
+}
 try_lxml() {
   local label="$1"; shift
   info "lxml attempt: $label"
@@ -440,7 +464,6 @@ if [ "$LXML_OK" -eq 0 ]; then
     warn "lxml failed (with -O0)"
   fi
 fi
-[ "$LXML_OK" -eq 0 ] && { try_lxml "pinned 5.2.2" "lxml==5.2.2" || true; }
 
 if [ "$LXML_OK" -eq 0 ] && [ "$DRY_RUN" -eq 0 ]; then
   fail "lxml could not be built. Manual fallback:
@@ -476,13 +499,13 @@ if [ "$JS_MODE" = "yes" ]; then
 fi
 
 # ---------------------------------------------------------------------
-# 9. Verify network connectivity and DDG backend availability
+# 9. Verify network connectivity and optional DDG backend
 # ---------------------------------------------------------------------
 if [ "$DRY_RUN" -eq 0 ]; then
   info "Verifying Python HTTPS works..."
 
   # Test 1: with environment variables set (how the wrapper runs it)
-  if "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check.err
+  if "$VENV_PYTHON" - <<'PY' 2>"$TMP_BASE/net-check.err"
 import httpx, sys
 try:
     r = httpx.get("https://news.google.com/rss", timeout=15)
@@ -496,12 +519,12 @@ PY
     ok "HTTPS reachable from the venv Python."
   else
     warn "HTTPS from Python failed. First 5 lines of the error:"
-    sed -n '1,5p' /tmp/net-check.err >&2 || true
+    sed -n '1,5p' "$TMP_BASE/net-check.err" >&2 || true
   fi
 
   # Test 2: without environment variables, relying on certifi alone.
   if env -u SSL_CERT_FILE -u REQUESTS_CA_BUNDLE -u CURL_CA_BUNDLE \
-       "$VENV_PYTHON" - <<'PY' 2>/tmp/net-check2.err
+       "$VENV_PYTHON" - <<'PY' 2>"$TMP_BASE/net-check2.err"
 import httpx, sys
 try:
     r = httpx.get("https://news.google.com/rss", timeout=15)
@@ -515,30 +538,17 @@ PY
     ok "HTTPS works via certifi alone."
   else
     warn "HTTPS via certifi alone failed. First 5 lines:"
-    sed -n '1,5p' /tmp/net-check2.err >&2 || true
+    sed -n '1,5p' "$TMP_BASE/net-check2.err" >&2 || true
   fi
 
-  # Test 3: report which DuckDuckGo news backends are importable here.
-  # ddgs is expected to be present but is skipped at runtime on Termux
-  # (its `primp` dependency SIGABRTs) — duckpy is the real primary path.
-  info "Checking DuckDuckGo backend availability..."
+  # Test 3: optional DuckDuckGo backend.
+  info "Checking optional DuckDuckGo backend..."
   "$VENV_PYTHON" - <<'PY' || true
-checks = []
 try:
     import ddgs  # noqa: F401
-    checks.append(("ddgs", True, "installed (skipped at runtime on Termux)"))
+    print("  [OK  ] ddgs installed (skipped at runtime on Termux)")
 except ImportError:
-    checks.append(("ddgs", False, "not installed"))
-
-try:
-    import duckpy  # noqa: F401
-    checks.append(("duckpy", True, "installed — primary backend on Termux"))
-except ImportError:
-    checks.append(("duckpy", False, "not installed — falls back to HTML scraper"))
-
-for name, ok_, note in checks:
-    mark = "OK  " if ok_ else "MISS"
-    print(f"  [{mark}] {name}: {note}")
+    print("  [--  ] ddgs not installed (expected on Termux; other tiers are used)")
 PY
 fi
 
@@ -580,17 +590,30 @@ PREF_CATEGORY=$(ask_text "Default fetch category" "general")
 PREF_SORT=$(ask_text "Default sort (date/relevance/popularity)" "date")
 PREF_FORMAT=$(ask_text "Default CLI output format (pretty/json)" "pretty")
 
+case "$PREF_CATEGORY" in
+  general|business|tech|sports|health|science|entertainment) ;;
+  *) warn "Unknown category '$PREF_CATEGORY'; using 'general'."; PREF_CATEGORY="general" ;;
+esac
+case "$PREF_SORT" in
+  date|relevance|popularity) ;;
+  *) warn "Unknown sort '$PREF_SORT'; using 'date'."; PREF_SORT="date" ;;
+esac
+case "$PREF_FORMAT" in
+  pretty|json) ;;
+  *) warn "Unknown format '$PREF_FORMAT'; using 'pretty'."; PREF_FORMAT="pretty" ;;
+esac
+
 info "Writing preferences to $CONFIG_FILE"
 run mkdir -p "$CONFIG_DIR"
 if [ "$DRY_RUN" -eq 0 ]; then
-  cat > "$CONFIG_FILE" <<EOF
-{
-  "language": $( [ -n "$PREF_LANGUAGE" ] && printf '"%s"' "$PREF_LANGUAGE" || printf 'null' ),
-  "category": "$PREF_CATEGORY",
-  "sort_by": "$PREF_SORT",
-  "format": "$PREF_FORMAT"
-}
-EOF
+  "$VENV_PYTHON" - "$PREF_LANGUAGE" "$PREF_CATEGORY" "$PREF_SORT" "$PREF_FORMAT" "$CONFIG_FILE" <<'PY'
+import json, sys
+lang, cat, sort_by, fmt, path = sys.argv[1:6]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump({"language": lang or None, "category": cat,
+               "sort_by": sort_by, "format": fmt}, f, indent=2)
+    f.write("\n")
+PY
   mkdir -p "$(dirname "$STATE_FILE")"
   cat > "$STATE_FILE" <<EOF
 {
@@ -630,7 +653,8 @@ fi
 # 13. Offer to launch the TUI
 # ---------------------------------------------------------------------
 if [ "$ASSUME_YES" -eq 0 ]; then
-  read -r -p $'\nLaunch the terminal interface now? [y/N]: ' launch || true
+  launch=""
+  _tty_read $'\nLaunch the terminal interface now? [y/N]: ' launch
   if [ "${launch:-N}" = "y" ] || [ "${launch:-N}" = "Y" ]; then
     if command -v open-news-tui >/dev/null 2>&1; then
       exec open-news-tui
@@ -641,3 +665,7 @@ if [ "$ASSUME_YES" -eq 0 ]; then
     fi
   fi
 fi
+
+}   # end main()
+
+main "$@"

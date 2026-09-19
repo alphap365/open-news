@@ -8,6 +8,8 @@ try:
     DetectorFactory.seed = 0  # deterministic results
     _available = True
 except ImportError:
+    # FIX: define `detect` so tests can patch it even without langdetect.
+    detect = None
     _available = False
     LangDetectException = Exception
 

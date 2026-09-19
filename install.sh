@@ -4,12 +4,13 @@
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/alphap365/open-news/main/install.sh | bash
 #   ./install.sh --yes              # non-interactive, all defaults (CI-friendly)
-#   ./install.sh --dev               # developer install: git clone + editable
-#   ./install.sh --uv                # use uv instead of pip
-#   ./install.sh --pip               # use pip (default)
-#   ./install.sh --no-js             # never offer the Playwright/JS extra
-#   ./install.sh --dry-run           # print what would happen, run nothing
-#   ./install.sh --uninstall         # remove the venv + config this script created
+#   ./install.sh --dev              # developer install: git clone + editable
+#   ./install.sh --uv               # use uv instead of pip
+#   ./install.sh --pip              # use pip (default)
+#   ./install.sh --no-js            # never offer the Playwright/JS extra
+#   ./install.sh --version 1.0.3    # install a specific version (quick install)
+#   ./install.sh --dry-run          # print what would happen, run nothing
+#   ./install.sh --uninstall        # remove the venv + config this script created
 #
 # What this does, roughly in order:
 #   1. Detect OS / shell / Termux, and Python version.
@@ -32,31 +33,12 @@ STATE_FILE="${HOME}/.open-news/install-state.json"
 
 ASSUME_YES=0
 DEV_MODE=0
-JS_MODE="ask"      # ask | yes | no
-PACKAGE_MANAGER="ask" # ask | pip | uv
+JS_MODE="ask"           # ask | yes | no
+PACKAGE_MANAGER="ask"   # ask | pip | uv
 DRY_RUN=0
 DO_UNINSTALL=0
+PIN_VERSION=""
 
-for arg in "$@"; do
-  case "$arg" in
-    --yes|-y) ASSUME_YES=1 ;;
-    --dev) DEV_MODE=1 ;;
-    --uv) PACKAGE_MANAGER="uv" ;;
-    --pip) PACKAGE_MANAGER="pip" ;;
-    --js) JS_MODE="yes" ;;
-    --no-js) JS_MODE="no" ;;
-    --dry-run) DRY_RUN=1 ;;
-    --uninstall) DO_UNINSTALL=1 ;;
-    -h|--help)
-      grep '^#' "$0" | sed 's/^# \{0,1\}//'
-      exit 0
-      ;;
-  esac
-done
-
-# ---------------------------------------------------------------------
-# Small helpers
-# ---------------------------------------------------------------------
 info()  { printf '\033[36m==>\033[0m %s\n' "$1"; }
 warn()  { printf '\033[33m!!\033[0m %s\n' "$1" >&2; }
 fail()  { printf '\033[31mError:\033[0m %s\n' "$1" >&2; exit 1; }
@@ -68,6 +50,15 @@ run() {
     printf '\033[2m$ %s\033[0m\n' "$*"
   else
     "$@"
+  fi
+}
+
+# Read from the terminal even when the script itself is piped (curl | bash).
+_tty_read() {   # usage: _tty_read "prompt" varname
+  if [ -r /dev/tty ]; then
+    read -r -p "$1" "$2" </dev/tty || true
+  else
+    read -r -p "$1" "$2" || true
   fi
 }
 
@@ -89,9 +80,10 @@ ask_choice() {
     local marker=" "
     [ "$i" -eq "$default_idx" ] && marker="*"
     printf '  [%s%d] %s\n' "$marker" "$i" "$opt" >&2
+    i=$((i + 1))
   done
-  local reply
-  read -r -p "Choose [default ${default_idx}]: " reply
+  local reply=""
+  _tty_read "Choose [default ${default_idx}]: " reply
   if [ -z "$reply" ]; then
     echo "$default_idx"
   else
@@ -100,51 +92,61 @@ ask_choice() {
 }
 
 ask_text() {
-  local prompt="$1" default="$2" reply
+  local prompt="$1" default="$2" reply=""
   if [ "$ASSUME_YES" -eq 1 ]; then
     echo "$default"
     return
   fi
-  read -r -p "$prompt [$default]: " reply >&2 || true
+  _tty_read "$prompt [$default]: " reply
   echo "${reply:-$default}"
 }
 
-# ---------------------------------------------------------------------
-# Uninstall path (short-circuits everything else)
-# ---------------------------------------------------------------------
-if [ "$DO_UNINSTALL" -eq 1 ]; then
-  # Prior versions always removed ~/.open-news and nothing else, which
-  # silently left a Developer install's clone+venv behind (its venv lives
-  # at ${DEV_DIR}/.venv, i.e. ~/open-news/.venv, not under ~/.open-news at
-  # all). Read the state file (written on install, see STATE_FILE below)
-  # so we know whether a dev clone needs cleaning up too.
-  info "Removing ${HOME}/.open-news"
-  rm -rf "${HOME}/.open-news"
+# NOTE: main() opens here and closes at the end of block 4.
+# The body is intentionally not indented so heredoc terminators stay valid.
+main() {
 
-  if [ -f "$STATE_FILE" ]; then
-    STATE_DEV_DIR="$(sed -n 's/.*"dev_dir" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
-    STATE_MODE="$(sed -n 's/.*"mode" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
-    if [ "$STATE_MODE" = "dev" ] && [ -n "$STATE_DEV_DIR" ] && [ -d "$STATE_DEV_DIR" ]; then
-      read -r -p "Also remove the developer clone at $STATE_DEV_DIR (includes its .venv)? [y/N]: " reply_dev || true
-      if [ "${reply_dev:-N}" = "y" ] || [ "${reply_dev:-N}" = "Y" ]; then
-        rm -rf "$STATE_DEV_DIR"
-        ok "Removed $STATE_DEV_DIR"
+# Keep the original args so the Termux handoff can forward them untouched.
+ORIG_ARGS=("$@")
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --yes|-y)    ASSUME_YES=1 ;;
+    --dev)       DEV_MODE=1 ;;
+    --uv)        PACKAGE_MANAGER="uv" ;;
+    --pip)       PACKAGE_MANAGER="pip" ;;
+    --js)        JS_MODE="yes" ;;
+    --no-js)     JS_MODE="no" ;;
+    --dry-run)   DRY_RUN=1 ;;
+    --uninstall) DO_UNINSTALL=1 ;;
+    --version)
+      if [ $# -lt 2 ] || [ -z "${2:-}" ] || [ "${2#-}" != "$2" ]; then
+        printf 'Error: --version requires a value, e.g. --version 1.0.3\n' >&2
+        exit 2
       fi
-    fi
-  fi
-
-  read -r -p "Also remove preferences at $CONFIG_FILE? [y/N]: " reply || true
-  if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
-    rm -rf "$CONFIG_DIR"
-    ok "Removed $CONFIG_DIR"
-  fi
-  ok "Uninstalled. Remove the PATH line from your shell rc file manually if you added one."
-  exit 0
-fi
+      PIN_VERSION="$2"
+      shift
+      ;;
+    --version=*)
+      PIN_VERSION="${1#--version=}"
+      [ -n "$PIN_VERSION" ] || { printf 'Error: --version= requires a value\n' >&2; exit 2; }
+      ;;
+    -h|--help)
+      sed -n '2,23p' "$0" | sed 's/^# \{0,1\}//'
+      exit 0
+      ;;
+    *)
+      printf 'Unknown option: %s\n' "$1" >&2
+      exit 2
+      ;;
+  esac
+  shift
+done
 
 # ---------------------------------------------------------------------
 # Termux has a fundamentally different install path — no PyPI Android
 # wheels for compiled deps, and lxml needs a from-source build. Hand off.
+# (This runs before the uninstall path so --uninstall on Termux also
+# removes the launcher wrappers in $PREFIX/bin.)
 # ---------------------------------------------------------------------
 if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
   info "Termux detected — handing off to install-on-android.sh"
@@ -155,14 +157,47 @@ if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
   fi
 
   if [ -n "$SELF_DIR" ] && [ -f "$SELF_DIR/install-on-android.sh" ]; then
-    exec bash "$SELF_DIR/install-on-android.sh" "$@"
+    exec bash "$SELF_DIR/install-on-android.sh" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
   fi
 
   tmp="$(mktemp)"
   curl -fsSL \
     "https://raw.githubusercontent.com/alphap365/open-news/main/install-on-android.sh" \
     -o "$tmp"
-  exec bash "$tmp" "$@"
+  exec bash "$tmp" ${ORIG_ARGS[@]+"${ORIG_ARGS[@]}"}
+fi
+
+# ---------------------------------------------------------------------
+# Uninstall path (short-circuits everything else)
+# ---------------------------------------------------------------------
+if [ "$DO_UNINSTALL" -eq 1 ]; then
+  # Read the state file BEFORE deleting ~/.open-news (it lives inside it).
+  STATE_DEV_DIR=""; STATE_MODE=""
+  if [ -f "$STATE_FILE" ]; then
+    STATE_DEV_DIR="$(sed -n 's/.*"dev_dir" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
+    STATE_MODE="$(sed -n 's/.*"mode" *: *"\([^"]*\)".*/\1/p' "$STATE_FILE" 2>/dev/null || true)"
+  fi
+
+  info "Removing ${HOME}/.open-news"
+  rm -rf "${HOME}/.open-news"
+
+  if [ "$STATE_MODE" = "dev" ] && [ -n "$STATE_DEV_DIR" ] && [ -d "$STATE_DEV_DIR" ]; then
+    reply_dev=""
+    _tty_read "Also remove the developer clone at $STATE_DEV_DIR (includes its .venv)? [y/N]: " reply_dev
+    if [ "${reply_dev:-N}" = "y" ] || [ "${reply_dev:-N}" = "Y" ]; then
+      rm -rf "$STATE_DEV_DIR"
+      ok "Removed $STATE_DEV_DIR"
+    fi
+  fi
+
+  reply=""
+  _tty_read "Also remove preferences at $CONFIG_FILE? [y/N]: " reply
+  if [ "${reply:-N}" = "y" ] || [ "${reply:-N}" = "Y" ]; then
+    rm -rf "$CONFIG_DIR"
+    ok "Removed $CONFIG_DIR"
+  fi
+  ok "Uninstalled. Remove the PATH line from your shell rc file manually if you added one."
+  exit 0
 fi
 
 printf '\n'
@@ -174,13 +209,7 @@ printf ' Fetch, search, discover, understand.\n\n'
 # ---------------------------------------------------------------------
 OS="unknown"
 case "$(uname -s)" in
-  Linux*)
-    if [ -n "${TERMUX_VERSION:-}" ] || [ -d "/data/data/com.termux" ]; then
-      OS="termux"
-    else
-      OS="linux"
-    fi
-    ;;
+  Linux*)  OS="linux" ;;
   Darwin*) OS="macos" ;;
   CYGWIN*|MINGW*|MSYS*) OS="windows-shell" ;;
 esac
@@ -207,12 +236,12 @@ for candidate in "${candidates[@]}"; do
 
   case "$ver" in
     3.*) ;;
-    *) continue ;;   # not Python 3 at all (e.g. `python` -> python2 on old distros)
+    *) continue ;;
   esac
 
   minor=${ver#3.}
   case "$minor" in
-    ''|*[!0-9]*) continue ;;   # sanity: must be a clean integer
+    ''|*[!0-9]*) continue ;;
   esac
   [ "$minor" -ge 10 ] || continue
 
@@ -238,6 +267,7 @@ if [ "$PACKAGE_MANAGER" = "ask" ]; then
       "uv (recommended when available)")
     [ "$package_manager_choice" = "2" ] && PACKAGE_MANAGER="uv" || PACKAGE_MANAGER="pip"
   else
+    PACKAGE_MANAGER="pip"
     info "uv not found — using pip. Pass --uv after installing uv to use it."
   fi
 elif [ "$PACKAGE_MANAGER" = "uv" ] && [ -z "$UV_BIN" ]; then
@@ -259,15 +289,19 @@ fi
 # ---------------------------------------------------------------------
 # 3. venv or current environment
 # ---------------------------------------------------------------------
-venv_choice=$(ask_choice \
-  "Where should it be installed?" 1 \
-  "Isolated virtual environment (recommended): $VENV_DIR" \
-  "Current Python environment ($PYTHON_BIN)")
-
 if [ "$mode_choice" = "2" ]; then
-  # Developer installs always want their own venv inside the repo,
+  # Developer installs always use their own venv inside the repo,
   # matching the README's `python -m venv .venv` convention.
+  venv_choice=1
   VENV_DIR="${DEV_DIR}/.venv"
+  if [ -n "$PIN_VERSION" ]; then
+    warn "--version is ignored for developer installs (editable install of the clone)."
+  fi
+else
+  venv_choice=$(ask_choice \
+    "Where should it be installed?" 1 \
+    "Isolated virtual environment (recommended): $VENV_DIR" \
+    "Current Python environment ($PYTHON_BIN)")
 fi
 
 # ---------------------------------------------------------------------
@@ -289,6 +323,19 @@ PREF_LANGUAGE=$(ask_text "Default language filter (ISO 639-1, blank = none)" "")
 PREF_CATEGORY=$(ask_text "Default fetch category" "general")
 PREF_SORT=$(ask_text "Default sort (date/relevance/popularity)" "date")
 PREF_FORMAT=$(ask_text "Default CLI output format (pretty/json)" "pretty")
+
+case "$PREF_CATEGORY" in
+  general|business|tech|sports|health|science|entertainment) ;;
+  *) warn "Unknown category '$PREF_CATEGORY'; using 'general'."; PREF_CATEGORY="general" ;;
+esac
+case "$PREF_SORT" in
+  date|relevance|popularity) ;;
+  *) warn "Unknown sort '$PREF_SORT'; using 'date'."; PREF_SORT="date" ;;
+esac
+case "$PREF_FORMAT" in
+  pretty|json) ;;
+  *) warn "Unknown format '$PREF_FORMAT'; using 'pretty'."; PREF_FORMAT="pretty" ;;
+esac
 
 # ---------------------------------------------------------------------
 # Install
@@ -336,20 +383,20 @@ else
   else
     BIN_DIR="$("$PYTHON_BIN" -c 'import site; print(site.USER_BASE + "/bin")')"
   fi
+
   SPEC="$PKG"
   [ "$JS_MODE" = "yes" ] && SPEC="${PKG}[js]"
+  [ -n "$PIN_VERSION" ] && SPEC="${SPEC}==${PIN_VERSION}"
+
   info "Installing $SPEC"
-  if [ "$PACKAGE_MANAGER" = "uv" ]; then
-    if [ "$venv_choice" = "1" ]; then
-      run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
-    else
-      run "$UV_BIN" pip install --python "$PYTHON_BIN" --user --upgrade "$SPEC"
-    fi
+  if [ "$PACKAGE_MANAGER" = "uv" ] && [ "$venv_choice" = "1" ]; then
+    run "$UV_BIN" pip install --python "$VENV_PYTHON" "$SPEC"
   elif [ "$venv_choice" = "1" ]; then
     PIP_BIN="$BIN_DIR/pip"
     run "$PIP_BIN" install --upgrade pip
     run "$PIP_BIN" install "$SPEC"
   else
+    # Current-environment install: always use pip (uv pip has no --user).
     run "$PYTHON_BIN" -m pip install --user --upgrade "$SPEC"
   fi
 fi
@@ -368,19 +415,18 @@ fi
 # ---------------------------------------------------------------------
 OPEN_NEWS_BIN="$BIN_DIR/open-news"
 if [ "$DRY_RUN" -eq 0 ] && [ -x "$OPEN_NEWS_BIN" ] && ! command -v open-news >/dev/null 2>&1; then
-  # Pick the rc file for the user's actual login shell rather than always
-  # assuming bash — macOS defaults to zsh, and a PATH line appended to
-  # .bashrc there is silently never sourced.
+  # Pick the rc file for the user's actual login shell.
   case "$(basename "${SHELL:-bash}")" in
-    zsh) SHELL_RC="${HOME}/.zshrc" ;;
+    zsh)  SHELL_RC="${HOME}/.zshrc" ;;
     fish) SHELL_RC="${HOME}/.config/fish/config.fish" ;;
-    *) SHELL_RC="${HOME}/.bashrc" ;;
+    *)    SHELL_RC="${HOME}/.bashrc" ;;
   esac
   LINE="export PATH=\"$BIN_DIR:\$PATH\""
   if [ "$(basename "${SHELL:-bash}")" = "fish" ]; then
     LINE="set -gx PATH \"$BIN_DIR\" \$PATH"
   fi
   if ! grep -qsF "$BIN_DIR" "$SHELL_RC" 2>/dev/null; then
+    mkdir -p "$(dirname "$SHELL_RC")"
     printf '\n# added by open-news installer\n%s\n' "$LINE" >> "$SHELL_RC"
     warn "Added $BIN_DIR to PATH in $SHELL_RC — restart your shell, or run:"
     warn "  $LINE"
@@ -393,14 +439,15 @@ fi
 info "Writing preferences to $CONFIG_FILE"
 run mkdir -p "$CONFIG_DIR"
 if [ "$DRY_RUN" -eq 0 ]; then
-  cat > "$CONFIG_FILE" <<EOF
-{
-  "language": $( [ -n "$PREF_LANGUAGE" ] && printf '"%s"' "$PREF_LANGUAGE" || printf 'null' ),
-  "category": "$PREF_CATEGORY",
-  "sort_by": "$PREF_SORT",
-  "format": "$PREF_FORMAT"
-}
-EOF
+  CFG_PY="${VENV_PYTHON:-$PYTHON_BIN}"
+  "$CFG_PY" - "$PREF_LANGUAGE" "$PREF_CATEGORY" "$PREF_SORT" "$PREF_FORMAT" "$CONFIG_FILE" <<'PY'
+import json, sys
+lang, cat, sort_by, fmt, path = sys.argv[1:6]
+with open(path, "w", encoding="utf-8") as f:
+    json.dump({"language": lang or None, "category": cat,
+               "sort_by": sort_by, "format": fmt}, f, indent=2)
+    f.write("\n")
+PY
   mkdir -p "$(dirname "$STATE_FILE")"
   STATE_MODE_VAL="quick"
   [ "$mode_choice" = "2" ] && STATE_MODE_VAL="dev"
@@ -446,7 +493,8 @@ fi
 # Offer to launch the TUI
 # ---------------------------------------------------------------------
 if [ "$ASSUME_YES" -eq 0 ]; then
-  read -r -p $'\nLaunch the terminal interface now? [y/N]: ' launch || true
+  launch=""
+  _tty_read $'\nLaunch the terminal interface now? [y/N]: ' launch
   if [ "${launch:-N}" = "y" ] || [ "${launch:-N}" = "Y" ]; then
     if [ -x "${BIN_DIR}/open-news-tui" ]; then
       exec "${BIN_DIR}/open-news-tui"
@@ -455,3 +503,7 @@ if [ "$ASSUME_YES" -eq 0 ]; then
     fi
   fi
 fi
+
+}   # end main()
+
+main "$@"

@@ -1,9 +1,0 @@
-lxml
-python-dateutil
-httpx
-beautifulsoup4
-feedparser
-googlenewsdecoder
-requests
-ddgs
-langdetect

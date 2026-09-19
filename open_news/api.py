@@ -84,9 +84,8 @@ def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[
     """Generator backing fetch(refresh_interval=...): re-queries on a
     cadence, yielding only articles not seen in a previous cycle."""
     import time
-    from .processing.dedupe import normalize_url
 
-    seen = set()
+    seen_urls, seen_titles = set(), set()
     while True:
         raw = fetch_raw(config)
         processed = run_pipeline(
@@ -95,9 +94,7 @@ def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[
             sort_by=config.sort_by, full_content=config.full_content,
             search_in=config.search_in, dedupe=dedupe, js=js,
         )
-        new_articles = [a for a in processed if normalize_url(a.get("url", "")) not in seen]
-        for a in new_articles:
-            seen.add(normalize_url(a.get("url", "")))
+        new_articles = _only_unseen(processed, seen_urls, seen_titles)
         if new_articles:
             yield new_articles
         time.sleep(config.refresh_interval)
@@ -171,15 +168,13 @@ def search(
         dedupe=dedupe, js=js,
     )
 
-
 def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedupe: bool) -> Iterator[List[Dict]]:
     """Generator backing search(refresh_interval=...) / stream_search():
     re-queries the same keyword search on a cadence, yielding only articles
     not seen in a previous cycle. Mirrors _fetch_stream()'s shape."""
     import time
-    from .processing.dedupe import normalize_url
 
-    seen = set()
+    seen_urls, seen_titles = set(), set()
     while True:
         raw = search_raw(config, country=country, language=config.language)
         processed = run_pipeline(
@@ -190,13 +185,24 @@ def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedup
             sort_by=config.sort_by, full_content=config.full_content,
             dedupe=dedupe, js=js,
         )
-        new_articles = [a for a in processed if normalize_url(a.get("url", "")) not in seen]
-        for a in new_articles:
-            seen.add(normalize_url(a.get("url", "")))
+        new_articles = _only_unseen(processed, seen_urls, seen_titles)
         if new_articles:
             yield new_articles
         time.sleep(config.refresh_interval)
 
+def _only_unseen(articles, seen_urls, seen_titles):
+    from .processing.dedupe import normalize_url, _normalize_title
+    fresh = []
+    for a in articles:
+        u = normalize_url(a.get("url", ""))
+        t = _normalize_title(a.get("title", ""))
+        if u in seen_urls or (t and t in seen_titles):
+            continue
+        seen_urls.add(u)
+        if t:
+            seen_titles.add(t)
+        fresh.append(a)
+    return fresh
 
 def stream_search(
     query: str,
@@ -327,6 +333,20 @@ def discover_and_get(
         articles = dedupe_articles(articles, fuzzy=True)
     return articles[:limit]
 
+
+def _only_unseen(articles, seen_urls, seen_titles):
+    from .processing.dedupe import normalize_url, _normalize_title
+    fresh = []
+    for a in articles:
+        u = normalize_url(a.get("url", ""))
+        t = _normalize_title(a.get("title", ""))
+        if u in seen_urls or (t and t in seen_titles):
+            continue
+        seen_urls.add(u)
+        if t:
+            seen_titles.add(t)
+        fresh.append(a)
+    return fresh
 
 # Legacy aliases (backward compatibility) — both names are fully supported
 # public API, not deprecated. New code may use either; these longer names

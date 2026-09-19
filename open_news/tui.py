@@ -156,7 +156,7 @@ class OpenNewsTUI:
                 full_content=self.settings.full_content, js=self.settings.js,
                 whitelist=self.settings.whitelist, blacklist=self.settings.blacklist,
             )
-            label = f"Fetched {location} news" if location else f"Fetched {category} news"
+            label = f"Fetched {category} news ({location})" if location else f"Fetched {category} news"
             self._replace_articles(results, label)
         except Exception as error:
             self._show_error(error)

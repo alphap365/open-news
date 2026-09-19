@@ -1,5 +1,6 @@
 import logging
 from typing import Dict, Optional
+from urllib.parse import urlparse
 
 import httpx
 from ..core.extractor import extract_article
@@ -8,6 +9,7 @@ from ..utils.user_agents import get_user_agent
 logger = logging.getLogger(__name__)
 
 DEFAULT_TIMEOUT = 15
+
 
 def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> Dict:
     """
@@ -49,13 +51,8 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
         logger.error(f"Extraction failed for {url}: {e}")
         extracted = {}
 
-    from urllib.parse import urlparse
-    from urllib.parse import urlparse
-    # Prefer the extractor's aggregator-aware resolved source (checks
-    # og:site_name / JSON-LD / publisher meta tags, and specifically
-    # avoids reporting "msn"/"yahoo"/etc. as the publisher when a real
-    # outlet name is discoverable). Fall back to the bare domain only if
-    # extraction failed to produce anything (e.g. extraction raised).
+    # Prefer the extractor's aggregator-aware resolved source; fall back to
+    # the bare domain only if extraction produced nothing.
     source = extracted.get("source") or urlparse(url).netloc.replace("www.", "")
 
     return {
@@ -75,9 +72,11 @@ def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> D
 
 
 def _empty_result(url: str) -> Dict:
+    # FIX: now includes "description" so the shape matches the success path.
     return {
         "url": url, "title": "", "text": "", "authors": [], "publish_date": None,
-        "category": "", "top_image": None, "images": [], "videos": [], "source": "", "meta": {},
+        "category": "", "top_image": None, "images": [], "videos": [],
+        "source": "", "description": "", "meta": {},
     }
 
 

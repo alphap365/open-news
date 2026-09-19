@@ -6,16 +6,16 @@ on:
 
 permissions:
   contents: read
-  id-token: write
 
 jobs:
-  publish:
+  # No `environment` here, so running this job never creates a deployment.
+  check-channel:
     runs-on: ubuntu-latest
-    environment:
-      name: pypi
-      url: https://pypi.org/p/open-news-api
+    outputs:
+      publish: ${{ steps.channel.outputs.publish }}
     steps:
-      - name: Guard against channel/tag mismatch
+      - name: Classify release and guard against channel/tag mismatch
+        id: channel
         env:
           TAG: ${{ github.event.release.tag_name }}
           IS_PRERELEASE: ${{ github.event.release.prerelease }}
@@ -37,42 +37,44 @@ jobs:
               )
               sys.exit(1)
 
+          publish = "false" if tag_is_pre else "true"
           if tag_is_pre:
-              print(f"{tag} is a pre-release — not auto-publishing to PyPI.")
-              # Exit 0 so this doesn't look like a failure; downstream step
-              # is skipped via the 'if' below instead.
+              print(f"{tag} is a pre-release - handled by the manual pre-release workflow.")
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"publish={publish}\n")
           EOF
 
-      - name: Check channel
-        id: channel
-        env:
-          TAG: ${{ github.event.release.tag_name }}
-        run: |
-          version="${TAG#v}"
-          if echo "$version" | grep -qE '(a|b|rc)[0-9]+|\.dev[0-9]+'; then
-            echo "publish=false" >> "$GITHUB_OUTPUT"
-          else
-            echo "publish=true" >> "$GITHUB_OUTPUT"
-          fi
-
+  publish:
+    needs: check-channel
+    # Job-level condition: for pre-releases this job is skipped entirely,
+    # so no deployment is recorded for the `pypi` environment.
+    if: needs.check-channel.outputs.publish == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    environment:
+      name: pypi
+      url: https://pypi.org/p/open-news-api
+    steps:
       - name: Download only PyPI-eligible assets
-        if: steps.channel.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.event.release.tag_name }}
         run: |
           mkdir -p dist
-          gh release download ${{ github.event.release.tag_name }} \
+          gh release download "$TAG" \
             --repo ${{ github.repository }} \
             --pattern 'open_news_api-*' \
             --dir dist/
 
-      - name: Sanity check — nothing unexpected in dist/
-        if: steps.channel.outputs.publish == 'true'
+      - name: Sanity check - nothing unexpected in dist/
         run: |
           shopt -s nullglob
           files=(dist/*)
           if [ ${#files[@]} -eq 0 ]; then
-            echo "No matching assets found in release — aborting." >&2
+            echo "No matching assets found in release - aborting." >&2
             exit 1
           fi
           for f in "${files[@]}"; do
@@ -85,4 +87,3 @@ jobs:
           ls -la dist/
 
       - uses: pypa/gh-action-pypi-publish@release/v1
-        if: steps.channel.outputs.publish == 'true'
