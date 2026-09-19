@@ -10,10 +10,10 @@
 #
 # News-fetch backend note: on Termux, `ddgs` is skipped automatically at
 # runtime (its `primp` dependency panics with SIGABRT on Android — see
-# open_news/feeds/duckduckgo_engine.py). `duckpy` (pure Python/httpx) is
-# the primary DDG backend here instead, with a manual HTML scraper as
-# the last-resort fallback. Both install normally via pip; no special
-# handling needed in this script.
+# open_news/feeds/duckduckgo_engine/). The engine falls through to a
+# pure-Python chain: `duckpy` first when present, then a DDG HTML
+# scraper, then Bing News RSS. None of those need primp, so no special
+# handling is required in this script — pip installs everything.
 set -euo pipefail
 
 REPO="alphap365/open-news"
@@ -370,52 +370,12 @@ if [ "$DRY_RUN" -eq 0 ]; then
       --disable-pip-version-check "$1" >/dev/null 2>&1
   }
 
-  accept=()
-  reject=()
   for whl in "$WHEELHOUSE_DIR"/*.whl; do
     [ -e "$whl" ] || continue
     if accepts_pip "$whl"; then
       info "  OK   $(basename "$whl")"
-      accept+=("$whl")
     else
-      warn "  FAIL $(basename "$whl")"
-      reject+=("$whl")
-    fi
-  done
-
-  for whl in "${reject[@]}"; do
-    [ -e "$whl" ] || continue
-    base="$(basename "$whl")"
-    nv="$(printf '%s' "$base" | cut -d- -f1-2)"
-    pytag="$(printf '%s' "$base" | cut -d- -f3)"
-    abitag="$(printf '%s' "$base" | cut -d- -f4)"
-    rest="$(printf '%s' "$base" | cut -d- -f5-)"
-
-    if [ "$pytag" = "$abitag" ] && [ "${pytag#cp}" != "$pytag" ]; then
-      bare="${abitag#cp}"
-      newname="${nv}-${pytag}-${bare}-${rest}"
-      info "  Trying rename: $base -> $newname"
-      mv "$whl" "$WHEELHOUSE_DIR/$newname"
-      whl="$WHEELHOUSE_DIR/$newname"
-      if accepts_pip "$whl"; then
-        info "  OK   $newname (after rename)"
-        accept+=("$whl")
-      else
-        warn "  FAIL $newname (still rejected)"
-      fi
-    fi
-  done
-
-  for whl in "$WHEELHOUSE_DIR"/*.whl; do
-    [ -e "$whl" ] || continue
-    b="$(basename "$whl")"
-    keep=0
-    for k in "${accept[@]:-}"; do
-      [ -n "$k" ] || continue
-      [ "$b" = "$(basename "$k")" ] && keep=1 && break
-    done
-    if [ "$keep" -eq 0 ]; then
-      warn "  Dropping $b (not accepted by this interpreter)"
+      warn "  Dropping $(basename "$whl") (not accepted by $interp_py)"
       rm -f "$whl"
     fi
   done

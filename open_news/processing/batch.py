@@ -116,7 +116,7 @@ def search_and_summarize(
     """
     from ..api import search  # avoid circular import
 
-    articles = search(query, limit=limit)
+    articles = search(query, max_results=limit)
     if not articles:
         logger.warning(f"No articles found for '{query}'")
         return []
