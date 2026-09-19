@@ -437,26 +437,49 @@ class TestPublicAPISmoke:
         )
         _assert_article_list(articles, where="search_site")
 
-    def test_get_article_returns_text(self):
-        """Extract one known-stable article. We don't assert exact text —
-        only that a dict with a non-empty ``text`` came back."""
-        article = _call_or_skip(
-            get_article,
-            "https://en.wikipedia.org/wiki/Python_(programming_language)",
-            timeout=20,
-        )
-        assert isinstance(article, dict)
-        # The Wikipedia article is stable and should always extract.
-        assert article.get("text"), (
-            f"get_article returned empty text for a stable page: keys={list(article)}"
-        )
 
+    @needs_network
+    @pytest.mark.network
     def test_discover_and_get_returns_articles(self):
+        """example.com is stable, has no anti-bot policy worth worrying
+        about, and serves a single static page. It won't yield *many*
+        articles, but the contract is "returns a list, each entry shaped
+        correctly" — not "returns N articles"."""
         articles = _call_or_skip(
-            discover_and_get, "https://en.wikipedia.org/", limit=3,
+            discover_and_get, "https://example.com/", limit=3,
         )
         _assert_article_list(articles, where="discover_and_get")
 
+# ======================================================================
+# 8b. Article extraction against a loopback fixture — no network
+# ======================================================================
+
+class TestArticleExtractionLocal:
+    """get_article's contract, verified against a locally-served page.
+    """
+
+    def test_get_article_returns_text(self, local_article_server):
+        url = f"{local_article_server}/article1.html"
+        article = _call_or_skip(get_article, url, timeout=10)
+
+        assert isinstance(article, dict)
+        assert article.get("text"), (
+            f"get_article returned empty text for the local fixture; "
+            f"keys={list(article)} value={article!r}"
+        )
+        assert article["url"] == url
+        # The fixture page declares og:site_name and has a <title>; a
+        # working extractor should pick one of them up.
+        assert article.get("title"), f"no title extracted; keys={list(article)}"
+
+    def test_get_article_missing_page_returns_empty_dict(
+        self, local_article_server,
+    ):
+        """404s must not raise — get_article returns the empty-result
+        shape so callers can detect failure by inspecting `text`."""
+        article = get_article(f"{local_article_server}/does-not-exist", timeout=5)
+        assert isinstance(article, dict)
+        assert article.get("text") == ""
 
 # ======================================================================
 # 9. Streaming
@@ -540,9 +563,11 @@ class TestSummarization:
     @needs_network
     @pytest.mark.network
     def test_batch_summarize(self):
+        """Use a stable, anti-bot-friendly URL. Wikipedia's policy blocks
+        cloud IPs, so it's a bad default for a batch-fetch test."""
         out = _call_or_skip(
             batch_summarize,
-            ["https://en.wikipedia.org/wiki/Python_(programming_language)"],
+            ["https://example.com/"],
         )
         assert isinstance(out, list) and out
         for entry in out:

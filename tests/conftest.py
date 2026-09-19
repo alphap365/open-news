@@ -15,6 +15,8 @@ Contains:
 """
 
 import pytest
+import http.server
+import threading
 
 
 def pytest_configure(config):
@@ -56,3 +58,92 @@ def sample_articles_list(sample_article_dict):
         {**sample_article_dict, "title": "AI takes over the world update", "url": "https://b.com/2"},
         {**sample_article_dict, "title": "Different story", "url": "https://c.com/3"},
     ]
+
+@pytest.fixture
+def local_article_server():
+    """Serve a small static site on loopback so tests that fetch real
+    articles can do so without leaving the machine.
+
+    Motivation: GitHub Actions runners sit on AWS IP ranges that
+    Wikipedia (and many other sites) block with 403 regardless of the
+    User-Agent header. A live external URL therefore makes any
+    "did we extract text?" assertion flaky for reasons unrelated to
+    open_news. A loopback fixture removes that variable entirely.
+
+    Routes:
+        /                 — homepage with links to the two articles
+        /article1.html    — full article page (title + og:site_name + body)
+        /article2.html    — second article, shorter body
+        anything else     — 404, so RSS auto-discovery falls through to
+                            the crawler path in discover_and_get()
+    """
+    pages = {
+        "/": (
+            "<!doctype html><html><head><title>Local Fixture Index</title></head>"
+            "<body><h1>Index</h1>"
+            '<a href="/article1.html">First local article</a>'
+            '<a href="/article2.html">Second local article</a>'
+            "</body></html>"
+        ).encode("utf-8"),
+        "/article1.html": (
+            "<!doctype html><html><head>"
+            "<title>Local Fixture Article One</title>"
+            '<meta property="og:site_name" content="Local Fixture">'
+            '<meta name="author" content="Fixture Author">'
+            "</head><body><article>"
+            "<h1>Local Fixture Article One</h1>"
+            "<p>This is the first paragraph of the locally served article. "
+            "It contains enough words for a readability-style extractor to "
+            "recognise it as real body text rather than navigation or "
+            "boilerplate.</p>"
+            "<p>This is the second paragraph. It exists so the extractor "
+            "has more than one candidate and can score them against each "
+            "other, which is what most article-extraction algorithms want "
+            "before they commit to a body.</p>"
+            "<p>The third paragraph is included for good measure and to "
+            "push the total text length above the thresholds that "
+            "extractors commonly use to distinguish an article from a "
+            "listing page or an error page.</p>"
+            "</article></body></html>"
+        ).encode("utf-8"),
+        "/article2.html": (
+            "<!doctype html><html><head>"
+            "<title>Local Fixture Article Two</title>"
+            '<meta property="og:site_name" content="Local Fixture">'
+            "</head><body><article>"
+            "<h1>Local Fixture Article Two</h1>"
+            "<p>A shorter second article used for batch and multi-article "
+            "tests. It has one meaningful paragraph, which is enough to "
+            "satisfy shape assertions without duplicating the first "
+            "article's content.</p>"
+            "</article></body></html>"
+        ).encode("utf-8"),
+    }
+
+    class _Handler(http.server.BaseHTTPRequestHandler):
+        def do_GET(self):
+            path = self.path.split("?", 1)[0]
+            body = pages.get(path)
+            if body is None:
+                self.send_response(404)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
+            self.send_response(200)
+            self.send_header("Content-Type", "text/html; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def log_message(self, *args, **kwargs):
+            pass  # silence the default stderr chatter
+
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        yield f"http://127.0.0.1:{server.server_address[1]}"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
