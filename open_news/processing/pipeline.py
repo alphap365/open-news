@@ -1,6 +1,7 @@
 import logging
 from typing import Dict, List, Optional
 
+from ..fetch.url_resolver import is_hub_url
 from .language_guard import filter_by_language
 from .token_filter import filter_articles
 from .domain_filter import filter_by_domain
@@ -55,12 +56,28 @@ def _enrich_full_content(articles: List[Dict], js: bool = False) -> List[Dict]:
     from ..fetch.article import get_article
 
     enriched = []
+    empty_count = 0
     for art in articles:
         url = art.get("url", "")
         if not url:
             art["_full_content"] = False
+            art["_full_content_reason"] = "no_url"
             enriched.append(art)
             continue
+
+        # Belt-and-suspenders: even if a hub/listing page slipped past the
+        # feed engine (e.g. a caller assembled `articles` by hand rather
+        # than via fetch()/search()), don't waste a crawl on something
+        # that structurally cannot contain a single article body — and
+        # say so explicitly rather than letting it look like a generic
+        # extraction failure.
+        if is_hub_url(url):
+            art["_full_content"] = False
+            art["_full_content_reason"] = "hub_or_listing_page"
+            empty_count += 1
+            enriched.append(art)
+            continue
+
         try:
             full = get_article(url, js=js)
             if full.get("text"):
@@ -77,10 +94,21 @@ def _enrich_full_content(articles: List[Dict], js: bool = False) -> List[Dict]:
                 enriched.append(merged)
             else:
                 art["_full_content"] = False
+                art["_full_content_reason"] = "extraction_returned_no_text"
+                empty_count += 1
                 enriched.append(art)
         except Exception as e:
             logger.warning(f"full_content fetch failed for {url}: {e}")
             art["_full_content"] = False
+            art["_full_content_reason"] = f"fetch_error: {e}"
+            empty_count += 1
             enriched.append(art)
+
+    if empty_count:
+        logger.info(
+            "full_content enrichment: %d/%d articles came back empty "
+            "(see _full_content_reason on each)",
+            empty_count, len(articles),
+        )
 
     return enriched

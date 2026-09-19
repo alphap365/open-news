@@ -39,6 +39,30 @@ detects Termux at call time and skips the ``ddgs`` attempt entirely.
 attempted on every platform, including Termux, and is the primary
 Termux path rather than a last resort there.
 
+Aggregator / hub-page handling
+-------------------------------
+
+``ddgs.news()`` (and, less often, the ``duckpy``/HTML-scraper tiers) is a
+metasearch layer: some hits point at Google News redirect wrappers
+(``news.google.com/...``), and some point at real, non-redirect pages
+that are nonetheless *listing* pages rather than articles (e.g.
+``apnews.com/hub/technology``). Both are handled here, at fetch time,
+rather than left for downstream stages to trip over:
+
+* Google News redirects are decoded to their real destination via
+  ``url_resolver.resolve_url`` (mirrors what ``googlenews_engine.py`` and
+  ``feeds/sources.py`` already do for their own results).
+* Known hub/listing pages — including ones a Google News redirect might
+  decode *to* — are dropped outright. They will never yield extractable
+  article text, so keeping them only produces silent "no article" gaps
+  further down the pipeline (``pipeline.py::_enrich_full_content``).
+* Results whose ``source`` names a wire service/aggregator
+  (``url_resolver.is_aggregator_source``) are kept but flagged with
+  ``_aggregator_source: True`` so callers (ranking, display) can
+  deprioritize or label them without losing the result entirely — a wire
+  story is still a real, readable article, just not from the original
+  outlet.
+
 Escape hatches (environment variables)
 ---------------------------------------
 
@@ -74,6 +98,12 @@ import httpx
 from lxml.html import fromstring
 
 from ..config import FetchConfig
+from ..fetch.url_resolver import (
+    aggregator_domain_name,
+    is_aggregator_source,
+    is_hub_url,
+    resolve_url,
+)
 from ..utils.user_agents import USER_AGENTS, get_user_agent
 
 logger = logging.getLogger(__name__)
@@ -120,6 +150,22 @@ def _force_fallback() -> bool:
     return os.environ.get("OPEN_NEWS_FORCE_DDG_FALLBACK") == "1"
 
 
+def _finalize_url(url: str) -> Optional[str]:
+    """
+    Shared post-processing for a raw hit URL from any of the three
+    backends: resolve Google News redirects, then reject the result
+    entirely if what we end up with (whether resolved or not) is a known
+    hub/listing page. Returns None to signal "drop this result".
+    """
+    if not url:
+        return None
+    real_url = resolve_url(url)
+    if is_hub_url(real_url):
+        logger.debug("Dropping hub/listing page (not an article): %s", real_url)
+        return None
+    return real_url
+
+
 # ----------------------------------------------------------------------
 # Public entry point
 # ----------------------------------------------------------------------
@@ -131,7 +177,8 @@ def fetch_raw(config: FetchConfig) -> List[Dict]:
     Tries, in order: ddgs -> duckpy -> manual HTML scraper. Returns as
     soon as a tier yields results. Returns list of dicts:
     {title, url, source, published, description} — same shape
-    regardless of which tier actually ran.
+    regardless of which tier actually ran. Results may also carry
+    ``_aggregator_source: True`` when ``source`` names a wire service.
     """
     if _force_fallback():
         logger.info("OPEN_NEWS_FORCE_DDG_FALLBACK set; using manual HTML scraper")
@@ -178,6 +225,7 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
     region = _region_param(config.location)
 
     results: List[Dict] = []
+    dropped_hubs = 0
     try:
         with DDGS() as ddgs:
             hits = ddgs.news(
@@ -187,15 +235,24 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
                 max_results=config.max_results * 2,  # over-fetch; pipeline filters
             )
             for hit in hits:
-                results.append({
+                real_url = _finalize_url(hit.get("url", ""))
+                if not real_url:
+                    dropped_hubs += 1
+                    continue
+                source = hit.get("source", "Unknown")
+                entry = {
                     "title": hit.get("title", "No title"),
-                    "url": hit.get("url", ""),
-                    "source": hit.get("source", "Unknown"),
+                    "url": real_url,
+                    "source": source,
                     "published": hit.get("date", ""),
                     "description": (hit.get("body") or "")[:500],
-                })
+                }
+                if is_aggregator_source(source):
+                    entry["_aggregator_source"] = True
+                results.append(entry)
         logger.info(
-            "ddgs fetch(%r) returned %d raw results", keywords, len(results)
+            "ddgs fetch(%r) returned %d usable results (%d hub/listing pages dropped)",
+            keywords, len(results), dropped_hubs,
         )
     except Exception as e:
         # Ordinary Python exceptions (ImportError, network errors) are
@@ -203,7 +260,7 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
         logger.error("ddgs fetch error for %r: %s", keywords, e)
         return []
 
-    return [r for r in results if r["url"]]
+    return results
 
 
 # ----------------------------------------------------------------------
@@ -221,6 +278,7 @@ def _try_duckpy(config: FetchConfig) -> List[Dict]:
     limit = config.max_results * 2
 
     results: List[Dict] = []
+    dropped_hubs = 0
     try:
         # Hand duckpy the whole UA pool rather than one pre-picked string —
         # it randomizes per .search() call internally, same spirit as
@@ -228,20 +286,32 @@ def _try_duckpy(config: FetchConfig) -> List[Dict]:
         client = Client(default_user_agents=USER_AGENTS)
         hits = client.search(keywords)
         for hit in hits[:limit]:
-            url = getattr(hit, "url", "") or ""
+            raw_url = getattr(hit, "url", "") or ""
             title = getattr(hit, "title", "") or "No title"
             description = getattr(hit, "description", "") or ""
-            if not url:
+            real_url = _finalize_url(raw_url)
+            if not real_url:
+                dropped_hubs += 1
                 continue
-            results.append({
+            # duckpy gives us no human-readable source, only a URL — check
+            # the domain against the known wire-service table first (e.g.
+            # apnews.com -> "AP News") and only fall back to the bare
+            # netloc when it isn't a recognized aggregator.
+            agg_name = aggregator_domain_name(real_url)
+            source = agg_name or urlparse(real_url).netloc.replace("www.", "")
+            entry = {
                 "title": title,
-                "url": url,
-                "source": urlparse(url).netloc.replace("www.", ""),
+                "url": real_url,
+                "source": source,
                 "published": "",  # duckpy has no date field
                 "description": description[:500],
-            })
+            }
+            if agg_name or is_aggregator_source(source):
+                entry["_aggregator_source"] = True
+            results.append(entry)
         logger.info(
-            "duckpy fetch(%r) returned %d raw results", keywords, len(results)
+            "duckpy fetch(%r) returned %d usable results (%d hub/listing pages dropped)",
+            keywords, len(results), dropped_hubs,
         )
     except Exception as e:
         # duckpy is pure Python/httpx — ordinary exceptions only, no
@@ -330,6 +400,7 @@ def _parse_ddg_html(html: str, limit: int) -> List[Dict]:
         return []
 
     results: List[Dict] = []
+    dropped_hubs = 0
 
     for node in doc.xpath("//div[contains(@class, 'result')]"):
         title_a = node.xpath(".//a[contains(@class, 'result__a')]")
@@ -338,9 +409,14 @@ def _parse_ddg_html(html: str, limit: int) -> List[Dict]:
 
         title = title_a[0].text_content().strip()
         href = title_a[0].get("href", "")
-        url = _decode_uddg(href)
+        raw_url = _decode_uddg(href)
 
-        if not title or not url:
+        if not title or not raw_url:
+            continue
+
+        real_url = _finalize_url(raw_url)
+        if not real_url:
+            dropped_hubs += 1
             continue
 
         snippet_el = (
@@ -350,18 +426,27 @@ def _parse_ddg_html(html: str, limit: int) -> List[Dict]:
         )
         snippet = snippet_el[0].text_content().strip() if snippet_el else ""
 
-        source = urlparse(url).netloc.replace("www.", "")
+        # Same reasoning as the duckpy tier: no human-readable source from
+        # raw HTML, so check the domain table before falling back to netloc.
+        agg_name = aggregator_domain_name(real_url)
+        source = agg_name or urlparse(real_url).netloc.replace("www.", "")
 
-        results.append({
+        entry = {
             "title": title,
-            "url": url,
+            "url": real_url,
             "source": source,
             "published": "",  # DDG HTML has no date; ranker handles missing
             "description": snippet[:500],
-        })
+        }
+        if agg_name or is_aggregator_source(source):
+            entry["_aggregator_source"] = True
+        results.append(entry)
 
         if len(results) >= limit:
             break
+
+    if dropped_hubs:
+        logger.info("DDG HTML: dropped %d hub/listing pages", dropped_hubs)
 
     return results
 

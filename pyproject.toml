@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.3a6"
+version = "1.0.3b1"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
@@ -30,7 +30,8 @@ dependencies = [
     "requests",
     "ddgs",
     "langdetect",
-    "duckpy"
+    "duckpy",
+    "legacy-cgi"
 ]
 
 [project.urls]

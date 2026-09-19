@@ -62,10 +62,6 @@ def _install_fake_duckpy(monkeypatch, *, results=None, raises=None):
 
     class FakeClient:
         def __init__(self, **kwargs):
-            # Mirrors the real duckpy.Client signature (default_user_agents,
-            # proxies, etc.) — _try_duckpy now calls
-            # Client(default_user_agents=USER_AGENTS), so this must accept
-            # and record arbitrary kwargs rather than rejecting them.
             calls["client_kwargs"] = kwargs
 
         def search(self, query, **kwargs):
@@ -159,6 +155,31 @@ def test_ddgs_entries_without_url_are_dropped(monkeypatch):
     assert result[0]["title"] == "Has URL"
 
 
+def test_ddgs_drops_hub_pages_and_flags_aggregators(monkeypatch):
+    _not_termux(monkeypatch)
+    _install_fake_ddgs(monkeypatch, results=[
+        {
+            "title": "Hub page",
+            "url": "https://apnews.com/hub/technology",
+            "source": "AP News",
+            "date": "",
+            "body": "",
+        },
+        {
+            "title": "Real story",
+            "url": "https://apnews.com/article/123",
+            "source": "AP News",
+            "date": "2026-09-09",
+            "body": "body",
+        },
+    ])
+
+    result = fetch_raw(FetchConfig(category="general", max_results=5))
+    assert len(result) == 1
+    assert result[0]["title"] == "Real story"
+    assert result[0]["_aggregator_source"] is True
+
+
 # ----------------------------------------------------------------------
 # Fallback selection: ddgs -> duckpy -> HTML scraper
 # ----------------------------------------------------------------------
@@ -178,7 +199,6 @@ def test_duckpy_runs_when_ddgs_returns_empty(monkeypatch):
     assert result[0]["title"] == "duckpy result"
     assert result[0]["source"] == "d.example"
     assert calls["query"] == "news"
-    # duckpy is constructed with the full UA pool, not a single pre-picked string
     assert "default_user_agents" in calls["client_kwargs"]
     assert isinstance(calls["client_kwargs"]["default_user_agents"], list)
     assert len(calls["client_kwargs"]["default_user_agents"]) > 1
@@ -252,6 +272,18 @@ def test_duckpy_entries_without_url_are_dropped(monkeypatch):
     result = fetch_raw(FetchConfig(category="general", max_results=5))
     assert len(result) == 1
     assert result[0]["title"] == "Has URL"
+
+
+def test_duckpy_flags_aggregator_domain(monkeypatch):
+    _not_termux(monkeypatch)
+    _install_fake_ddgs(monkeypatch, results=[])
+    _install_fake_duckpy(monkeypatch, results=[
+        ("AP story", "https://apnews.com/article/123", "desc"),
+    ])
+
+    result = fetch_raw(FetchConfig(category="general", max_results=5))
+    assert result[0]["source"] == "AP News"
+    assert result[0]["_aggregator_source"] is True
 
 
 # ----------------------------------------------------------------------
@@ -361,7 +393,7 @@ def test_force_fallback_env_var_skips_ddgs_and_duckpy_everywhere(monkeypatch):
 
 
 # ----------------------------------------------------------------------
-# HTML scraper — parsing (unchanged)
+# HTML scraper — parsing
 # ----------------------------------------------------------------------
 
 def test_parse_ddg_html_extracts_results():
@@ -377,7 +409,6 @@ def test_parse_ddg_html_extracts_results():
     assert results[0]["url"] == "https://a.example/1"
     assert results[0]["source"] == "a.example"
     assert results[0]["description"] == "First snippet"
-    # Protocol-relative DDG redirect is decoded to the direct URL
     assert results[1]["url"] == "https://b.example/2"
 
 
@@ -396,6 +427,18 @@ def test_parse_ddg_html_handles_malformed_input():
 def test_parse_ddg_html_skips_blocks_without_title_link():
     html = '<html><body><div class="result">no anchor here</div></body></html>'
     assert _parse_ddg_html(html, limit=5) == []
+
+
+def test_parse_ddg_html_drops_hub_pages_and_flags_aggregators():
+    html = _make_html_results(
+        ("Hub", "https://apnews.com/hub/technology", "hub snippet"),
+        ("Article", "https://apnews.com/article/123", "article snippet"),
+    )
+    results = _parse_ddg_html(html, limit=10)
+    assert len(results) == 1
+    assert results[0]["title"] == "Article"
+    assert results[0]["source"] == "AP News"
+    assert results[0]["_aggregator_source"] is True
 
 
 # ----------------------------------------------------------------------
