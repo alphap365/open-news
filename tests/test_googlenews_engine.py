@@ -25,7 +25,7 @@ class _FakeFeed:
 def _install_fake_feed(monkeypatch, entries):
     """Install a fake feedparser.parse that records the URL and returns
     a feed with the given entries."""
-    calls = {"url": None}
+    calls = {"url": ""}
 
     def fake_parse(url):
         calls["url"] = url
@@ -57,20 +57,22 @@ def _entry(
 
 class TestSearchRawQuery:
 
-    def test_query_mode_any_leaves_query_alone(self, monkeypatch):
+    def test_query_mode_any_uses_explicit_or(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
             SearchConfig(query="climate change", query_mode="any", max_results=1),
         )
-        assert "q=climate+change" in calls["url"]
+        # "any" must be explicit OR — a bare space means AND to Google.
+        assert "q=%28climate+OR+change%29" in calls["url"]
         assert "AND" not in calls["url"]
 
-    def test_query_mode_all_adds_AND(self, monkeypatch):
+    def test_query_mode_all_uses_implicit_and(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
             SearchConfig(query="climate change", query_mode="all", max_results=1),
         )
-        assert "climate+AND+change" in calls["url"]
+        # "all" relies on Google's implicit AND — tokens joined by a space.
+        assert "q=climate+change" in calls["url"]
 
     def test_query_mode_exact_phrase_quotes(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
@@ -110,7 +112,9 @@ class TestSearchRawQuery:
             ),
         )
         assert "after%3A2026-01-01" in calls["url"]
-        assert "before%3A2026-06-30" in calls["url"]
+        # `before:` is exclusive in Google News, so the engine adds one day
+        # to make the user-supplied end_date inclusive.
+        assert "before%3A2026-07-01" in calls["url"]
         # time_limit must NOT have been applied
         assert "when%3A" not in calls["url"]
 
