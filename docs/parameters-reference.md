@@ -226,3 +226,93 @@ It is not required for normal RSS/search or static HTML workflows.
 The processing system can use exact URL deduplication and, where requested, fuzzy title matching.
 
 The streaming layer additionally tracks normalized URLs and normalized titles so previously yielded articles are not emitted again.
+
+---
+
+## 🏷️ Topic filtering (v1.0.4)
+
+`filter_articles(topic=...)`, `cluster_articles(topic=...)`, and the CLI `--topic` flag all accept the same input forms:
+
+```python
+topic=None                                # no filtering
+topic="AI"                                # single term
+topic="AI, LLM"                           # comma-separated
+topic=["AI", "LLM"]                       # list
+```
+
+Matching scans a broader field set than `query` does:
+
+```text
+title · description · text · category · keywords
+```
+
+### `topic_mode`
+
+| Value | Meaning |
+|---|---|
+| `any` (default) | Match if any term is present |
+| `all` | Match only if every term is present |
+| `exact_phrase` | Treat the whole topic string as one phrase |
+
+When `query` and `topic` are both supplied to `filter_articles()`, they are ANDed.
+
+---
+
+## 📊 Rank methods (v1.0.4)
+
+`rank_articles(method=...)` and the CLI `--rank-method` accept:
+
+| Value | Backend | Notes |
+|---|---|---|
+| `auto` (default) | BM25 → TF-IDF | Falls back silently |
+| `bm25` | `bm25s` | Requires `open-news-api[nlp]` |
+| `tfidf` | Pure-Python TF-IDF | No optional deps |
+| `basic` | Term frequency | No IDF weighting |
+
+`--rank-query` is required for ranking to do anything. Without it, articles pass through with `_rank_score = 0.0` and their original order preserved.
+
+---
+
+## 🧩 Cluster parameters (v1.0.4)
+
+`cluster_articles(...)` and the CLI `cluster` subcommand:
+
+| Parameter | Default | Range / values |
+|---|---:|---|
+| `threshold` | `0.75` | `0 < t ≤ 1`; higher = tighter grouping |
+| `min_cluster_size` | `1` | Integer ≥ 1 |
+| `drop_singletons` | `False` | Convenience for `min_cluster_size=2` |
+| `sort_by` | `"score"` | `score`, `size`, `date` |
+| `rank_query` | `None` | Optional; uses the ranking system above |
+| `rank_method` | `"auto"` | As above |
+
+At `threshold=0.75`, titles that differ by a suffix (e.g. "Live", "Update", "(video)") tend to group; titles that differ by a proper noun usually don't. Tune between `0.65` and `0.85` in practice.
+
+---
+
+## 📤 Export parameters (v1.0.4)
+
+`export.to_markdown(...)`:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `path` | `None` | Write target; parent dirs created |
+| `title` | `None` | Overrides the auto-generated `# News Export` heading |
+| `include_text` | `True` | Include the article body |
+| `include_summary` | `True` | Include the description blockquote |
+| `include_metadata` | `True` | Source / published / authors line |
+| `include_toc` | `True` | Emit a table of contents for multi-item input |
+| `max_text_chars` | `4000` | Truncate long bodies |
+| `include_all_members` | `False` | For cluster input: list every member, not just the representative |
+
+`export.to_json(...)`:
+
+| Parameter | Default | Meaning |
+|---|---:|---|
+| `path` | `None` | Write target; parent dirs created |
+| `indent` | `2` | JSON indent; `None` for compact |
+| `envelope` | `True` | Wrap in `{schema_version, generated_at, count, kind, ...}` |
+| `include_internal` | `False` | Keep keys like `_tier`, `_field_sources` |
+| `ensure_ascii` | `False` | Preserve non-ASCII characters |
+| `extra_meta` | `None` | Extra top-level keys merged into the envelope |
+
