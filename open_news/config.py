@@ -37,6 +37,8 @@ def _normalize_date(value: Optional[Union[str, date, datetime]], field_name: str
         v = value.strip()
         if not v:
             return None
+        if v[-1] in "Zz":
+            v = v[:-1] + "+00:00"
         try:
             return datetime.fromisoformat(v).date().isoformat()
         except ValueError:
