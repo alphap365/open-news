@@ -120,8 +120,11 @@ export.to_json()
   publish time. Treat these dates as approximate. A `meta.date_source` /
   `meta.date_is_modified` marker is planned for a future release.
 
+# [1.0.4a2] - 2026-09-22
+
+Fixed test issues in ci.
+
 # [1.0.4a1] - 2026-09-21
-# v1.0.4a1 — Pre-release
 
 > **This is a pre-release.** It is intended for smoke-testing the v1.0.4
 > release pipeline end-to-end. Do not depend on it in production. The
@@ -499,6 +502,7 @@ The old registry-backed interfaces were retired:
 
 [Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.4...HEAD
 [1.0.4]: https://github.com/alphap365/open-news/releases/tag/1.0.4
+[1.0.4a2]: https://github.com/alphap365/open-news/releases/tag/1.0.4a2
 [1.0.4a1]: https://github.com/alphap365/open-news/releases/tag/1.0.4a1
 [1.0.3]: https://github.com/alphap365/open-news/releases/tag/1.0.3
 [1.0.3b2]: https://github.com/alphap365/open-news/releases/tag/1.0.3b2
