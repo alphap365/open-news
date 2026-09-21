@@ -2,12 +2,15 @@ import json
 import logging
 import re
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional, Set
 from urllib.parse import urljoin, urlparse
 
 from dateutil import parser as date_parser
 from lxml.html import HtmlElement
+
+from ..utils.dates import parse_datetime
 
 logger = logging.getLogger(__name__)
 
@@ -138,7 +141,7 @@ class JsonLdStrategy(ExtractionStrategy):
             for key in ("datePublished", "dateCreated", "dateModified"):
                 if ld.get(key):
                     try:
-                        parsed = _valid_date(date_parser.parse(ld[key]))
+                        parsed = _valid_date(parse_datetime(ld[key]))
                     except Exception:
                         parsed = None
                     if parsed:
@@ -233,8 +236,9 @@ class JsonLdStrategy(ExtractionStrategy):
                     urls.append(i)
                 elif isinstance(i, dict) and i.get("url"):
                     urls.append(i["url"])
-        return list(dict.fromkeys(_absolutize(u, url) for u in urls if u))
-
+        absolute = (_absolutize(u, url) for u in urls if u)
+        return list(dict.fromkeys(a for a in absolute if a))
+    
     def _videos(self, ld: Dict) -> List[str]:
         vid = ld.get("video")
         urls: List[str] = []
@@ -389,24 +393,24 @@ class HeuristicStrategy(ExtractionStrategy):
                 out["text"] = text
 
         if "title" in needed:
-            v = self._title(doc)
-            if v:
-                out["title"] = v
+            title = self._title(doc)
+            if title:
+                out["title"] = title
 
         if "authors" in needed:
-            v = self._authors_from_byline(doc)
-            if v:
-                out["authors"] = v
+            authors = self._authors_from_byline(doc)
+            if authors:
+                out["authors"] = authors
 
         if "publish_date" in needed:
-            v = self._pubdate(doc, url)
-            if v:
-                out["publish_date"] = v
+            pub_date = self._pubdate(doc, url)
+            if pub_date:
+                out["publish_date"] = pub_date
 
         if "category" in needed and url:
-            v = self._category_from_url(url)
-            if v:
-                out["category"] = v
+            category = self._category_from_url(url)
+            if category:
+                out["category"] = category
 
         if "description" in needed:
             # first substantial paragraph as a last-resort description
@@ -451,10 +455,11 @@ class HeuristicStrategy(ExtractionStrategy):
         top_node = self._get_best_node(doc)
         if top_node is not None:
             base_score = self._score(top_node)
-            for sib in self._siblings(top_node, base_score):
-                top_node.addprevious(sib)
             cleaned = self._clean(top_node)
-            text = " ".join(p.text_content().strip() for p in cleaned.xpath(".//p") if p.text_content())
+            # descendant-or-self: the winning node can itself be a <p>
+            body = [p.text_content().strip() for p in cleaned.xpath("descendant-or-self::p")]
+            lead = [p.text_content().strip() for p in self._siblings(top_node, base_score)]
+            text = " ".join(t for t in lead + body if t)
             if len(text) >= self.config["min_text_length"]:
                 return text, top_node
         return self._fallback_text(doc), None
@@ -501,39 +506,38 @@ class HeuristicStrategy(ExtractionStrategy):
         return best
 
     def _siblings(self, top, base_score):
+        """Preceding sibling paragraphs worth keeping, in document order.
+        Read-only: never moves nodes in the shared tree."""
+        threshold = base_score * self.SCORE_WEIGHTS["sibling_accept_ratio"]
         out = []
-        for sib in list(top.itersiblings(preceding=True)):
+        for sib in reversed(list(top.itersiblings(preceding=True))):
+            if not isinstance(sib.tag, str):      # skip comments / PIs
+                continue
             if sib.tag == "p":
-                if self._score(sib) > base_score * self.SCORE_WEIGHTS["sibling_accept_ratio"]:
+                if self._score(sib) > threshold:
                     out.append(sib)
             elif sib.tag in ("div", "section"):
-                for p in sib.xpath(".//p"):
-                    if self._score(p) > base_score * self.SCORE_WEIGHTS["sibling_accept_ratio"]:
-                        out.append(p)
+                out.extend(p for p in sib.xpath(".//p") if self._score(p) > threshold)
         return out
 
+    _STRIP_TAGS = ("script", "style", "nav", "aside", "footer", "header",
+                   "form", "button", "noscript", "meta", "link")
+
     def _clean(self, node):
-        from copy import deepcopy
         clean = deepcopy(node)
-        for sel in ["script", "style", "nav", "aside", "footer", "header", "form", "button", "noscript", "meta", "link"]:
-            for el in clean.xpath(f".//{sel}"):
-                parent = el.getparent()
-                if parent is not None:
-                    parent.remove(el)
+        for el in clean.xpath(".//" + "|.//".join(self._STRIP_TAGS)):
+            el.drop_tree()          # keeps the element's tail text, unlike parent.remove()
         return clean
 
     def _fallback_text(self, doc) -> str:
-        for sel in ["nav", "footer", "header", "aside", "script", "style", "noscript"]:
-            for el in doc.xpath(f".//{sel}"):
-                parent = el.getparent()
-                if parent is not None:
-                    parent.remove(el)
-        texts = [n.text_content().strip() for n in doc.xpath(".//p | .//div")]
+        work = deepcopy(doc)        # never mutate the shared tree
+        for el in work.xpath(".//nav|.//footer|.//header|.//aside|.//script|.//style|.//noscript"):
+            el.drop_tree()
+        texts = [n.text_content().strip() for n in work.xpath(".//p | .//div")]
         texts = [t for t in texts if len(t) > 120]
         if len(texts) >= self.config["fallback_min_paragraphs"]:
             return "\n\n".join(texts)
-        all_text = doc.text_content()
-        lines = (line.strip() for line in all_text.splitlines())
+        lines = (line.strip() for line in work.text_content().splitlines())
         chunks = (phrase.strip() for line in lines for phrase in line.split("  "))
         return "\n".join(c for c in chunks if c)
 
