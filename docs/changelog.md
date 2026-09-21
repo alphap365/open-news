@@ -119,7 +119,132 @@ export.to_json()
   received the story, which may be days or weeks after the original
   publish time. Treat these dates as approximate. A `meta.date_source` /
   `meta.date_is_modified` marker is planned for a future release.
-  
+
+# [1.0.4a1] - 2026-09-21
+# v1.0.4a1 — Pre-release
+
+> **This is a pre-release.** It is intended for smoke-testing the v1.0.4
+> release pipeline end-to-end. Do not depend on it in production. The
+> stable release will be tagged `v1.0.4`.
+
+v1.0.4 is a **processing and output** release on top of the v1.0.3
+acquisition baseline. Acquisition, extraction, and URL resolution are
+unchanged. The new work is concentrated in story clustering, topic
+filtering, relevance ranking, structured export, and a keyboard-driven
+TUI refresh.
+
+## What's in this pre-release
+
+### 🧩 Story clustering — `cluster_articles()`
+
+Group related articles by title similarity. Union-find over
+`SequenceMatcher` with cheap upper-bound prefilters. Composes the
+existing pipeline: URL dedupe → topic filter → optional relevance rank
+→ cluster. Emits per-cluster `id`, `label`, `size`, `score`, `sources`,
+`first_seen`, `last_seen`, `representative`, `articles`.
+
+Unlike `dedupe_articles()`, clustering preserves every article — `size`
+is meaningful as an outlet count.
+
+### 🏷️ Topic filtering — `filter_articles(topic=...)`
+
+New `topic` and `topic_mode` parameters. Topic matching scans a broader
+field set than `query`: title, description, text, category, and
+keywords. Accepts comma-separated strings or lists. `query` and `topic`
+are ANDed when both are supplied — existing call sites are unchanged.
+
+### 📊 Relevance ranking — `rank_articles()`
+
+Three backends: BM25 (via `bm25s`), TF-IDF (pure Python), and basic
+term frequency. `method="auto"` tries BM25 and transparently falls back
+to TF-IDF when `bm25s` isn't installed. Writes `_rank_score` onto each
+article, mirroring `ranker.sort_articles()`.
+
+### 📤 Structured export — `open_news.export`
+
+`to_markdown()` and `to_json()`. Both accept a `path` (parent
+directories created) and **always return the serialized string**. Input
+shaped like clusters (dicts with `articles` + `size`) is auto-detected
+and rendered per-cluster.
+
+JSON output is schema-versioned:
+`{schema_version, generated_at, count, kind, articles|clusters}`.
+Internal keys (`_tier`, `_field_sources`, `_full_content*`) are
+stripped by default.
+
+### 🖥️ CLI additions
+
+- New `cluster` subcommand: sources from `--query` or `--category`,
+  then clusters.
+- New `export` subcommand: re-serializes a saved JSON file to Markdown
+  or clean JSON without re-fetching.
+- `--topic` / `--topic-mode` / `--rank-query` / `--rank-method` on
+  `fetch`, `search`, and `search-site`.
+- `--export-md` / `--export-json` / `--export-title` /
+  `--export-all-members` on every article-producing command.
+
+### 📺 TUI overhaul
+
+Keyboard-driven menus: ↑ / ↓ navigate, Enter / → confirm,
+← / Esc / q back. Every item still has a number/letter shortcut.
+New main-menu items 11 (Cluster) and 12 (Export). Settings extended
+with topic filter, rank method, cluster threshold, and persistent rank
+query. Line-based fallback when stdin isn't a TTY.
+
+### 📦 Packaging
+
+- New `nlp` extra: `sumy>=0.10.0`, `bm25s>=0.3.10`.
+- Removed invalid `"lxml.*"` from top-level `dependencies` —
+  `uv` and `pip` now accept the `pyproject.toml`.
+- `[dependency-groups]` and `[project.optional-dependencies]` both
+  carry the updated `nlp` group.
+- Overloaded `fetch()` / `search()` signatures so static analyzers
+  narrow to `List[Dict]` when `refresh_interval` is omitted.
+
+### 🐛 Fixed
+
+- TUI no longer prompts for a rank query on every fetch/search; the
+  prompt moved to the cluster flow and Settings.
+- `_replace_articles()` clears stale clusters so exports can't
+  reference an outdated article set.
+- Googlenews engine: `"any"` mode emits an explicit OR group; `end_date`
+  is treated as inclusive.
+- Bing engine: day/week `qft` intervals corrected.
+
+## ⚠️ Known issues
+
+- **`location=` is a query hint, not a filter.** An India query can
+  still return syndicated stories from non-Indian domains (Yahoo
+  Entertainment, MSN editions). Use `whitelist=[...]` to enforce.
+  See `docs/parameters-reference.md`.
+- **Liveblog, aggregator, and quote-page `publish_date` is
+  unreliable.** Liveblogs (Times Now, News9Live) and quote pages
+  (Zeebiz, Moneycontrol) refresh `dateModified` on request; aggregators
+  (MSN, Yahoo News) carry the date the syndicator received the story.
+  Treat these dates as approximate.
+- **Extracted `description` is passed through verbatim.** Feed
+  boilerplate ("Read today's breaking news at ...") renders as-is.
+
+Full details in `docs/changelog.md`.
+
+## Compatibility
+
+Public API from v1.0 and v1.0.3 is preserved. New in v1.0.4:
+
+```python
+from open_news import (
+    cluster_articles,
+    rank_articles,
+    filter_articles,
+    export,          # export.to_markdown / export.to_json
+    to_markdown,     # also available at the package root
+    to_json,
+)
+```
+Please report issues at
+https://github.com/alphap365/open-news/issues with the tag
+v1.0.4a1 in the title.
+
 # [1.0.3] — 2026-09-20
 
 > v1.0.3 freezes the architecture developed through the `1.0.3a1`–`1.0.3b2` pre-release cycle.
@@ -372,7 +497,9 @@ The old registry-backed interfaces were retired:
 
 ## 🔗 Release comparison links
 
-[Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.3...HEAD
+[Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.4...HEAD
+[1.0.4]: https://github.com/alphap365/open-news/releases/tag/1.0.4
+[1.0.4a1]: https://github.com/alphap365/open-news/releases/tag/1.0.4a1
 [1.0.3]: https://github.com/alphap365/open-news/releases/tag/1.0.3
 [1.0.3b2]: https://github.com/alphap365/open-news/releases/tag/1.0.3b2
 [1.0.3b1]: https://github.com/alphap365/open-news/releases/tag/1.0.3b1
