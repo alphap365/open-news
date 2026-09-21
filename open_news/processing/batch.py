@@ -1,6 +1,6 @@
 import logging
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional
+from typing import List, Dict, Optional, cast
 
 from ..fetch.article import get_article
 from .summarizer import summarize_text
@@ -122,9 +122,9 @@ def search_and_summarize(
         return []
 
     if dedupe:
-        articles = dedupe_articles(articles, fuzzy=True)
+        articles = cast(List[Dict], search(query, max_results=limit))
 
-    urls = [art["url"] for art in articles]
+    urls = [cast(Dict, art)["url"] for art in articles]
     batch_results = batch_summarize(
         urls,
         sentence_count=sentence_count,
@@ -135,7 +135,9 @@ def search_and_summarize(
         dedupe=False,  # already deduped above with title-aware fuzzy match
     )
 
-    url_to_search = {art["url"]: art for art in articles}
+    url_to_search = {
+        cast(Dict, art)["url"]: cast(Dict, art) for art in articles
+    }
     merged = []
     for br in batch_results:
         search_data = url_to_search.get(br["url"], {})
