@@ -20,12 +20,14 @@ def discover_rss_feed(website_url: str, timeout: int = 10) -> Optional[str]:
 
         for link in soup.find_all("link", type=["application/rss+xml", "application/atom+xml"]):
             href = link.get("href")
-            if href:
+            if isinstance(href, str) and href:
                 return urljoin(website_url, href)
 
         feed_keywords = ("/feed", "/rss", "/atom", ".rss", ".atom", "feed.xml", "rss.xml")
         for a in soup.find_all("a", href=True):
             href = a["href"]
+            if not isinstance(href, str):
+                continue
             path = urlparse(href).path.lower()
             if any(kw in path for kw in feed_keywords):
                 return urljoin(website_url, href)
