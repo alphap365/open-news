@@ -1,15 +1,38 @@
 import re
-from typing import Dict, List, Optional
+from functools import lru_cache
+from typing import Dict, List, Optional, Union
 
-# Matches word-like tokens (letters, digits, underscore) across scripts;
-# \b already works reasonably well for Latin-script terms which covers
-# the vast majority of real-world queries.
-_WORD_CHARS = re.compile(r"\w+", re.UNICODE)
+from ..utils.textutil import WORD, nfc
+
+# Whitespace-separated tokens, or "quoted phrases" kept whole.
+_TOKEN_RE = re.compile(r'"([^"]+)"|(\S+)')
+_HYPHENS = "-\u2010\u2011\u2012\u2013\u2014\u2015"
+_EDGE_PUNCT = ".,;:!?()[]{}\"'"
 
 
-def _boundary_pattern(term: str) -> re.Pattern:
-    escaped = re.escape(term.strip())
-    return re.compile(rf"\b{escaped}\b", re.IGNORECASE | re.UNICODE)
+def _query_terms(query: str) -> List[str]:
+    terms = []
+    for quoted, bare in _TOKEN_RE.findall(nfc(query)):
+        term = (quoted or bare.strip(_EDGE_PUNCT)).strip()
+        if term:
+            terms.append(term)
+    return terms
+
+
+@lru_cache(maxsize=1024)
+def _boundary_pattern(term: str) -> "re.Pattern":
+    """Match `term` as a whole token. Lookarounds instead of ``\\b`` so terms
+    that start/end with symbols ("C++", "$AAPL") and Indic words with
+    combining marks behave. "covid-19" also matches "covid 19"."""
+    def esc(t: str) -> str:
+        return re.escape(t).replace(r"\ ", r"\s+")
+
+    variants = {esc(term)}
+    spaced = re.sub(f"[{_HYPHENS}]+", " ", term)
+    if spaced != term:
+        variants.add(esc(spaced))
+    alt = "|".join(sorted(variants, key=len, reverse=True))
+    return re.compile(rf"(?<!{WORD})(?:{alt})(?!{WORD})", re.IGNORECASE)
 
 
 def _field_text(article: Dict, search_in: List[str]) -> str:
@@ -20,44 +43,38 @@ def _field_text(article: Dict, search_in: List[str]) -> str:
         parts.append(article.get("description", ""))
     if "body" in search_in:
         parts.append(article.get("text", ""))
-    return " ".join(p for p in parts if p)
+    return nfc(" ".join(p for p in parts if p))
 
 
 def matches_query(article: Dict, query: str, query_mode: str, search_in: List[str]) -> bool:
-    """
-    Check whether an article's searchable text satisfies the query under
-    the given mode. Used as a secondary confirmation filter after the
-    engine's own search — engines can be loose about matching, this is
-    the precise word-boundary check.
-    """
+    """Precise word-boundary confirmation after the engine's own (looser) search."""
     text = _field_text(article, search_in)
     if not text:
         return True  # nothing to check against; don't punish missing fields
 
     if query_mode == "exact_phrase":
-        pattern = _boundary_pattern(query)
-        return bool(pattern.search(text))
+        phrase = nfc(query).strip().strip('"').strip()
+        return bool(_boundary_pattern(phrase).search(text)) if phrase else True
 
-    terms = [t for t in _WORD_CHARS.findall(query)]
+    terms = _query_terms(query)
     if not terms:
         return True
-
-    if query_mode == "all":
-        return all(_boundary_pattern(t).search(text) for t in terms)
-
-    # "any" (default)
-    return any(_boundary_pattern(t).search(text) for t in terms)
+    hits = (_boundary_pattern(t).search(text) for t in terms)
+    return all(hits) if query_mode == "all" else any(hits)
 
 
 def excludes_terms(article: Dict, exclude_terms: Optional[List[str]], search_in: List[str]) -> bool:
-    """True if the article does NOT contain any of the excluded terms
-    (i.e. it passes the exclusion filter)."""
+    """True if the article does NOT contain any excluded term."""
     if not exclude_terms:
         return True
     text = _field_text(article, search_in)
     if not text:
         return True
-    return not any(_boundary_pattern(t).search(text) for t in exclude_terms)
+    for t in exclude_terms:
+        t = nfc(t).strip().strip('"').strip()
+        if t and _boundary_pattern(t).search(text):
+            return False
+    return True
 
 
 def filter_articles(
@@ -66,12 +83,14 @@ def filter_articles(
     query_mode: str = "any",
     exclude_terms: Optional[List[str]] = None,
     search_in: Optional[List[str]] = None,
+    topic: Union[str, List[str], None] = None,
+    topic_mode: str = "any",
 ) -> List[Dict]:
-    """
-    Apply query_mode + exclude_terms filtering. `query` is optional because
-    fetch() (category/location based) has no query to re-check — only
-    exclude_terms applies there.
-    """
+    """query + exclude_terms + topic filtering.
+
+    `query` and `topic` are independent (ANDed). `topic` defaults to
+    'any' semantics and matches category/keywords in addition to
+    title/description/text."""
     search_in = search_in or ["title", "description"]
     kept = []
     for art in articles:
@@ -79,5 +98,49 @@ def filter_articles(
             continue
         if not excludes_terms(art, exclude_terms, search_in):
             continue
+        if topic and not matches_topic(art, topic, topic_mode):
+            continue
         kept.append(art)
     return kept
+
+def _topic_terms(topic: Union[str, List[str], None]) -> List[str]:
+    if not topic:
+        return []
+    if isinstance(topic, str):
+        if "," in topic:
+            return [t.strip() for t in topic.split(",") if t.strip()]
+        return [topic.strip()]
+    return [str(t).strip() for t in topic if t and str(t).strip()]
+
+
+def _topic_text(article: Dict) -> str:
+    parts = [
+        article.get("title", ""),
+        article.get("description", ""),
+        article.get("text", ""),
+        article.get("category", ""),
+    ]
+    kw = article.get("keywords")
+    if isinstance(kw, list):
+        parts.extend(str(k) for k in kw if k)
+    elif isinstance(kw, str) and kw:
+        parts.append(kw)
+    return nfc(" ".join(p for p in parts if p))
+
+
+def matches_topic(article: Dict, topic: Union[str, List[str], None],
+                  topic_mode: str = "any") -> bool:
+    """Topic filter — broader field coverage than matches_query()."""
+    terms = _topic_terms(topic)
+    if not terms:
+        return True
+    text = _topic_text(article)
+    if not text:
+        return True  # missing fields never penalized
+
+    if topic_mode == "exact_phrase":
+        phrase = nfc(" ".join(terms)).strip()
+        return bool(_boundary_pattern(phrase).search(text)) if phrase else True
+
+    hits = (_boundary_pattern(t).search(text) for t in terms)
+    return all(hits) if topic_mode == "all" else any(hits)
