@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="docs/assets/banner.svg" alt="Repository Banner" width="100%">
+</p>
+
 <div align="center">
 
 # 📰 Open News
@@ -6,12 +10,12 @@
 
 [![License](https://img.shields.io/github/license/alphap365/open-news?style=for-the-badge)](LICENSE)
 [![Python](https://img.shields.io/badge/Python-3.10%2B-blue?style=for-the-badge&logo=python)](https://www.python.org/)
-[![Status](https://img.shields.io/badge/Status-v1.0.3%20Stable-brightgreen?style=for-the-badge)](https://github.com/alphap365/open-news)
 [![PyPI](https://img.shields.io/pypi/v/open-news-api?style=for-the-badge)](https://pypi.org/project/open-news-api/)
+[![Tests](https://img.shields.io/github/actions/workflow/status/alphap365/open-news/ci.yml?branch=main&label=tests&logo=github&style=for-the-badge)](https://github.com/alphap365/open-news/actions/workflows/ci.yml)
 
 **Fetch. Search. Discover. Extract. Process. Summarize.**
 
-Open News provides one small, scriptable interface over live news discovery, article extraction, website discovery, filtering, deduplication, ranking, and extractive summarization — with CLI and TUI interfaces included.
+Open News provides one small, scriptable interface over live news discovery, article extraction, website discovery, filtering, deduplication, topic filtering, relevance ranking, story clustering, and extractive summarization — with Markdown/JSON export and CLI + TUI interfaces included.
 
 [🚀 Quick Start](#-quick-start) · [🏗️ Architecture](#️-architecture) · [📦 Installation](#-installation) · [🐍 Python API](#-python-api) · [📚 Documentation](#-documentation) · [🤝 Contributing](#-contributing)
 
@@ -49,47 +53,38 @@ Open News is intentionally **not a full news platform**. It is a reusable librar
 - **Resilient** — acquisition can fall back across multiple sources.
 - **Composable** — public functions can be embedded into other projects.
 - **Local-first processing** — filtering, deduplication, ranking, and summarization do not require an LLM or hosted AI service.
+- **Cluster-aware** — group related stories and rank by outlet coverage, not just by date.
 - **Scriptable** — JSON output makes the CLI suitable for pipelines.
 - **Portable** — desktop Linux, macOS, WSL/Git Bash, and Termux are supported by the installation workflow.
 - **Stable core** — v1.0.3 freezes the architecture developed and validated during the 1.0.3 pre-release cycle.
 
 ---
 
-## 🧭 v1.0.3 at a glance
+## 🧭 v1.0.4 at a glance
 
-> **v1.0.3 is the stabilized result of the Issue #1 architecture effort.**
+> **v1.0.4 builds on the v1.0.3 acquisition baseline.**
 >
-> The `v1.0.3a1` → `a6` → `b1` → `b2` sequence was a development and validation cycle for a substantial acquisition/resilience change. Those pre-releases are historical milestones; **the meaningful release comparison is v1.0.2 → v1.0.3**.
+> **v1.0.4 is a processing/output release**: clustering, topic filtering, BM25/TF-IDF relevance ranking, and clean Markdown/JSON export — plus a keyboard-driven TUI refresh.
 
-### The central change
-
-`fetch()` is no longer dependent on a single acquisition route. It now uses a five-tier fallback chain:
+### What v1.0.4 adds on top
 
 ```text
-1. DDGS
-   │
-   ├── results ───────────────► return
-   │
-   ▼ empty / unavailable
-2. Google News
-   │
-   ├── results ───────────────► return
-   │
-   ▼ empty / failed
-3. Bing News
-   │
-   ├── results ───────────────► return
-   │
-   ▼ empty / failed
-4. Yahoo News
-   │
-   ├── results ───────────────► return
-   │
-   ▼ empty / failed
-5. DuckDuckGo HTML
-   │
-   └─────────────────────────► final attempt
+pipeline results
+       │
+       ▼
+filter_articles(topic=…)     narrow by topic across title/description/text/category/keywords
+       │
+       ▼
+rank_articles(query=…)       BM25 if bm25s is installed, else TF-IDF
+       │
+       ▼
+cluster_articles()           group by title similarity; keep every article
+       │
+       ▼
+export.to_markdown()/to_json()   clean, schema-versioned output
 ```
+
+All four are also available as CLI flags (`--topic`, `--rank-query`, `cluster`, `export`) and inside the TUI.
 
 This is complemented by stronger URL resolution, aggregator-aware source attribution, hub/listing detection, deterministic test infrastructure, Android/Termux support, and a hardened installer.
 
@@ -111,6 +106,9 @@ This is complemented by stronger URL resolution, aggregator-aware source attribu
 | 📺 **TUI** | Numbered terminal interface for interactive use |
 | 📱 **Termux** | Dedicated installation flow and acquisition safeguards |
 | 🧪 **Testing** | Unit, contract, network, native-dependency, and local-server test infrastructure |
+| 🧩 **Clustering** | Group related stories by title similarity; rank by outlet coverage |
+| 📊 **Ranking** | BM25 / TF-IDF relevance re-ranking with an optional `bm25s` backend |
+| 📤 **Export** | Clean Markdown and schema-versioned JSON, written to a path or returned as a string |
 
 ---
 
@@ -136,7 +134,7 @@ pip install open-news-api
 Pin v1.0.3 explicitly when you want the stable release:
 
 ```bash
-pip install open-news-api==1.0.3
+pip install open-news-api==1.0.4
 ```
 
 ### ⚡ uv
@@ -177,7 +175,13 @@ playwright install chromium
 
 JavaScript rendering is optional. Plain HTTP extraction remains the default.
 
----
+### 🧠 Optional NLP ranking
+
+```bash
+pip install "open-news-api[nlp]"
+```
+
+Enables BM25 ranking in rank_articles() (via bm25s) and higher-quality LSA summarization (via sumy). Without it, ranking falls back to pure-Python TF-IDF.
 
 ## 🚀 Quick Start
 
@@ -257,6 +261,46 @@ for result in results:
     print(result["summary"])
 ```
 
+### 7. Cluster related stories
+
+```python
+from open_news import fetch, cluster_articles
+
+articles = fetch(category="tech", max_results=40)
+
+clusters = cluster_articles(
+    articles,
+    threshold=0.72,
+    topic="artificial intelligence",
+    rank_query="openai gemini",
+    drop_singletons=True,
+)
+
+for c in clusters:
+    print(f"{c['size']} outlets: {c['label']}")
+```
+
+### 8. Rank by relevance
+
+```python
+from open_news import search, rank_articles
+
+articles = search("eu ai act", max_results=30)
+ranked = rank_articles(articles, query="EU AI Act", method="auto")
+
+print(ranked[0]["title"], ranked[0]["_rank_score"])
+```
+
+### 9. Export
+
+```python
+from open_news import export
+
+export.to_markdown(clusters, path="out/clusters.md", include_all_members=True)
+export.to_json(clusters, path="out/clusters.json")
+```
+Both functions return the serialized string as well, so you can pipe or stream instead of writing to disk.
+
 ---
 
 ## 🏗️ Architecture
@@ -313,6 +357,11 @@ open-news extract https://example.com/article
 open-news discover https://example.com --limit 10
 open-news search-site "climate policy" reuters.com
 open-news summarize --query "renewable energy" --limit 5
+open-news search "eu ai act" --topic "policy,regulation" --rank-query "EU AI Act" \
+    --export-md out/ai-act.md --export-json out/ai-act.json
+open-news cluster --query "openai" --limit 40 --drop-singletons \
+    --export-md out/clusters.md --export-all-members
+open-news export out/ai-act.json --md out/ai-act.md
 ```
 
 For scripting:
