@@ -6,41 +6,103 @@ The release history follows the spirit of [Keep a Changelog](https://keepachange
 
 ---
 
-## 🧭 How to read the v1.0.3 history
+# [1.0.4] — 2026-09-21
 
-The **1.0.3 pre-release sequence was one architectural development cycle**, not a set of unrelated stable releases.
+> v1.0.4 is a feature release on top of the v1.0.3 stable baseline. Acquisition, extraction, and URL handling are unchanged; the new work is concentrated in **processing** (clustering, topic filtering, relevance ranking) and **output** (Markdown/JSON export), plus a keyboard-driven TUI refresh.
 
-```text
-Issue #1
-   │
-   ▼
-Large system-change attempt
-   │
-   ├── v1.0.3a1
-   ├── v1.0.3a2
-   ├── v1.0.3a3
-   ├── v1.0.3a4
-   ├── v1.0.3a5
-   ├── v1.0.3a6
-   │
-   ├── v1.0.3b1
-   └── v1.0.3b2
-            │
-            ▼
-       stabilization
-            │
-            ▼
-       v1.0.3 stable
+## 🎯 Release focus
+
+v1.0.3 froze the acquisition architecture. v1.0.4 makes the *results* of that acquisition more useful out of the box — grouping related stories, filtering by topic rather than just keyword, ranking by relevance with an optional BM25 backend, and exporting clean Markdown/JSON without post-processing in a shell pipeline.
+
+## ✨ Added
+
+### 🧩 Story clustering — `cluster_articles()`
+
+- New `open_news.processing.cluster` module.
+- Groups articles by normalized title similarity using a union-find pass with `SequenceMatcher` fuzzy prefiltering.
+- Composes the existing pipeline: URL dedupe → topic filter → optional relevance rank → cluster.
+- Emits per-cluster metadata: `id`, `label`, `size`, `score`, `sources`, `first_seen`, `last_seen`, `representative`, `articles`.
+- Sortable by `score` (default), `size`, or `date`; supports `drop_singletons`.
+
+### 🏷️ Topic filtering — `filter_articles(topic=...)`
+
+- `open_news.processing.token_filter.filter_articles()` now accepts `topic` and `topic_mode`.
+- Topic matching scans a broader field set than `query`: title, description, text, category, and `keywords`.
+- `topic_mode` accepts `any` (default), `all`, or `exact_phrase`; accepts comma-separated strings or lists.
+- Query and topic are ANDed when both are supplied — existing `query=` call sites are unchanged.
+
+### 📊 Relevance ranking — `rank_articles()`
+
+- New `open_news.processing.rank` module.
+- Backends: **BM25** (via `bm25s`), **TF-IDF** (pure-Python fallback), **basic** (term-frequency).
+- `method="auto"` (default) tries BM25 and transparently falls back to TF-IDF when `bm25s` isn't installed.
+- Adds a numeric `_rank_score` to each article and returns the list sorted by it.
+- Supports `search_in` field selection and `top_k` truncation.
+
+### 📤 Structured export — `open_news.export`
+
+- New `open_news.export` package with `to_markdown()` and `to_json()`.
+- Both accept a `path` (parent dirs created automatically) and **always return the serialized string**.
+- Auto-detects cluster-shaped input (dicts containing `articles` + `size`) and renders per-cluster.
+- Markdown output: TOC, blockquote summary, source/published/authors line, read-original link, optional full-member listing.
+- JSON output: schema-versioned envelope (`schema_version`, `generated_at`, `count`, `kind`) with internal keys (`_tier`, `_field_sources`, `_full_content*`) stripped by default. Set `envelope=False` for a bare list.
+
+### 🖥️ CLI additions
+
+- New `cluster` subcommand: sources articles from `--query` or `--category`, then clusters.
+- New `export` subcommand: re-exports a saved JSON file to Markdown and/or clean JSON without re-fetching.
+- `fetch`, `search`, and `search-site` gain `--topic`, `--topic-mode`, `--rank-query`, `--rank-method`.
+- All article-producing commands gain `--export-md`, `--export-json`, `--export-title`, `--export-all-members`.
+
+### 📺 TUI overhaul
+
+- Keyboard-driven menus: **↑ / ↓** navigate, **Enter / →** confirm, **← / Esc / q** back.
+- Every menu item still has a number/letter shortcut you can type directly.
+- Two new main-menu items: **11** Cluster loaded articles, **12** Export loaded articles / clusters.
+- Settings menu extended with topic filter (9), rank method (10), and cluster threshold (11).
+- Line-based fallback when stdin isn't a TTY — every existing TUI test still passes.
+- Unicode box drawing with ASCII fallback when the terminal encoding isn't UTF-8.
+
+### 🧪 Test infrastructure
+
+- New test files: `test_cluster.py`, `test_rank.py`, `test_export.py`.
+- Extended `test_cli.py`, `test_tui.py`, `test_token_filter.py` for the new surfaces.
+- All new tests are offline — `bm25s` absence is simulated via monkeypatch, so the suite runs without the `nlp` extra.
+
+### 📦 Packaging
+
+- New `nlp` optional extra containing `sumy>=0.10.0` and `bm25s>=0.2.0`.
+- Removed invalid `"lxml.*"` entry from the top-level `dependencies` list — the pinned `"lxml"` already covers it, and the wildcard string made `uv`/`pip` reject the `pyproject.toml`.
+- `[dependency-groups]` and `[project.optional-dependencies]` both carry the updated `nlp` group.
+- Overloaded `fetch()` / `search()` signatures in `api.py` so Pylance narrows the return type to `List[Dict]` when `refresh_interval` is omitted.
+
+## 🔄 Changed
+
+- `tui.py` is a full rewrite. The public `OpenNewsTUI` / `run_tui()` API is preserved; internal method names and prompt sequences changed where the corresponding prompt became a menu (see TUI guide).
+- `open_news/__init__.py` re-exports `cluster_articles`, `rank_articles`, `filter_articles`, and `export`.
+- `open_news/api.py` promotes the three processing helpers to the public surface.
+- `pyproject.toml` classifiers and keyword set unchanged; `requires-python` unchanged.
+
+## 🐛 Fixed / hardened
+
+- `pyproject.toml` is now accepted by `uv lock`, `uv sync`, and `uv pip install .` after removing the invalid `"lxml.*"` requirement.
+- `fetch()` and `search()` no longer produce Pylance `reportArgumentType` errors at CLI call sites where the return type was a `Union` including `Iterator`.
+- TUI `_replace_articles()` clears stale clusters whenever the underlying article set changes, so `[12] Export` never writes a cluster list that doesn't correspond to the currently loaded articles.
+
+## ⚠️ Compatibility notes
+
+The public API introduced in v1.0 and stabilized in v1.0.3 remains the basis for v1.0.4. Existing v1.0.3 call sites continue to work unchanged. The new api's are as follows:
+
+```python
+cluster_articles()
+rank_articles()
+filter_articles()
+export.to_markdown()
+export.to_json()
 ```
 
-The pre-release versions were used to explore, implement, test, and harden the Issue #1 changes. **The actual release-to-release changelog is therefore v1.0.2 → v1.0.3.**
+# [1.0.3] — 2026-09-20
 
----
-
-# [1.0.3] — Stable
-
-> **Status: Stable**
->
 > v1.0.3 freezes the architecture developed through the `1.0.3a1`–`1.0.3b2` pre-release cycle.
 
 ## 🎯 Release focus
@@ -153,6 +215,30 @@ dedupe_articles()
 The internal feed and extraction engines are implementation details and may continue to evolve.
 
 ---
+
+# [1.0.3b2] - 2026-09-20
+Testing some Featurees and resolving bugs.
+
+# [1.0.3b1] - 2026-09-19
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a6] - 2026-09-19
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a5] - 2026-09-19
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a4] - 2026-09-19
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a3] - 2026-09-19
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a2] - 2026-09-18
+Testing some Featurees and resolving bugs.
+
+# [1.0.3a1] - 2026-09-18
+Testing some Featurees and resolving bugs.
 
 # [1.0.2] — 2026-09-13
 
@@ -268,9 +354,17 @@ The old registry-backed interfaces were retired:
 ## 🔗 Release comparison links
 
 [Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.3...HEAD
-[1.0.3]: https://github.com/alphap365/open-news/compare/v1.0.2...v1.0.3
-[1.0.2]: https://github.com/alphap365/open-news/compare/v1.0.1...v1.0.2
-[1.0.1]: https://github.com/alphap365/open-news/compare/v1.0.0...v1.0.1
+[1.0.3]: https://github.com/alphap365/open-news/releases/tag/1.0.3
+[1.0.3b2]: https://github.com/alphap365/open-news/releases/tag/1.0.3b2
+[1.0.3b1]: https://github.com/alphap365/open-news/releases/tag/1.0.3b1
+[1.0.3a6]: https://github.com/alphap365/open-news/releases/tag/1.0.3a6
+[1.0.3a5]: https://github.com/alphap365/open-news/releases/tag/1.0.3a5
+[1.0.3a4]: https://github.com/alphap365/open-news/releases/tag/1.0.3a4
+[1.0.3a3]: https://github.com/alphap365/open-news/releases/tag/1.0.3a3
+[1.0.3a2]: https://github.com/alphap365/open-news/releases/tag/1.0.3a2
+[1.0.3a1]: https://github.com/alphap365/open-news/releases/tag/1.0.3a1
+[1.0.2]: https://github.com/alphap365/open-news/releases/tag/v1.0.2
+[1.0.1]: https://github.com/alphap365/open-news/releases/tag/v1.0.1
 [1.0.0]: https://github.com/alphap365/open-news/releases/tag/v1.0.0
 [0.2.0]: https://github.com/alphap365/open-news/releases/tag/v0.2.0
 [0.1.2]: https://github.com/alphap365/open-news/releases/tag/v0.1.2
