@@ -5,45 +5,38 @@ from difflib import SequenceMatcher
 from typing import Dict, List
 
 from dateutil import parser as date_parser
-
+from ..utils.dates import parse_datetime
+from ..utils.textutil import normalize_title as _normalize_title
 logger = logging.getLogger(__name__)
 
 FUZZY_THRESHOLD = 0.75
 MIN_CLUSTER_SIZE = 2  # below this, popularity score falls back to 0 (no boost)
 
 
+_EPOCH = datetime.min.replace(tzinfo=timezone.utc)
+
+
 def _parse_date(article: Dict) -> datetime:
     raw = article.get("published") or article.get("publish_date")
-    if not raw:
-        return datetime.min.replace(tzinfo=timezone.utc)
-    try:
-        parsed = date_parser.parse(raw)
-        if parsed.tzinfo is None:
-            return parsed.replace(tzinfo=timezone.utc)
-        return parsed.astimezone(timezone.utc)
-    except Exception:
-        return datetime.min.replace(tzinfo=timezone.utc)
-
-
-def _normalize_title(title: str) -> str:
-    title = (title or "").lower().strip()
-    title = re.sub(r"[^\w\s]", "", title)
-    return re.sub(r"\s+", " ", title)
+    return parse_datetime(raw) or _EPOCH
 
 
 def _cluster_sizes(articles: List[Dict]) -> List[int]:
-    """For each article, how many other articles (including itself) share
-    a near-identical title. O(n^2) — fine at typical result-page sizes
-    (tens of articles), not meant for huge batches."""
+    """Per article: how many near-identical titles it stands for. Starts from
+    the `_cluster_size` dedupe recorded, then adds looser (0.75) matches among
+    what survived. O(n^2) with cheap prefilters; meant for result-page sizes."""
     titles = [_normalize_title(a.get("title", "")) for a in articles]
-    sizes = [1] * len(articles)
+    sizes = [max(1, int(a.get("_cluster_size", 1) or 1)) for a in articles]
     for i in range(len(articles)):
         if not titles[i]:
             continue
         for j in range(i + 1, len(articles)):
             if not titles[j]:
                 continue
-            if SequenceMatcher(None, titles[i], titles[j]).ratio() >= FUZZY_THRESHOLD:
+            sm = SequenceMatcher(None, titles[i], titles[j])
+            if sm.real_quick_ratio() < FUZZY_THRESHOLD or sm.quick_ratio() < FUZZY_THRESHOLD:
+                continue
+            if sm.ratio() >= FUZZY_THRESHOLD:
                 sizes[i] += 1
                 sizes[j] += 1
     return sizes
