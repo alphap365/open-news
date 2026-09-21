@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.3"
+version = "1.0.4"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
@@ -57,10 +57,34 @@ dev = [
     "respx>=0.20",
     "tox>=4.0",
     "pytest-mock>=3.0",
+    "mypy",
+    "cibuildwheel",
+]
+js = [
+    "playwright>=1.40.0"
+]
+
+nlp = [
+    "sumy>=0.10.0",
+    "bm25s>=0.3.10",
+]
+
+all = [
+    {include-group = "dev"},
+    {include-group = "js"},
+    {include-group = "nlp"}
 ]
 
 [project.optional-dependencies]
-js = ["playwright>=1.40.0"]
+js = [
+    "playwright>=1.40.0"
+]
+
+nlp = [
+    "sumy>=0.10.0",
+    "bm25s>=0.3.10",
+]
+
 dev = [
     "pytest>=7.0",
     "pytest-cov>=4.0",
@@ -68,4 +92,42 @@ dev = [
     "respx>=0.20",
     "tox>=4.0",
     "pytest-mock>=3.0",
+    "mypy",
+    "cibuildwheel",
 ]
+
+[tool.mypy]
+python_version = "3.10"
+warn_unused_ignores = true
+exclude = ["tests"]
+disable_error_code = [
+    "arg-type",
+    "assignment",
+    "attr-defined",
+    "index",
+    "misc",
+    "name-defined",
+    "no-redef",
+    "union-attr",
+    "unused-ignore",
+    "var-annotated",
+    "annotation-unchecked",
+    "import-untyped",
+    "import-not-found",
+]
+
+[[tool.mypy.overrides]]
+module = [
+    "dateutil.*",
+    "feedparser",
+    "langdetect",
+    "googlenewsdecoder",
+    "playwright",
+    "playwright.*",
+    "duckduckgo_search",
+    "sumy.*",
+    "colorama",
+    "bs4",
+    "lxml.*",
+]
+ignore_missing_imports = true
