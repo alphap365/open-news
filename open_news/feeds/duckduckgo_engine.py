@@ -22,7 +22,7 @@ Escape hatches (all default off):
 import logging
 import os
 import time
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
@@ -184,7 +184,7 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
         if not real_url:
             continue
         source = hit.get("source", "Unknown")
-        entry = {
+        entry: Dict[str, Any] = {
             "title": hit.get("title", "No title"),
             "url": real_url, "source": source,
             "published": hit.get("date", ""),
@@ -264,7 +264,10 @@ def _parse_ddg_html(html_text: str, limit: int) -> List[Dict]:
         return []
 
     results: List[Dict] = []
-    for node in doc.xpath("//div[contains(@class, 'result')]"):
+    result_nodes = cast(
+        List[Any], doc.xpath("//div[contains(@class, 'result')]")
+    )
+    for node in result_nodes:
         title_a = node.xpath(".//a[contains(@class, 'result__a')]")
         if not title_a:
             continue
