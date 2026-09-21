@@ -7,11 +7,14 @@ import os
 import sys
 import webbrowser
 from datetime import datetime
-from typing import Any, Dict, List, Optional, Sequence
+from typing import Any, Dict, List, Optional, Sequence, cast
 from urllib.parse import urlparse
 
 from open_news.api import discover_and_get, fetch, get_article, search, search_site, stream_search
 from open_news.processing.batch import batch_summarize, search_and_summarize
+from open_news.processing.cluster import cluster_articles
+from open_news.processing.rank import rank_articles
+from open_news.processing.token_filter import filter_articles
 
 
 class _Color:
@@ -37,6 +40,8 @@ C = _Color()
 
 CATEGORIES = ("general", "business", "tech", "sports", "health", "science", "entertainment")
 SORTS = ("date", "relevance", "popularity")
+RANK_METHODS = ("auto", "bm25", "tfidf", "basic")
+TOPIC_MODES = ("any", "all", "exact_phrase")
 
 
 def _article_source(article: Dict[str, Any]) -> str:
@@ -63,14 +68,24 @@ class Settings:
         self.whitelist: Optional[List[str]] = None
         self.blacklist: Optional[List[str]] = None
         self.country: Optional[str] = None  # v1.0.2: ISO 3166-1 alpha-2, search() only
+        # v1.0.4
+        self.topic: Optional[str] = None
+        self.topic_mode: str = "any"
+        self.rank_method: str = "auto"
+        self.cluster_threshold: float = 0.75
+        self.rank_query: Optional[str] = None
 
     def summary_line(self) -> str:
         wl = ",".join(self.whitelist) if self.whitelist else "none"
         bl = ",".join(self.blacklist) if self.blacklist else "none"
+        topic = self.topic or "none"
+        rq = self.rank_query or "none"
         return (
             f"language={self.language or 'any'}  country={self.country or 'default'}  sort={self.sort_by}  "
             f"full_content={'on' if self.full_content else 'off'}  "
             f"js={'on' if self.js else 'off'}  default_limit={self.default_limit}  "
+            f"topic={topic}({self.topic_mode})  rank={self.rank_method}  rank_query={rq}  "
+            f"cluster_threshold={self.cluster_threshold:.2f}  "
             f"whitelist={wl}  blacklist={bl}"
         )
 
@@ -80,6 +95,7 @@ class OpenNewsTUI:
 
     def __init__(self) -> None:
         self.articles: List[Dict[str, Any]] = []
+        self.clusters: List[Dict[str, Any]] = []
         self.settings = Settings()
 
     def run(self) -> None:
@@ -102,8 +118,10 @@ class OpenNewsTUI:
                 "6": self._summarize,
                 "7": self._view_articles,
                 "8": self._settings_menu,
-                "9": self.articles.clear,
+                "9": self._clear_loaded,
                 "10": self._watch_news,
+                "11": self._cluster_loaded,
+                "12": self._export_loaded,
             }
             if choice == "0":
                 print("Goodbye.")
@@ -112,11 +130,7 @@ class OpenNewsTUI:
             if action is None:
                 print(C.yellow("\nPlease choose a valid option number."))
                 continue
-            if choice == "9":
-                action()
-                print(C.dim("\nArticle list cleared."))
-            else:
-                action()
+            action()
 
     def _print_header(self) -> None:
         print("\n" + "=" * 64)
@@ -134,9 +148,13 @@ class OpenNewsTUI:
         print(C.cyan("[8]") + " Settings")
         print(C.cyan("[9]") + " Clear loaded articles")
         print(C.cyan("[10]") + " Live refresh (category or keyword search)")
+        print(C.cyan("[11]") + " Cluster loaded articles")
+        print(C.cyan("[12]") + " Export loaded articles / clusters")
         print(C.cyan("[0]") + " Exit")
         if self.articles:
             print(C.dim(f"Loaded articles: {len(self.articles)}"))
+        if self.clusters:
+            print(C.dim(f"Loaded clusters: {len(self.clusters)}"))
         print(C.dim(self.settings.summary_line()))
 
     # ------------------------------------------------------------------
@@ -150,12 +168,13 @@ class OpenNewsTUI:
         location = self._prompt_location()
         limit = self._prompt_limit()
         try:
-            results = fetch(
+            results = cast(List[Dict[str, Any]], fetch(
                 category=category, location=location, max_results=limit,
                 language=self.settings.language, sort_by=self.settings.sort_by,
                 full_content=self.settings.full_content, js=self.settings.js,
                 whitelist=self.settings.whitelist, blacklist=self.settings.blacklist,
-            )
+            ))
+            results = self._post_process(results)
             label = f"Fetched {category} news ({location})" if location else f"Fetched {category} news"
             self._replace_articles(results, label)
         except Exception as error:
@@ -166,7 +185,7 @@ class OpenNewsTUI:
         if not query:
             return
         mode = input("Match mode [any/all/exact_phrase] (blank = any): ").strip().lower() or "any"
-        if mode not in ("any", "all", "exact_phrase"):
+        if mode not in TOPIC_MODES:
             print(C.yellow(f"Unknown mode {mode!r}, using 'any'."))
             mode = "any"
         exclude_raw = input("Exclude terms, comma-separated (blank = none): ").strip()
@@ -177,16 +196,32 @@ class OpenNewsTUI:
         # clustering); silently fall back rather than raising deep in the stack.
         sort_by = self.settings.sort_by if self.settings.sort_by != "popularity" else "date"
         try:
-            results = search(
+            results = cast(List[Dict[str, Any]], search(
                 query, query_mode=mode, exclude_terms=exclude_terms, max_results=limit,
                 language=self.settings.language, sort_by=sort_by,
                 start_date=start_date, end_date=end_date, country=self.settings.country,
                 full_content=self.settings.full_content, js=self.settings.js,
                 whitelist=self.settings.whitelist, blacklist=self.settings.blacklist,
-            )
+            ))
+            results = self._post_process(results)
             self._replace_articles(results, f"Search results for {query!r}")
         except Exception as error:
             self._show_error(error)
+
+    def _post_process(self, results: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Apply topic filter and (optionally) a session-wide rank query.
+
+        Ranking is NOT prompted per-call — that belongs in Settings or in
+        the cluster flow, not in the fetch/search path."""
+        if self.settings.topic:
+            results = filter_articles(
+                results, topic=self.settings.topic, topic_mode=self.settings.topic_mode,
+            )
+        if self.settings.rank_query:
+            results = rank_articles(
+                results, query=self.settings.rank_query, method=self.settings.rank_method,
+            )
+        return results
 
     @staticmethod
     def _prompt_date_range() -> "tuple[Optional[str], Optional[str]]":
@@ -225,6 +260,7 @@ class OpenNewsTUI:
                 keyword, domain, limit=limit, language=self.settings.language,
                 full_content=self.settings.full_content, js=self.settings.js,
             )
+            results = self._post_process(results)
             self._replace_articles(results, f"{keyword!r} on {domain}")
         except Exception as error:
             self._show_error(error)
@@ -399,6 +435,129 @@ class OpenNewsTUI:
         except OSError as e:
             print(C.red(f"Could not save: {e}"))
 
+    # ------------------------------------------------------------------
+    # v1.0.5: cluster + export
+    # ------------------------------------------------------------------
+
+    def _clear_loaded(self) -> None:
+        self.articles.clear()
+        self.clusters.clear()
+        print(C.dim("\nArticle list cleared."))
+
+    def _cluster_loaded(self) -> None:
+        if len(self.articles) < 2:
+            print(C.yellow("\nNeed at least 2 loaded articles to cluster."))
+            return
+
+        raw = input(f"Title similarity threshold [{self.settings.cluster_threshold:.2f}]: ").strip()
+        try:
+            threshold = float(raw) if raw else self.settings.cluster_threshold
+            threshold = max(0.5, min(0.99, threshold))
+        except ValueError:
+            print(C.yellow("Invalid threshold; using session default."))
+            threshold = self.settings.cluster_threshold
+
+        drop = input("Drop single-article clusters? [y/N]: ").strip().lower() in ("y", "yes")
+        sort_by = input("Sort by [score/size/date] (blank = score): ").strip().lower() or "score"
+        if sort_by not in ("score", "size", "date"):
+            sort_by = "score"
+        default_rq = self.settings.rank_query or ""
+        prompt = (
+            f"Rank representatives by relevance to [{default_rq}] (blank = skip): "
+            if default_rq
+            else "Rank representatives by relevance to (blank = skip): "
+        )
+        rank_query = input(prompt).strip() or default_rq or None
+
+        try:
+            self.clusters = cluster_articles(
+                self.articles,
+                threshold=threshold,
+                topic=self.settings.topic,
+                topic_mode=self.settings.topic_mode,
+                rank_query=rank_query,
+                rank_method=self.settings.rank_method,
+                sort_by=sort_by,
+                drop_singletons=drop,
+            )
+        except Exception as exc:
+            print(C.yellow(f"\nClustering failed: {exc}"))
+            return
+
+        print(f"\nClustered {len(self.articles)} article(s) into {len(self.clusters)} cluster(s).")
+
+        if not self.clusters:
+            hint = (
+                f"\nNo clusters met the criteria. The {len(self.articles)} loaded "
+                f"articles look like distinct stories at threshold {threshold:.2f}."
+            )
+            if drop:
+                hint += (
+                    f"\nTry a lower threshold (e.g. {max(0.5, threshold - 0.1):.2f}), "
+                    f"or allow single-article clusters."
+                )
+            print(C.yellow(hint))
+            return
+
+        print()
+        self._print_cluster_list(self.clusters)
+        print(C.dim("Use [12] to export clusters, or [7] to inspect individual articles."))
+
+    def _print_cluster_list(self, clusters: Sequence[Dict[str, Any]]) -> None:
+        for c in clusters:
+            cid = c.get("id", "?")
+            label = c.get("label") or f"Cluster {cid}"
+            size = c.get("size", 0)
+            sources = c.get("sources") or []
+            print(f"{C.cyan(f'[{cid}]')} {label} {C.dim(f'({size})')}")
+            if sources:
+                shown = ", ".join(sources[:5])
+                more = f" +{len(sources) - 5}" if len(sources) > 5 else ""
+                print(C.dim(f"    {shown}{more}"))
+            rep = c.get("representative") or {}
+            if rep.get("url"):
+                print(C.dim(f"    {rep['url']}"))
+
+    def _export_loaded(self) -> None:
+        has_clusters = bool(self.clusters)
+        has_articles = bool(self.articles)
+        if not has_clusters and not has_articles:
+            print(C.yellow("\nNothing to export."))
+            return
+
+        if has_clusters and has_articles:
+            print("\n[a] Articles   [b] Clusters")
+            what = input("Export what? (blank = articles): ").strip().lower()
+            items: List[Dict[str, Any]] = self.clusters if what == "b" else self.articles
+        elif has_clusters:
+            items = self.clusters
+        else:
+            items = self.articles
+
+        print("\n[a] Markdown   [b] JSON")
+        fmt = input("Format (blank to cancel): ").strip().lower()
+        if fmt not in ("a", "b"):
+            return
+        path = input("Save to file: ").strip()
+        if not path:
+            return
+
+        try:
+            from open_news import export as _export
+            if fmt == "a":
+                title = input("Document title (blank = default): ").strip() or None
+                include_all = input("Include all cluster members? [y/N]: ").strip().lower() in ("y", "yes")
+                _export.to_markdown(items, path=path, title=title, include_all_members=include_all)
+            else:
+                _export.to_json(items, path=path)
+            print(C.green(f"Wrote {path}"))
+        except Exception as error:
+            self._show_error(error)
+
+    # ------------------------------------------------------------------
+    # Settings
+    # ------------------------------------------------------------------
+
     def _settings_menu(self) -> None:
         while True:
             print("\n" + C.bold("Settings"))
@@ -410,6 +569,10 @@ class OpenNewsTUI:
             print(f"[6] Whitelist domains ({','.join(self.settings.whitelist) if self.settings.whitelist else 'none'})")
             print(f"[7] Blacklist domains ({','.join(self.settings.blacklist) if self.settings.blacklist else 'none'})")
             print(f"[8] Country (search)  ({self.settings.country or 'default (us)'})")
+            print(f"[9] Topic filter       ({self.settings.topic or 'none'}, mode={self.settings.topic_mode})")
+            print(f"[10] Rank method        ({self.settings.rank_method})")
+            print(f"[11] Cluster threshold  ({self.settings.cluster_threshold:.2f})")
+            print(f"[12] Rank query         ({self.settings.rank_query or 'none'})")
             print("[0] Back")
             choice = input("Choose an option: ").strip()
             if choice == "0" or not choice:
@@ -445,15 +608,41 @@ class OpenNewsTUI:
             elif choice == "8":
                 v = input("Country code for search(), e.g. us, in, gb (blank = default): ").strip()
                 self.settings.country = v or None
+            elif choice == "9":
+                v = input("Topic terms, comma-separated (blank = clear): ").strip()
+                self.settings.topic = v or None
+                if self.settings.topic:
+                    m = input(f"Topic mode {TOPIC_MODES} (blank = {self.settings.topic_mode}): ").strip().lower()
+                    if m in TOPIC_MODES:
+                        self.settings.topic_mode = m
+                    elif m:
+                        print(C.yellow("Unknown mode; keeping previous."))
+            elif choice == "10":
+                v = input(f"Rank method {RANK_METHODS} (blank to keep): ").strip().lower()
+                if v in RANK_METHODS:
+                    self.settings.rank_method = v
+                elif v:
+                    print(C.yellow("Unknown rank method."))
+            elif choice == "11":
+                v = input("Cluster similarity threshold 0.5-0.99 (blank to keep): ").strip()
+                try:
+                    if v:
+                        self.settings.cluster_threshold = max(0.5, min(0.99, float(v)))
+                except ValueError:
+                    print(C.yellow("Invalid number."))
+            elif choice == "12":
+                v = input("Persistent rank query, applied after every fetch/search "
+                          "(blank = clear): ").strip()
+                self.settings.rank_query = v or None
             else:
-                print(C.yellow("Please choose a number from 0 to 8."))
-
+                print(C.yellow("Please choose a number from 0 to 12."))
     # ------------------------------------------------------------------
     # Display helpers
     # ------------------------------------------------------------------
 
     def _replace_articles(self, results: Sequence[Dict[str, Any]], label: str) -> None:
         self.articles = list(results)
+        self.clusters = []  # stale clusters no longer correspond to articles
         print(f"\n{label}: {len(self.articles)} article(s).")
         self._print_article_list(self.articles)
 
