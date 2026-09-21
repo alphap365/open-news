@@ -74,6 +74,10 @@ The chain stops when a tier returns results. It is a fallback chain, **not a mer
 | `js` | `False` | Use browser rendering for full-content work |
 | `dedupe` | `True` | Enable deduplication |
 
+> **Note on `location`:** it is a query hint, not a filter. Off-region
+> articles can appear. Use `whitelist=[...]` to enforce. See
+> `docs/parameters-reference.md` for the rationale.
+
 ### Basic usage
 
 ```python

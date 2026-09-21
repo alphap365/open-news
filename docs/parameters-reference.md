@@ -24,16 +24,53 @@ search("monsoon", country="in", language="hi")
 
 ### `fetch(location=...)`
 
-`location` is passed to the live acquisition layer as a region hint. Common examples include:
+`location` is a **query hint**, not a post-acquisition filter. It steers
+the acquisition engines toward a region — Bing's `cc` param, Google
+News' `gl`/`ceid`, Yahoo's query text — but it does **not** guarantee
+that every returned article was published by an outlet in that region.
+
+Common examples:
 
 ```text
 in · us · gb · au · ca · nz · pk · bd · lk
 ```
 
-The fetch engine does not enforce a fixed Python enum for location values. Unrecognized values may degrade to broader results rather than producing a validation error.
+Unrecognized values degrade to broader results rather than raising a
+validation error.
 
-> `discover_and_get()` does not currently expose a country/region parameter.
+#### Why off-region articles can appear
 
+- **Syndication.** A US outlet's story can be indexed by Yahoo News
+  under `yahoo.com/entertainment/...` and surface in an India feed
+  because the aggregator treats it as entertainment content.
+- **Aggregator editions.** MSN and Yahoo serve country-specific
+  editions (`msn.com/en-in/...`) of stories that originated elsewhere.
+- **Query ambiguity.** Category words like `general` and `business` are
+  translated into region-name queries ("India breaking news today"),
+  which search engines can answer with stories *about* the region
+  rather than *from* it.
+
+#### How to enforce region
+
+Use `whitelist` when region correctness matters:
+
+```python
+fetch(
+    category="general",
+    location="in",
+    whitelist=[
+        "thehindu.com", "indianexpress.com", "timesofindia.indiatimes.com",
+        "hindustantimes.com", "news18.com", "ndtv.com",
+    ],
+)
+```
+
+`whitelist` runs in the processing pipeline after acquisition, so it
+removes anything that slipped through the region hint. Combined with
+`blacklist=["yahoo.com", "msn.com"]` it is a hard filter.
+
+A first-class region filter (TLD + curated domain map) is planned for a
+future release.
 ---
 
 ## 🗣️ Language codes

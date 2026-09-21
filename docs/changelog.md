@@ -100,6 +100,25 @@ filter_articles()
 export.to_markdown()
 export.to_json()
 ```
+## ⚠️ Known issues
+
+- **`location=` is a query hint, not a post-acquisition filter.** An
+  India query can still return stories syndicated through non-Indian
+  domains (e.g. `yahoo.com/entertainment/...`, `msn.com/en-in/...`). Use
+  `whitelist=[...]` (optionally with `blacklist=["yahoo.com", "msn.com"]`)
+  when region correctness matters. A first-class region filter is
+  planned for a future release. See `docs/parameters-reference.md`.
+- **Liveblog `publish_date` is unreliable.** Liveblogs (Times Now,
+  News9Live, and similar) regenerate their JSON-LD `dateModified` on
+  every request, so the reported publish date can vary between runs and
+  occasionally reflects "now" rather than the article's origin. Treat
+  liveblog dates as approximate. A `meta.date_source` /
+  `meta.date_is_modified` marker is planned for a future release so
+  consumers can discriminate.
+- **Extracted `description` is passed through verbatim.** When a feed
+  engine supplies boilerplate ("Read today's breaking news at ...",
+  NSE disclaimer text) instead of a real summary, the export renders it
+  unchanged. A heuristic cleaner is planned for a future release.
 
 # [1.0.3] — 2026-09-20
 

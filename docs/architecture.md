@@ -164,7 +164,9 @@ This is the most important architectural change in v1.0.3.
 | 4 | **Yahoo News** | Additional pure-Python fallback |
 | 5 | **DuckDuckGo HTML** | Final general-search fallback |
 
-The orchestrator returns when a tier produces results. It does not combine all five tiers into one result set.
+The orchestrator returns when a tier produces results. It does not combine all five tiers into one result set.`location` is a **query hint**, not a post-acquisition filter. It
+influences what each tier asks for, not what the pipeline keeps. Callers
+who need region-enforced results should supply `whitelist=[...]`.
 
 ### Termux behavior
 
