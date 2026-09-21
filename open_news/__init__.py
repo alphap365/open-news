@@ -24,8 +24,7 @@ from .processing.summarizer import (summarize_text,
 )
 from .processing.dedupe import dedupe_articles
 
-from .export.json import to_json
-from .export.markdown import to_markdown
+import export
 
 __version__ = "1.0.4"
 
@@ -47,6 +46,5 @@ __all__ = [
     "cluster_articles",
     "rank_articles",
     "filter_articles",
-    "to_json",
-    "to_markdown"
+    "export",
 ]
