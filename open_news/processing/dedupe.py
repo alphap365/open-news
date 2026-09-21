@@ -4,6 +4,7 @@ from difflib import SequenceMatcher
 from typing import List, Dict, Optional
 from urllib.parse import urlparse, urlunparse, parse_qsl, urlencode
 
+from ..utils.textutil import normalize_title as _normalize_title
 from ..fetch.url_resolver import is_aggregator_source, is_google_news_url, resolve_url
 
 logger = logging.getLogger(__name__)
@@ -47,11 +48,18 @@ def normalize_url(url: str) -> str:
     return normalized.lstrip("/")
 
 
-def _normalize_title(title: str) -> str:
-    title = title.lower().strip()
-    title = re.sub(r"[^\w\s]", "", title)
-    title = re.sub(r"\s+", " ", title)
-    return title
+def _find_similar(title: str, kept_titles: List[str], threshold: float) -> Optional[int]:
+    """Index of the first kept title at least `threshold` similar, else None.
+    The two cheap upper bounds skip most O(n) full comparisons."""
+    for idx, existing in enumerate(kept_titles):
+        if not existing:
+            continue
+        sm = SequenceMatcher(None, title, existing)
+        if sm.real_quick_ratio() < threshold or sm.quick_ratio() < threshold:
+            continue
+        if sm.ratio() >= threshold:
+            return idx
+    return None
 
 
 def _is_aggregator(article: Dict) -> bool:
@@ -151,23 +159,15 @@ def dedupe_articles(
 
     for art in stage1:
         title = _normalize_title(art.get(title_key, ""))
-        if not title:
+        art.setdefault("_cluster_size", 1)   # how many reports this story stands for
+        match = _find_similar(title, kept_titles, FUZZY_TITLE_THRESHOLD) if title else None
+        if match is None:
             kept.append(art)
             kept_titles.append(title)
-            continue
-
-        is_dup = False
-        for existing_title in kept_titles:
-            if not existing_title:
-                continue
-            ratio = SequenceMatcher(None, title, existing_title).ratio()
-            if ratio >= FUZZY_TITLE_THRESHOLD:
-                is_dup = True
-                break
-
-        if not is_dup:
-            kept.append(art)
-            kept_titles.append(title)
+        else:
+            # Keep the first, but remember the cluster: sort_by="popularity"
+            # would otherwise see every story as unique after dedupe.
+            kept[match]["_cluster_size"] += art["_cluster_size"]
 
     logger.info(f"Dedupe stage 2 (fuzzy title): {len(stage1)} -> {len(kept)}")
     return kept
