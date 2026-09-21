@@ -43,7 +43,8 @@ def filter_by_domain(
         logger.info(f"Whitelist filter: {len(articles)} -> {len(kept)}")
         return kept
 
-    blocked = {_normalize_domain(d) for d in blacklist}
+    assert blacklist is not None
+    blocked = {_normalize_domain(d) for d in (blacklist or [])}
     for art in articles:
         dom = _article_domain(art)
         if not any(_domain_matches(dom, b) for b in blocked):
