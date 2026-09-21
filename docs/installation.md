@@ -1,6 +1,6 @@
 # 📦 Installation Guide
 
-> **Stable target: v1.0.3**
+> **Stable target: v1.0.4**
 
 Open News is distributed as **`open-news-api`** and requires **Python 3.10 or newer**.
 
@@ -68,7 +68,7 @@ pip install open-news-api
 Pin the stable release explicitly:
 
 ```bash
-pip install open-news-api==1.0.3
+pip install open-news-api==1.0.4
 ```
 
 Verify:
@@ -80,7 +80,7 @@ open-news --version
 Expected form:
 
 ```text
-open-news 1.0.3
+open-news 1.0.4
 ```
 
 ---
@@ -164,6 +164,21 @@ get_article(url, js=True)
 ```bash
 open-news extract https://example.com/article --js
 ```
+### 🧠 Optional NLP ranking backend
+
+`rank_articles(method="bm25")` uses the optional `bm25s` package. Install it with the `nlp` extra:
+
+```bash
+pip install "open-news-api[nlp]"
+```
+
+Or with `uv`:
+
+```bash
+uv add "open-news-api[nlp]"
+```
+
+Without it, `rank_articles(method="auto")` transparently falls back to pure-Python TF-IDF. The `nlp` extra also includes `sumy`, so installing it enables the higher-quality LSA summarizer in `summarize_text()` at the same time.
 
 ### What this costs
 
