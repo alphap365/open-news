@@ -26,9 +26,19 @@ Most commands support:
 --format pretty
 --format json
 --save FILE
+--export-md FILE
+--export-json FILE
+--export-title TITLE
+--export-all-members
 ```
 
-`pretty` is designed for people; `json` is designed for scripts.
+- `--save` writes the **raw** JSON dump (internal keys included).
+- `--export-json` writes the **clean** schema-versioned envelope.
+- `--export-md` writes clean Markdown.
+- `--export-title` overrides the Markdown document title.
+- `--export-all-members` includes every cluster member in Markdown.
+
+These are independent — pass all three in the same invocation if you want raw + clean + Markdown.
 
 Example:
 
@@ -62,6 +72,10 @@ open-news fetch --category tech --limit 5
 | `--blacklist` | `example.com` | Remove domains |
 | `--dedupe` | flag | Enable dedupe |
 | `--no-dedupe` | flag | Disable dedupe |
+| `--topic` | `AI, LLM` | *v1.0.4* topic filter |
+| `--topic-mode` | `any`, `all`, `exact_phrase` | *v1.0.4* topic combining |
+| `--rank-query` | `eu ai act` | *v1.0.4* relevance re-rank |
+| `--rank-method` | `auto`, `bm25`, `tfidf`, `basic` | *v1.0.4* ranking backend |
 
 ### Example
 
@@ -74,7 +88,7 @@ open-news fetch \
   --sort date
 ```
 
-### v1.0.3 acquisition behavior
+### acquisition behavior
 
 `fetch` uses the resilient five-tier acquisition chain:
 
@@ -114,6 +128,10 @@ open-news search "artificial intelligence" --mode all --limit 10
 | `--whitelist` | domains | Keep domains |
 | `--blacklist` | domains | Remove domains |
 | `--dedupe` / `--no-dedupe` | flag | Deduplication |
+| `--topic` | `AI, LLM` | *v1.0.4* topic filter |
+| `--topic-mode` | `any`, `all`, `exact_phrase` | *v1.0.4* topic combining |
+| `--rank-query` | `eu ai act` | *v1.0.4* relevance re-rank |
+| `--rank-method` | `auto`, `bm25`, `tfidf`, `basic` | *v1.0.4* ranking backend |
 
 ### Examples
 
@@ -210,6 +228,86 @@ Options:
 --language
 --full-content
 --js
+```
+
+---
+
+# 🧩 `cluster`
+
+Group related stories into clusters by title similarity.
+
+```bash
+open-news cluster --query "openai" --limit 40 --drop-singletons
+```
+
+### Options
+
+| Option | Values / example | Purpose |
+|---|---|---|
+| `--query` | `openai` | Keyword-search source (mutually exclusive with `--category`) |
+| `--category` | `tech` | Category-feed source |
+| `--location` | `in`, `us` | Region for `--category` |
+| `--limit` | `30` | Max source articles before clustering |
+| `--threshold` | `0.75` | Title-similarity cutoff |
+| `--min-cluster-size` | `1` | Drop smaller clusters |
+| `--drop-singletons` | flag | Convenience for `min_cluster_size=2` |
+| `--sort-clusters` | `score`, `size`, `date` | Sort order |
+| `--language` | `en`, `hi` | Language filter |
+| `--time-limit` | `d`, `w`, `m` | Recency for the source query |
+| `--topic` / `--topic-mode` | as above | Post-source narrowing |
+| `--rank-query` / `--rank-method` | as above | Representative ranking |
+| `--whitelist` / `--blacklist` | domains | Domain filters |
+| `--no-dedupe` | flag | Disable pre-cluster dedupe |
+| *(output flags)* | | `--format`, `--save`, `--export-md`, `--export-json`, `--export-title`, `--export-all-members` |
+
+### Examples
+
+```bash
+# Cluster openai coverage, keep only multi-outlet stories
+open-news cluster --query "openai" --limit 40 --drop-singletons
+
+# Cluster tech feed, export both formats
+open-news cluster --category tech --limit 30 \
+    --export-md out/tech-clusters.md --export-all-members \
+    --export-json out/tech-clusters.json
+```
+
+Requires either `--query` or `--category`.
+
+---
+
+# 📤 `export`
+
+Re-export a saved JSON file to Markdown and/or clean JSON, without re-fetching.
+
+```bash
+open-news export out/ai-act.json --md out/ai-act.md
+```
+
+### Options
+
+| Option | Values / example | Purpose |
+|---|---|---|
+| `input` | `out/ai-act.json` | Input JSON file |
+| `--md` | `out/ai-act.md` | Write Markdown |
+| `--json` | `out/ai-act-clean.json` | Write schema-versioned JSON |
+| `--title` | `AI Act roundup` | Markdown document title |
+| `--all-members` | flag | Include all cluster members in Markdown |
+
+### Input auto-detection
+
+The command accepts either:
+
+- a raw `--save` dump (a bare list),
+- a `--export-json` envelope (`{articles: [...]}` or `{clusters: [...]}`).
+
+Either way it extracts the items and re-serializes them.
+
+### Example
+
+```bash
+open-news search "eu ai act" --save /tmp/raw.json
+open-news export /tmp/raw.json --md out/ai-act.md --title "EU AI Act"
 ```
 
 ---
