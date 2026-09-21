@@ -1,11 +1,11 @@
 import logging
 import re
-from typing import Optional
-
+from typing import Any, Literal, Optional
 logger = logging.getLogger(__name__)
 
 _playwright_available = None
 
+WaitUntil = Literal["commit", "domcontentloaded", "load", "networkidle"]
 
 def is_available() -> bool:
     global _playwright_available
@@ -18,7 +18,7 @@ def is_available() -> bool:
     return _playwright_available
 
 
-def render_html(url: str, timeout: int = 15, wait_until: str = "networkidle",
+def render_html(url: str, timeout: int = 15, wait_until: WaitUntil = "networkidle",
                  user_agent: Optional[str] = None) -> str:
     """
     Render a single JS-heavy page and return the final HTML.
@@ -61,7 +61,7 @@ class PersistentRenderer:
                 html = r.render(url)
     """
 
-    def __init__(self, timeout: int = 15, wait_until: str = "networkidle",
+    def __init__(self, timeout: int = 15, wait_until: WaitUntil = "networkidle",
                  user_agent: Optional[str] = None, block_resources: bool = True):
         if not is_available():
             raise RuntimeError(
@@ -71,26 +71,33 @@ class PersistentRenderer:
         self.wait_until = wait_until
         self.user_agent = user_agent
         self.block_resources = block_resources
-        self._pw = None
-        self._browser = None
-        self._context = None
+        # Any: playwright is an optional dependency, so its types may be absent.
+        self._pw: Any = None
+        self._browser: Any = None
+        self._context: Any = None
 
     def __enter__(self) -> "PersistentRenderer":
         from playwright.sync_api import sync_playwright
-        self._pw = sync_playwright().start()
-        self._browser = self._pw.chromium.launch(headless=True)
-        self._context = (self._browser.new_context(user_agent=self.user_agent)
-                          if self.user_agent else self._browser.new_context())
-        if self.block_resources:
-            # Images/fonts/media never affect extracted article text — skipping
-            # them cuts page-load time substantially without changing output.
-            self._context.route(
-                re.compile(r"\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|mp3)(\?.*)?$"),
-                lambda route: route.abort(),
-            )
+        try:
+            self._pw = sync_playwright().start()
+            self._browser = self._pw.chromium.launch(headless=True)
+            self._context = (self._browser.new_context(user_agent=self.user_agent)
+                              if self.user_agent else self._browser.new_context())
+            if self.block_resources:
+                # Images/fonts/media never affect extracted article text.
+                self._context.route(
+                    re.compile(r"\.(png|jpe?g|gif|webp|svg|woff2?|ttf|mp4|mp3)(\?.*)?$"),
+                    lambda route: route.abort(),
+                )
+        except BaseException:
+            # __exit__ never runs when __enter__ raises: don't leak the driver process.
+            self.__exit__(None, None, None)
+            raise
         return self
 
     def render(self, url: str) -> str:
+        if self._context is None:
+            raise RuntimeError("PersistentRenderer must be used as a context manager")
         page = self._context.new_page()
         try:
             page.goto(url, timeout=self.timeout * 1000, wait_until=self.wait_until)
