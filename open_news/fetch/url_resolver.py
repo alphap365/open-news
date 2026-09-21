@@ -11,7 +11,7 @@ Two roles:
 import logging
 import re
 from typing import Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 try:
     from googlenewsdecoder import new_decoderv1
@@ -20,7 +20,7 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
-
+_ARTICLE_QUERY_KEYS = ("p", "page_id", "article", "story", "newsid", "nid", "aid")
 # ----------------------------------------------------------------------
 # Google News redirect resolution
 # ----------------------------------------------------------------------
@@ -143,8 +143,11 @@ def is_hub_url(url: str) -> bool:
 
     path = parsed.path or "/"
     if path in ("", "/"):
+        # WordPress-style plain permalinks (/?p=123) are articles, not homepages.
+        if any(k in parse_qs(parsed.query) for k in _ARTICLE_QUERY_KEYS):
+            return False
         return True
-
+    
     patterns = _COMPILED_HUB_PATTERNS.get(_netloc(url))
     if not patterns:
         return False
