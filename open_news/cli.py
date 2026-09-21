@@ -6,10 +6,13 @@ import argparse
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional  # noqa: F401 (Any used by config loader)
+from typing import Any, Dict, List, Optional, cast
 
 from .api import fetch, search, stream_search, get_article, discover_and_get, search_site
 from .processing.batch import batch_summarize, search_and_summarize
+from .processing.cluster import cluster_articles
+from .processing.rank import rank_articles
+from .processing.token_filter import filter_articles
 
 __all__ = ["main"]
 
@@ -137,27 +140,91 @@ def _print_summaries_pretty(results: List[Dict]) -> None:
     print(C.dim(f"{len(ok)}/{len(results)} succeeded."))
 
 
+def _print_clusters_pretty(clusters: List[Dict]) -> None:
+    if not clusters:
+        print(C.yellow("No clusters found."))
+        return
+    for c in clusters:
+        cid = c.get("id", "?")
+        label = c.get("label") or f"Cluster {cid}"
+        size = c.get("size", 0)
+        sources = c.get("sources") or []
+        print(f"{C.bold(f'[{cid}]')} {C.cyan(label)}  {C.dim(f'({size} article(s))')}")
+        if sources:
+            shown = ", ".join(sources[:5])
+            more = f" +{len(sources) - 5}" if len(sources) > 5 else ""
+            print(f"    {C.dim('Sources: ' + shown + more)}")
+        rep = c.get("representative") or {}
+        rep_url = rep.get("url", "")
+        if rep_url:
+            print(f"    {rep_url}")
+    print(C.dim(f"\n{len(clusters)} cluster(s)."))
+
+
 def _emit(data: Any, args: argparse.Namespace, kind: str) -> None:
-    """Route output to JSON / pretty / --save per the shared output flags."""
+    """Route output to JSON / pretty / --save / --export-* per the shared output flags."""
     if getattr(args, "save", None):
         _save(data, args.save)
+
     if args.format == "json":
         _print_json(data)
-        return
-    if kind == "articles":
+    elif kind == "articles":
         _print_articles_pretty(data)
     elif kind == "article":
         _print_article_pretty(data)
     elif kind == "summaries":
         _print_summaries_pretty(data)
+    elif kind == "clusters":
+        _print_clusters_pretty(data)
     else:
         _print_json(data)
+
+    # Clean exports (independent of --save / --format)
+    md_path = getattr(args, "export_md", None)
+    json_path = getattr(args, "export_json", None)
+    if not md_path and not json_path:
+        return
+
+    export_items = [data] if isinstance(data, dict) else list(data)
+    try:
+        from . import export as _export
+        if md_path:
+            _export.to_markdown(
+                export_items, path=md_path,
+                title=getattr(args, "export_title", None),
+                include_all_members=getattr(args, "export_all_members", False),
+            )
+            print(C.dim(f"Markdown export written to {md_path}"), file=sys.stderr)
+        if json_path:
+            _export.to_json(export_items, path=json_path)
+            print(C.dim(f"JSON export written to {json_path}"), file=sys.stderr)
+    except Exception as e:
+        print(C.red(f"Export failed: {e}"), file=sys.stderr)
 
 
 def _csv_list(value: Optional[str]) -> Optional[List[str]]:
     if not value:
         return None
     return [v.strip() for v in value.split(",") if v.strip()]
+
+
+def _apply_post_processing(results: List[Dict], args: argparse.Namespace) -> List[Dict]:
+    """Topic filter + optional re-rank, applied after the pipeline.
+    Kept outside run_pipeline() so the processing config (FetchConfig /
+    SearchConfig) doesn't need to grow new fields."""
+    topic = getattr(args, "topic", None)
+    if topic:
+        results = filter_articles(
+            results, topic=topic,
+            topic_mode=getattr(args, "topic_mode", "any"),
+        )
+    rank_query = getattr(args, "rank_query", None)
+    if rank_query:
+        results = rank_articles(
+            results, query=rank_query,
+            method=getattr(args, "rank_method", "auto"),
+        )
+    return results
 
 
 # ----------------------------------------------------------------------
@@ -167,7 +234,16 @@ def _csv_list(value: Optional[str]) -> Optional[List[str]]:
 def _add_output_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--format", choices=["pretty", "json"], default=_CONFIG.get("format", "pretty"),
                     help="Output style (default: pretty, or your configured default). Use json for scripting/piping.")
-    p.add_argument("--save", metavar="FILE", help="Also write the full JSON result to FILE.")
+    p.add_argument("--save", metavar="FILE",
+                    help="Also write the raw JSON result to FILE (includes internal keys).")
+    p.add_argument("--export-md", metavar="FILE",
+                    help="Write a clean Markdown export to FILE.")
+    p.add_argument("--export-json", metavar="FILE",
+                    help="Write a clean, schema-versioned JSON export to FILE.")
+    p.add_argument("--export-title", metavar="TITLE",
+                    help="Document title for the Markdown export.")
+    p.add_argument("--export-all-members", action="store_true",
+                    help="Markdown export: include every cluster member, not just the representative.")
 
 
 def _add_filter_args(p: argparse.ArgumentParser) -> None:
@@ -175,6 +251,17 @@ def _add_filter_args(p: argparse.ArgumentParser) -> None:
     p.add_argument("--blacklist", metavar="DOMAINS", help="Comma-separated domains to drop.")
     p.add_argument("--dedupe", dest="dedupe", action="store_true", default=True, help="Dedupe results (default: on).")
     p.add_argument("--no-dedupe", dest="dedupe", action="store_false", help="Disable deduplication.")
+    p.add_argument("--topic", metavar="TERMS",
+                    help="Topic filter (comma-separated). Matches title/description/text/category/keywords.")
+    p.add_argument("--topic-mode", choices=["any", "all", "exact_phrase"], default="any",
+                    help="How --topic terms combine (default: any).")
+
+
+def _add_rank_args(p: argparse.ArgumentParser) -> None:
+    p.add_argument("--rank-query", metavar="QUERY",
+                    help="Re-rank results by relevance to this query (BM25 if bm25s is installed, else TF-IDF).")
+    p.add_argument("--rank-method", choices=["auto", "bm25", "tfidf", "basic"], default="auto",
+                    help="Ranking backend (default: auto = bm25 > tfidf).")
 
 
 def _add_fetch_content_args(p: argparse.ArgumentParser) -> None:
@@ -194,10 +281,15 @@ def build_parser() -> argparse.ArgumentParser:
             "Examples:\n"
             "  open-news fetch --category tech --limit 5\n"
             "  open-news search \"artificial intelligence\" --mode all --exclude sports\n"
+            "  open-news search \"ai safety\" --topic \"policy,EU\" --rank-query \"eu ai act\" \\\n"
+            "      --export-md ai.md --export-json ai.json\n"
+            "  open-news cluster --query openai --limit 40 --drop-singletons \\\n"
+            "      --export-md clusters.md --export-all-members\n"
             "  open-news extract https://example.com/article --save article.json\n"
             "  open-news discover https://www.bbc.com --limit 10\n"
             "  open-news search-site \"climate policy\" reuters.com\n"
             "  open-news summarize https://example.com/a https://example.com/b\n"
+            "  open-news export ai.json --md ai.md\n"
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
@@ -222,6 +314,7 @@ def build_parser() -> argparse.ArgumentParser:
     fetch_p.add_argument("--time-limit", default="d", choices=["d", "w", "m"], help="Recency window (day/week/month).")
     _add_fetch_content_args(fetch_p)
     _add_filter_args(fetch_p)
+    _add_rank_args(fetch_p)
     _add_output_args(fetch_p)
 
     # --- search ---
@@ -246,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
                            help="Live refresh: poll every SECONDS (>=5) and print only newly-seen articles. Ctrl+C to stop.")
     _add_fetch_content_args(search_p)
     _add_filter_args(search_p)
+    _add_rank_args(search_p)
     _add_output_args(search_p)
 
     # --- extract ---
@@ -274,8 +368,44 @@ def build_parser() -> argparse.ArgumentParser:
     site_p.add_argument("--limit", type=int, default=10)
     site_p.add_argument("--mode", default="any", choices=["any", "all", "exact_phrase"])
     site_p.add_argument("--language", help="ISO 639-1 language code.")
+    site_p.add_argument("--topic", metavar="TERMS")
+    site_p.add_argument("--topic-mode", choices=["any", "all", "exact_phrase"], default="any")
     _add_fetch_content_args(site_p)
+    _add_rank_args(site_p)
     _add_output_args(site_p)
+
+    # --- cluster ---
+    cluster_p = subparsers.add_parser(
+        "cluster",
+        help="Group related articles into story clusters (title similarity).",
+        description=(
+            "Source articles from a keyword search or a category feed, then "
+            "cluster them by title similarity. Dedupe, topic filtering, and "
+            "relevance ranking are composed internally."
+        ),
+    )
+    cluster_p.add_argument("--query", help="Keyword search to source articles.")
+    cluster_p.add_argument("--category", choices=["general", "business", "tech", "sports",
+                                                   "health", "science", "entertainment"],
+                            help="Category feed to source articles.")
+    cluster_p.add_argument("--location", help="Region code for --category, e.g. us, in.")
+    cluster_p.add_argument("--limit", type=int, default=30, help="Max source articles before clustering.")
+    cluster_p.add_argument("--threshold", type=float, default=0.75,
+                            help="Title similarity cutoff 0..1 (higher = tighter; default 0.75).")
+    cluster_p.add_argument("--min-cluster-size", type=int, default=1)
+    cluster_p.add_argument("--drop-singletons", action="store_true",
+                            help="Only keep clusters with 2+ articles.")
+    cluster_p.add_argument("--sort-clusters", choices=["score", "size", "date"], default="score")
+    cluster_p.add_argument("--language", default=cfg_language)
+    cluster_p.add_argument("--time-limit", default="d", choices=["d", "w", "m"])
+    cluster_p.add_argument("--topic", metavar="TERMS")
+    cluster_p.add_argument("--topic-mode", choices=["any", "all", "exact_phrase"], default="any")
+    cluster_p.add_argument("--rank-query", metavar="QUERY")
+    cluster_p.add_argument("--rank-method", choices=["auto", "bm25", "tfidf", "basic"], default="auto")
+    cluster_p.add_argument("--whitelist", metavar="DOMAINS")
+    cluster_p.add_argument("--blacklist", metavar="DOMAINS")
+    cluster_p.add_argument("--no-dedupe", dest="dedupe", action="store_false", default=True)
+    _add_output_args(cluster_p)
 
     # --- summarize ---
     summarize_p = subparsers.add_parser(
@@ -289,6 +419,23 @@ def build_parser() -> argparse.ArgumentParser:
     summarize_p.add_argument("--js", action="store_true")
     _add_output_args(summarize_p)
 
+    # --- export (re-export a saved JSON file) ---
+    export_p = subparsers.add_parser(
+        "export",
+        help="Re-export a saved JSON file to Markdown and/or clean JSON.",
+        description=(
+            "Reads a JSON file produced by --save or --export-json and writes "
+            "clean Markdown and/or schema-versioned JSON. Useful for changing "
+            "format without re-fetching."
+        ),
+    )
+    export_p.add_argument("input", help="Input JSON file.")
+    export_p.add_argument("--md", metavar="FILE", help="Write Markdown to FILE.")
+    export_p.add_argument("--json", metavar="FILE", help="Write clean JSON to FILE.")
+    export_p.add_argument("--title", help="Document title for the Markdown export.")
+    export_p.add_argument("--all-members", action="store_true",
+                           help="Markdown: include all cluster members, not just representatives.")
+
     return parser
 
 
@@ -298,13 +445,14 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _run(args: argparse.Namespace) -> None:
     if args.command == "fetch":
-        results = fetch(
+        results = cast(List[Dict], fetch(
             category=args.category, location=args.location, max_results=args.limit,
             language=args.language, sort_by=args.sort, time_limit=args.time_limit,
             full_content=args.full_content, js=args.js,
             whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
             dedupe=args.dedupe,
-        )
+        ))
+        results = _apply_post_processing(results, args)
         _emit(results, args, "articles")
 
     elif args.command == "search":
@@ -321,18 +469,20 @@ def _run(args: argparse.Namespace) -> None:
                          "(Ctrl+C to stop)..."), file=sys.stderr)
             try:
                 for new_articles in stream:
+                    new_articles = _apply_post_processing(new_articles, args)
                     _emit(new_articles, args, "articles")
             except KeyboardInterrupt:
                 print(C.dim("\nStream stopped."), file=sys.stderr)
             return
-        results = search(
+        results = cast(List[Dict], search(
             query=args.query, query_mode=args.mode, exclude_terms=_csv_list(args.exclude),
             max_results=args.limit, language=args.language, sort_by=args.sort,
             time_limit=args.time_limit, start_date=args.start_date, end_date=args.end_date,
             country=args.country, full_content=args.full_content, js=args.js,
             whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
             dedupe=args.dedupe,
-        )
+        ))
+        results = _apply_post_processing(results, args)
         _emit(results, args, "articles")
 
     elif args.command == "extract":
@@ -352,7 +502,40 @@ def _run(args: argparse.Namespace) -> None:
             args.keyword, args.domain, limit=args.limit, query_mode=args.mode,
             language=args.language, full_content=args.full_content, js=args.js,
         )
+        articles = _apply_post_processing(articles, args)
         _emit(articles, args, "articles")
+
+    elif args.command == "cluster":
+        if args.query:
+            source = cast(List[Dict], search(
+                args.query, max_results=args.limit, language=args.language,
+                time_limit=args.time_limit,
+                whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
+                dedupe=args.dedupe,
+            ))
+        elif args.category:
+            source = cast(List[Dict], fetch(
+                category=args.category, location=args.location,
+                max_results=args.limit, language=args.language, time_limit=args.time_limit,
+                whitelist=_csv_list(args.whitelist), blacklist=_csv_list(args.blacklist),
+                dedupe=args.dedupe,
+            ))
+        else:
+            raise SystemExit("cluster: provide --query or --category to source articles")
+
+        clusters = cluster_articles(
+            source,
+            threshold=args.threshold,
+            min_cluster_size=args.min_cluster_size,
+            topic=args.topic,
+            topic_mode=args.topic_mode,
+            dedupe=args.dedupe,
+            rank_query=args.rank_query,
+            rank_method=args.rank_method,
+            sort_by=args.sort_clusters,
+            drop_singletons=args.drop_singletons,
+        )
+        _emit(clusters, args, "clusters")
 
     elif args.command == "summarize":
         if args.query:
@@ -367,6 +550,25 @@ def _run(args: argparse.Namespace) -> None:
         else:
             raise SystemExit("summarize: provide one or more URLs, or --query TOPIC")
         _emit(results, args, "summaries")
+
+    elif args.command == "export":
+        if not args.md and not args.json:
+            raise SystemExit("export: provide --md and/or --json")
+        with open(args.input, "r", encoding="utf-8") as f:
+            payload = json.load(f)
+        if isinstance(payload, dict):
+            items = payload.get("clusters") or payload.get("articles") or []
+        else:
+            items = payload
+
+        from . import export as _export
+        if args.md:
+            _export.to_markdown(items, path=args.md, title=args.title,
+                                 include_all_members=args.all_members)
+            print(C.dim(f"Wrote {args.md}"), file=sys.stderr)
+        if args.json:
+            _export.to_json(items, path=args.json)
+            print(C.dim(f"Wrote {args.json}"), file=sys.stderr)
 
 
 def main() -> None:
