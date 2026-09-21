@@ -13,7 +13,7 @@ import logging
 import os
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from urllib.parse import unquote_plus, urlparse
 
 try:
@@ -119,7 +119,8 @@ def _parse_yahoo_html(html_text: str, limit: int) -> List[Dict]:
     results: List[Dict] = []
     # FIX: the link lives inside <h4>, not as a direct child of <li>,
     # so the old `li[a]` predicate matched nothing.
-    for node in tree.xpath("//div[@id='web']//li[.//h4/a]"):
+    nodes = cast(List[Any], tree.xpath("//div[@id='web']//li[.//h4/a]"))
+    for node in nodes:
         title_parts = node.xpath(".//h4//text()")
         title = " ".join(t.strip() for t in title_parts if t.strip())
         if not title:
@@ -145,7 +146,7 @@ def _parse_yahoo_html(html_text: str, limit: int) -> List[Dict]:
             agg = aggregator_domain_name(real_url)
             source = agg or urlparse(real_url).netloc.replace("www.", "")
 
-        entry = {
+        entry: Dict[str, Any] = {
             "title": title, "url": real_url, "source": source,
             "published": published, "description": body, "_tier": _TIER,
         }
