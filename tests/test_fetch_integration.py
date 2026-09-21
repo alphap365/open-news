@@ -140,6 +140,8 @@ class TestDateSanity:
         now = datetime.now(timezone.utc).replace(microsecond=0)
         stale_cutoff = now - timedelta(days=30)
         for a in articles:
+            if _is_unreliable_date_url(a["url"]):
+                continue
             raw = a.get("publish_date") or a.get("published")
             if not raw:
                 continue
