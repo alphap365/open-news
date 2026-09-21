@@ -67,17 +67,17 @@ class RobotsCache:
     def __init__(self, client: httpx.AsyncClient, user_agent: str):
         self._client = client
         self._ua = user_agent
-        self._parsers: Dict[str, RobotFileParser] = {}
+        self._parsers: Dict[str, Optional[RobotFileParser]] = {}
         self._lock = asyncio.Lock()
 
     async def allowed(self, url: str) -> bool:
         parsed = urlparse(url)
         origin = f"{parsed.scheme}://{parsed.netloc}"
         async with self._lock:
-            rp = self._parsers.get(origin)
-            if rp is None:
-                rp = await self._fetch(origin)
-                self._parsers[origin] = rp
+            # `in` check, not .get(): a cached None (no robots.txt) must not be re-fetched
+            if origin not in self._parsers:
+                self._parsers[origin] = await self._fetch(origin)
+            rp = self._parsers[origin]
         if rp is None:
             return True  # no robots.txt or unreachable -> default allow
         return rp.can_fetch(self._ua, url)
@@ -156,7 +156,7 @@ class AsyncCrawler:
                 )
 
                 for r in results:
-                    if isinstance(r, Exception) or r is None:
+                    if isinstance(r, BaseException) or r is None:
                         continue
                     article, links, depth = r
                     if article is not None:
@@ -282,9 +282,9 @@ class JSCrawler:
                     if resp.status_code >= 400:
                         robots_parsers[origin] = None
                     else:
-                        rp = RobotFileParser()
-                        rp.parse(resp.text.splitlines())
-                        robots_parsers[origin] = rp
+                        parser = RobotFileParser()
+                        parser.parse(resp.text.splitlines())
+                        robots_parsers[origin] = parser
                 except Exception:
                     robots_parsers[origin] = None
             rp = robots_parsers[origin]
@@ -369,16 +369,16 @@ def crawl_site(
         from a magic-number match).
     """
     if js:
-        crawler = JSCrawler(
+        js_crawler = JSCrawler(
             max_pages=max_pages if max_pages is not None else 15,
             max_depth=max_depth if max_depth is not None else 1,
             min_text_length=min_text_length,
             same_domain_only=same_domain_only,
             obey_robots=obey_robots,
         )
-        return crawler.crawl(start_url)
+        return js_crawler.crawl(start_url)
 
-    crawler = AsyncCrawler(
+    async_crawler = AsyncCrawler(
         max_pages=max_pages if max_pages is not None else 40,
         max_depth=max_depth if max_depth is not None else 2,
         concurrency=concurrency,
@@ -386,4 +386,4 @@ def crawl_site(
         same_domain_only=same_domain_only,
         obey_robots=obey_robots,
     )
-    return asyncio.run(crawler.crawl(start_url))
+    return asyncio.run(async_crawler.crawl(start_url))
