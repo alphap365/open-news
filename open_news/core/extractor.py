@@ -1,7 +1,8 @@
 import logging
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Union, cast
+import re
 
-from lxml.html import fromstring
+from lxml.html import HtmlElement, fromstring
 
 from .strategies import (
     ALL_FIELDS,
@@ -13,6 +14,16 @@ from .strategies import (
 from .source_resolver import resolve_source
 
 logger = logging.getLogger(__name__)
+
+_XML_DECL_RE = re.compile(r"^\s*<\?xml[^>]*\?>", re.I)
+
+
+def _parse_html(html: Union[str, bytes]):
+    """lxml refuses str input that carries an encoding declaration
+    (ValueError). Strip the BOM/declaration from text; bytes pass through."""
+    if isinstance(html, str):
+        html = _XML_DECL_RE.sub("", html.lstrip("\ufeff"), count=1)
+    return cast(HtmlElement, fromstring(html))
 
 DEFAULT_STRATEGIES: List[ExtractionStrategy] = [
     JsonLdStrategy(),
@@ -34,7 +45,7 @@ class ArticleExtractor:
         self.strategies = strategies or DEFAULT_STRATEGIES
 
     def extract(self, html: str, url: Optional[str] = None) -> Dict:
-        doc = fromstring(html)
+        doc = _parse_html(html)
         if url:
             doc.make_links_absolute(url)
 
