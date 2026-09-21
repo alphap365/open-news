@@ -99,7 +99,12 @@ def test_markdown_custom_title():
     out = to_markdown([_art("X")], title="Custom Title")
     assert "# Custom Title" in out
 
-
+def test_markdown_toc_anchor_preserves_unicode():
+    items = [_art("पढ़ें 21 सितम्बर के मुख्य समाचार"), _art("Second")]
+    out = to_markdown(items)
+    # Devanagari word characters survive the slug
+    assert "पढ़ें" in out
+    assert "(#1-पढ़ें-21" in out or "(#1-" + "पढ़ें" in out
 # ----------------------------------------------------------------------
 # to_json
 # ----------------------------------------------------------------------
