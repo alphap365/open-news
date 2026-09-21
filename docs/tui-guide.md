@@ -23,10 +23,25 @@ The TUI is designed for users who want Open News functionality without memorizin
 | **7** | 📚 View loaded articles |
 | **8** | ⚙️ Settings |
 | **9** | 🧹 Clear loaded articles |
-| **10** | 🔴 Live refresh category news |
+| **10** | 🔴 Live refresh (category or keyword search) |
+| **11** | 🧩 Cluster loaded articles |
+| **12** | 📤 Export loaded articles / clusters |
 | **0** | 🚪 Exit |
 
 The current settings are displayed at the bottom of the interface so the active defaults remain visible.
+
+---
+
+### 📊 Rank query vs. rank method
+
+Two different settings, easy to mix up:
+
+- **`[10] Rank method`** — the backend used when ranking runs (`auto`, `bm25`, `tfidf`, `basic`). It does nothing on its own.
+- **`[12] Rank query`** — the query string that ranking scores against, if set.
+
+Setting **12** makes ranking apply automatically after every fetch and search, using the method from **10**. Leaving **12** blank means fetch/search results come back in engine order, and ranking only happens where you explicitly provide a query — currently in the cluster flow (menu 11).
+
+> Earlier builds of this TUI prompted for a rank query on every fetch and search. That prompt has been removed; ranking is opt-in via setting 12 or via the cluster flow.
 
 ---
 
@@ -47,7 +62,7 @@ entertainment
 The TUI can also use a location/country code.
 
 Results are obtained through the same `fetch()` API used by Python and the CLI, including the v1.0.3 acquisition fallback architecture.
-
+If a persistent rank query is set in Settings (12), the results are re-ranked after fetch before they're displayed. Otherwise they're shown in the acquisition engine's order.
 ---
 
 # 2️⃣ Search by keyword
@@ -114,19 +129,59 @@ It uses the same lightweight extractive summarization system exposed by the Pyth
 
 ---
 
+# 1️⃣1️⃣ Cluster loaded articles
+
+Groups the currently loaded articles into story clusters by title similarity.
+
+Prompts, in order:
+
+1. **Title similarity threshold** — defaults to the session setting (11). Lower means looser grouping.
+2. **Drop single-article clusters?** — `y` / `N`.
+3. **Sort clusters by** — Score / Size / Date.
+4. **Rank representatives by relevance to** — pre-filled with the session's persistent rank query (setting 12) if one is set; blank keeps the current order.
+
+The result is held in `self.clusters` for the rest of the session. Export it from menu 12, or inspect individual articles from menu 7.
+
+Uses the same `cluster_articles()` API as the Python and CLI surfaces, so dedupe, topic filtering, and rank integration behave identically.
+
+### When it returns zero clusters
+
+If every loaded article is a distinct story, nothing pairs up above the threshold, and with **Drop single-article clusters** enabled, every size-1 cluster is removed. The TUI reports this explicitly:
+
+```text
+No clusters met the criteria. The 21 loaded articles look like distinct stories at threshold 0.75.
+Try a lower threshold (e.g. 0.65), or allow single-article clusters.
+```
+
+Two ways to see clustering do something on a mixed feed:
+
+- **Lower the threshold** (try `0.6`–`0.65`).
+- **Allow single-article clusters** (`N` at step 2), which lets the score/size sort still be useful.
+
+For the clearest demonstration, run menu 2 (search by keyword) with a narrow term first — e.g. one specific event — then cluster. Same-event coverage from different outlets is exactly what clustering is for.
+
+---
+
 # ⚙️ Settings
 
 Settings are kept for the current TUI session.
 
 Available settings include:
 
-- 🌍 language filter;
-- 📊 sort order;
-- 📄 full-content extraction;
-- 🌐 JavaScript rendering;
-- 🔢 default result limit;
-- ✅ domain whitelist;
-- ⛔ domain blacklist.
+| Key | Setting |
+|---:|---|
+| 1 | 🌍 language filter |
+| 2 | 📊 sort order |
+| 3 | 📄 full-content extraction |
+| 4 | 🌐 JavaScript rendering |
+| 5 | 🔢 default result limit |
+| 6 | ✅ domain whitelist |
+| 7 | ⛔ domain blacklist |
+| 8 | 🌐 country (search only) |
+| 9 | 🏷️ topic filter + mode |
+| 10 | 📊 rank method |
+| 11 | 🧩 cluster threshold |
+| 12 | 📊 persistent rank query |
 
 The installer-created configuration file is separate from these session settings.
 
@@ -180,6 +235,7 @@ Menu 7 lets you inspect articles accumulated during the current TUI session.
 
 Crawler-discovered articles can have different metadata availability from RSS/search results. The TUI therefore uses the article URL/domain as a display fallback when a source name is unavailable.
 
+The status footer under the main menu reflects the current session settings, including the persistent rank query (`rank_query=...` when set, `rank_query=none` otherwise) and the current cluster threshold.
 ---
 
 # 🧪 TUI design principle
