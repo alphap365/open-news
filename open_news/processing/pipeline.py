@@ -29,20 +29,31 @@ def run_pipeline(
 ) -> List[Dict]:
     before = len(articles)
 
+    # search_in=["body"] can only be judged after the text is downloaded.
+    needs_body = bool(search_in and "body" in search_in and (query or exclude_terms))
+
     articles = filter_by_language(articles, language)
-    articles = filter_articles(
-        articles, query=query, query_mode=query_mode,
-        exclude_terms=exclude_terms, search_in=search_in,
-    )
     articles = filter_by_domain(articles, whitelist=whitelist, blacklist=blacklist)
+    if not needs_body:
+        articles = filter_articles(
+            articles, query=query, query_mode=query_mode,
+            exclude_terms=exclude_terms, search_in=search_in,
+        )
 
     if dedupe:
         articles = dedupe_articles(articles, fuzzy=dedupe_fuzzy)
 
     articles = sort_articles(articles, sort_by=sort_by)
 
-    # Slice BEFORE full_content enrichment — no point crawling articles
-    # that will be discarded by the max_results cutoff anyway.
+    if needs_body:
+        # Download a bounded pool (3x the goal), then filter on real text.
+        pool = _enrich_full_content(articles[: max_results * 3], js=js)
+        articles = filter_articles(
+            pool, query=query, query_mode=query_mode,
+            exclude_terms=exclude_terms, search_in=search_in,
+        )
+
+    # Slice BEFORE the final enrichment — no point crawling discarded articles.
     articles = articles[:max_results]
 
     if full_content:
@@ -58,12 +69,10 @@ def _enrich_full_content(articles: List[Dict], js: bool = False) -> List[Dict]:
     enriched = []
     empty_count = 0
     for art in articles:
-        url = art.get("url", "")
-        if not url:
-            art["_full_content"] = False
-            art["_full_content_reason"] = "no_url"
+        if art.get("_full_content") is True:      # already fetched (body-filter pass)
             enriched.append(art)
             continue
+        url = art.get("url", "")
 
         # Belt-and-suspenders: even if a hub/listing page slipped past the
         # feed engine (e.g. a caller assembled `articles` by hand rather
