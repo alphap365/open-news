@@ -11,14 +11,18 @@ import logging
 import os
 import re
 from email.utils import parsedate_to_datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 from urllib.parse import urlparse
 
 try:
-    from lxml import etree as _lxml_etree, html as _lxml_html
+    import lxml.etree as _lxml_etree
+    import lxml.html as _lxml_html
 except ImportError:
     _lxml_etree = None
     _lxml_html = None
+
+_lxml_etree = _lxml_etree if _lxml_etree is not None else None
+_lxml_html = _lxml_html if _lxml_html is not None else None
 
 from ..config import FetchConfig
 from ..fetch.url_resolver import (
@@ -89,7 +93,7 @@ def _country_lang(location: Optional[str]) -> tuple[str, str]:
 
 def _qft(timelimit: Optional[str]) -> Optional[str]:
     return {
-        "d": 'interval="4"', "w": 'interval="7"',
+        "d": 'interval="7"', "w": 'interval="8"',
         "m": 'interval="9"', "y": 'interval="9"',
     }.get(timelimit or "")
 
@@ -158,7 +162,8 @@ def _parse_html_results(html_text: str, limit: int) -> List[Dict]:
         return []
 
     results: List[Dict] = []
-    for node in tree.xpath("//div[contains(@class, 'newsitem')]"):
+    nodes = cast(List[Any], tree.xpath("//div[contains(@class, 'newsitem')]") )
+    for node in nodes:
         title = node.get("data-title", "").strip()
         raw_url = node.get("url", "").strip()
         source = node.get("data-author", "").strip()
@@ -177,7 +182,7 @@ def _parse_html_results(html_text: str, limit: int) -> List[Dict]:
             agg = aggregator_domain_name(real_url)
             source = agg or urlparse(real_url).netloc.replace("www.", "")
 
-        entry = {
+        entry: Dict[str, Any] = {
             "title": title, "url": real_url, "source": source,
             "published": _parse_relative_date(date_attrs[0] if date_attrs else ""),
             "description": body, "_tier": _TIER,
@@ -269,7 +274,7 @@ def _parse_rss_results(xml_text: str, limit: int) -> List[Dict]:
         desc = _child_text(item, "description")
         source = _child_text(item, "Source") or urlparse(real_url).netloc.replace("www.", "")
 
-        entry = {
+        entry: Dict[str, Any] = {
             "title": title, "url": real_url, "source": source,
             "published": _rfc822_to_iso(pub),
             "description": _strip_html(desc)[:500], "_tier": _TIER,
