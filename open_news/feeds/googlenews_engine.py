@@ -10,6 +10,8 @@ Pure Python: feedparser for RSS, httpx + lxml for the opt-in fallback.
 
 import logging
 import os
+import re
+from datetime import date, datetime, timedelta
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote, quote_plus, urlparse
 from concurrent.futures import ThreadPoolExecutor
@@ -18,7 +20,7 @@ import feedparser
 import httpx
 
 try:
-    from lxml import etree as _lxml_etree
+    import lxml.etree as _lxml_etree
 except ImportError:
     _lxml_etree = None
 
@@ -89,21 +91,42 @@ def search_raw(
     return results
 
 
+_QUERY_TOKEN_RE = re.compile(r'"[^"]+"|\S+')
+
+
+def _quote_if_needed(term: str) -> str:
+    term = term.strip().strip('"').replace('"', "")
+    return f'"{term}"' if re.search(r"\s", term) else term
+
+
 def _build_search_query(config: SearchConfig) -> str:
-    query = config.query
+    terms = _QUERY_TOKEN_RE.findall(config.query)
     if config.query_mode == "exact_phrase":
-        query = f'"{query}"'
-    elif config.query_mode == "all":
-        query = " AND ".join(query.split())
+        query = '"' + config.query.replace('"', "").strip() + '"'
+    elif config.query_mode == "all" or len(terms) <= 1:
+        query = " ".join(terms)                      # implicit AND
+    else:  # "any": a bare space means AND to Google, so OR must be explicit
+        query = "(" + " OR ".join(terms) + ")"
 
     if config.exclude_terms:
-        query += " " + " ".join(f"-{t}" for t in config.exclude_terms)
+        query += " " + " ".join(
+            f"-{_quote_if_needed(t)}" for t in config.exclude_terms if t and t.strip()
+        )
 
     if config.start_date or config.end_date:
         if config.start_date:
             query += f" after:{config.start_date}"
         if config.end_date:
-            query += f" before:{config.end_date}"
+            # `before:` is exclusive; the CLI/docs promise an inclusive end date.
+            end_date = config.end_date
+            if isinstance(end_date, datetime):
+                end = end_date.date()
+            elif isinstance(end_date, date):
+                end = end_date
+            else:
+                end = date.fromisoformat(end_date)
+            end += timedelta(days=1)
+            query += f" before:{end.isoformat()}"
     else:
         when = _TIME_LIMIT_TO_GNEWS.get(config.time_limit)
         if when:
