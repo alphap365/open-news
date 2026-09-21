@@ -13,18 +13,20 @@ from .api import (
     search_site,
     cluster_articles,
     rank_articles,
-    filter_articles
+    filter_articles,
 )
 from .processing.batch import (
     batch_summarize,
-    search_and_summarize
+    search_and_summarize,
 )
-from .processing.summarizer import (summarize_text,
-    summarize_with_keywords
+from .processing.summarizer import (
+    summarize_text,
+    summarize_with_keywords,
 )
 from .processing.dedupe import dedupe_articles
 
-import export
+from . import export
+from .export import to_markdown, to_json
 
 __version__ = "1.0.4"
 
@@ -47,4 +49,6 @@ __all__ = [
     "rank_articles",
     "filter_articles",
     "export",
+    "to_markdown",
+    "to_json",
 ]
