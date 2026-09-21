@@ -1,8 +1,8 @@
 # 🏗️ Open News Architecture
 
-> **v1.0.3 architecture baseline**
+> **v1.0.4 architecture baseline**
 >
-> This document describes the stabilized architecture produced by the Issue #1 development cycle. The `1.0.3a1`–`1.0.3b2` releases were pre-release validation stages; the design described here is the stable v1.0.3 model.
+> This document describes the stabilized architecture produced by the Issue #1 development cycle (v1.0.3) plus the processing/output additions in v1.0.4. The `1.0.3a1`–`1.0.3b2` releases were pre-release validation stages; the design described here is the stable v1.0.4 model.
 
 ---
 
@@ -16,16 +16,16 @@ Open News separates **acquisition**, **processing**, and **extraction**.
                     │ fetch / search / ...    │
                     └────────────┬────────────┘
                                  │
-             ┌───────────────────┼───────────────────┐
-             │                   │                   │
-             ▼                   ▼                   ▼
-        Acquisition           Processing          Extraction
-             │                   │                   │
-             ▼                   ▼                   ▼
-       feeds / crawler      filter / dedupe     HTML / JSON-LD
-       search / RSS        rank / enrich        Open Graph
-             │                   │                   │
-             └───────────────────┴───────────────────┘
+             ┌───────────────────┼───────────────────┬──────────────┐
+             │                   │                   │              │
+             ▼                   ▼                   ▼              ▼
+        Acquisition           Processing          Extraction      Output
+             │                   │                   │              │
+             ▼                   ▼                   ▼              ▼
+       feeds / crawler      filter / dedupe     HTML / JSON-LD   markdown
+       search / RSS        rank / cluster        Open Graph       json
+             │                   │                   │              │
+             └───────────────────┴───────────────────┴──────────────┘
                                  │
                                  ▼
                          normalized articles
@@ -67,16 +67,25 @@ open_news/
 │
 ├── processing/
 │   ├── batch.py
+│   ├── cluster.py          ← v1.0.4
 │   ├── dedupe.py
 │   ├── domain_filter.py
 │   ├── language_guard.py
 │   ├── pipeline.py
+│   ├── rank.py             ← v1.0.4
 │   ├── ranker.py
 │   ├── summarizer.py
 │   └── token_filter.py
 │
+├── export/                 ← v1.0.4
+│   ├── __init__.py
+│   ├── _shape.py
+│   ├── markdown.py
+│   └── json_export.py
+│
 └── utils/
     ├── httpx_compat.py
+    ├── textutil.py
     └── user_agents.py
 ```
 
@@ -87,11 +96,13 @@ open_news/
 | `api.py` | Stable public entrypoints and orchestration |
 | `feeds/` | Live news/search acquisition and RSS sources |
 | `fetch/` | Single-URL retrieval, crawling, URL classification |
-| `processing/` | Normalize, filter, deduplicate, rank, enrich |
 | `core/` | Turn HTML into article metadata/content |
 | `cli.py` | Shell interface over the public API |
 | `tui.py` | Interactive terminal interface |
 | `config.py` | Validation and configuration contracts |
+| `processing/` | Normalize, filter, deduplicate, rank, cluster, enrich |
+| `export/` | Structured Markdown / JSON output for article or cluster lists |
+| `tui.py` | Interactive terminal interface |
 
 ---
 
@@ -233,7 +244,125 @@ raw engine results
 
 Full-content enrichment happens **after** slicing. This avoids crawling articles that would already be discarded by the result limit.
 
+### v1.0.4: post-pipeline composition
+
+`run_pipeline()` itself is unchanged. The v1.0.4 additions (`topic`, `rank_query`, `cluster`, `export`) are **post-pipeline** and can be layered by callers:
+
+```text
+search() / fetch()          ← run_pipeline() inside
+       │
+       ▼
+filter_articles(topic=...)  ← topic narrowing  (v1.0.4)
+       │
+       ▼
+rank_articles(query=...)    ← BM25 / TF-IDF     (v1.0.4)
+       │
+       ▼
+cluster_articles()          ← story grouping    (v1.0.4)
+       │
+       ▼
+export.to_markdown()/to_json()  ← serialization (v1.0.4)
+```
 ---
+
+# 🧩 Story clustering
+
+processing/cluster.py groups articles into story clusters by title similarity.
+
+```text
+articles
+    │
+    ▼
+dedupe_articles()           ← exact URL dedupe (existing)
+    │
+    ▼
+filter_articles(topic=)     ← optional topic narrowing
+    │
+    ▼
+rank_articles(rank_query=)  ← optional relevance scores
+    │
+    ▼
+normalize_title() per article
+    │
+    ▼
+union-find over SequenceMatcher(title_i, title_j) ≥ threshold
+    │
+    ▼
+cluster dicts:
+    { id, label, size, score, sources,
+      first_seen, last_seen, representative, articles }
+    │
+    ▼
+sort by score | size | date
+```
+
+Clustering preserves every article — unlike dedupe, which drops. size is therefore meaningful as "how many outlets reported this story."
+
+The default threshold is 0.75. Similarity uses the same normalize_title helper as dedupe and ranker.
+
+Cluster score combines log1p(size), a recency factor derived from the newest member's date, and the mean of any _rank_score values already present.
+
+---
+
+# 📊 Relevance ranking
+
+processing/rank.py scores articles against a query and re-sorts.
+
+```text
+articles + query
+        │
+        ▼
+tokenize (title/description/text depending on search_in)
+        │
+        ▼
+score = bm25 | tfidf | basic
+        │
+        ▼
+write _rank_score, sort descending
+        │
+        ▼
+return
+```
+
+`method`|Backend|Notes
+`auto`|BM25 → TF-IDF|Default. Silent fallback when `bm25s` isn't installed.
+`bm25`|`bm25s`|Explicit; falls back with a warning if unavailable.
+`tfidf`|Pure-Pytho|No optional deps.
+`basic`|Term frequency|No IDF weighting.
+
+`rank_articles()` mutates in place and adds `_rank_score: float`, mirroring `ranker.sort_articles()`.
+
+# 📤 Export architecture
+
+```text
+items (articles or clusters)
+    │
+    ▼
+_shape.normalize_input()
+    │
+    ├── detects cluster shape via {articles: list, size: int}
+    │
+    ▼
+to_markdown(...)  |  to_json(...)
+    │
+    ▼
+string  ──► written to path when given
+```
+Both functions accept a path (parent dirs auto-created) and always return the string.
+
+JSON output uses a schema-versioned envelope:
+
+```text
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-09-21T12:00:00+00:00",
+  "count": 12,
+  "kind": "articles",
+  "articles": [ ... ]
+}
+```
+nternal keys (`_tier`, `_aggregator_source`, `_field_sources`, `_full_content`, `_full_content_reason`, `_cluster_size`) are stripped by default; `include_internal=True` preserves them.
+
 
 # 🧭 URL resolution & classification
 
@@ -402,6 +531,7 @@ The stable package surface is exposed from `open_news`:
 
 ```python
 from open_news import (
+    # v1.0 baseline
     fetch,
     search,
     stream_search,
@@ -413,6 +543,11 @@ from open_news import (
     summarize_text,
     summarize_with_keywords,
     dedupe_articles,
+    # v1.0.4 additions
+    cluster_articles,
+    rank_articles,
+    filter_articles,
+    export,
 )
 ```
 
@@ -442,7 +577,7 @@ The test suite includes local HTTP fixtures for deterministic article pages, Ter
 
 ---
 
-# 🧠 Stability boundary for v1.0.3
+# 🧠 Stability boundary for v1.0.4
 
 The goal of the stable release is not to freeze every private implementation detail. The intended boundary is:
 
@@ -463,5 +598,7 @@ The goal of the stable release is not to freeze every private implementation det
 - source-resolution heuristics;
 - retry timing;
 - internal helper names.
+- ranking backend selection beyond `auto` / `bm25` / `tfidf` / `basic`;
+- cluster scoring formula;
 
 This separation allows future releases to improve individual engines without unnecessarily redesigning the public API.
