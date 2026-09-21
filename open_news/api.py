@@ -2,6 +2,9 @@ import logging
 from datetime import date, datetime
 from typing import cast, Dict, Iterator, List, Optional, Union
 
+from .processing.cluster import cluster_articles
+from .processing.rank import rank_articles
+from .processing.token_filter import filter_articles
 from .fetch.article import get_article as _get_article
 from .fetch.crawler import crawl_site
 from .feeds.sources import from_rss, search_site as _search_site
@@ -85,7 +88,8 @@ def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[
     cadence, yielding only articles not seen in a previous cycle."""
     import time
 
-    seen_urls, seen_titles = set(), set()
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
     while True:
         raw = fetch_raw(config)
         processed = run_pipeline(
@@ -97,7 +101,7 @@ def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[
         new_articles = _only_unseen(processed, seen_urls, seen_titles)
         if new_articles:
             yield new_articles
-        time.sleep(config.refresh_interval)
+        time.sleep(config.refresh_interval if config.refresh_interval is not None else 60)
 
 
 def search(
@@ -174,7 +178,8 @@ def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedup
     not seen in a previous cycle. Mirrors _fetch_stream()'s shape."""
     import time
 
-    seen_urls, seen_titles = set(), set()
+    seen_urls: set[str] = set()
+    seen_titles: set[str] = set()
     while True:
         raw = search_raw(config, country=country, language=config.language)
         processed = run_pipeline(
@@ -188,7 +193,7 @@ def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedup
         new_articles = _only_unseen(processed, seen_urls, seen_titles)
         if new_articles:
             yield new_articles
-        time.sleep(config.refresh_interval)
+        time.sleep(config.refresh_interval if config.refresh_interval is not None else 60)
 
 def _only_unseen(articles, seen_urls, seen_titles):
     from .processing.dedupe import normalize_url, _normalize_title
@@ -243,6 +248,43 @@ def stream_search(
         js=js, dedupe=dedupe,
     ))
 
+def stream_fetch(
+    category: str = "general",
+    refresh_interval: int = 60,
+    location: Optional[str] = None,
+    time_limit: str = "d",
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    search_in: Optional[List[str]] = None,
+    js: bool = False,
+    dedupe: bool = True,
+) -> Iterator[List[Dict]]:
+    """
+    Live/streaming category feed — the fetch() equivalent of
+    stream_search(). Polls on `refresh_interval` seconds and yields only
+    articles not seen in a previous cycle, same semantics as
+    fetch(refresh_interval=...) and stream_search().
+
+    Always returns a generator, so callers don't have to branch on the
+    return type of fetch().
+
+    Example:
+        for new_articles in stream_fetch("tech", refresh_interval=30):
+            for a in new_articles:
+                print(a["title"])
+    """
+    return cast(Iterator[List[Dict]], fetch(
+        category=category, location=location, time_limit=time_limit,
+        max_results=max_results, language=language,
+        whitelist=whitelist, blacklist=blacklist, sort_by=sort_by,
+        full_content=full_content, search_in=search_in,
+        refresh_interval=max(5, refresh_interval),
+        js=js, dedupe=dedupe,
+    ))
 
 def search_site(
     keyword: str,
@@ -332,21 +374,6 @@ def discover_and_get(
     if dedupe:
         articles = dedupe_articles(articles, fuzzy=True)
     return articles[:limit]
-
-
-def _only_unseen(articles, seen_urls, seen_titles):
-    from .processing.dedupe import normalize_url, _normalize_title
-    fresh = []
-    for a in articles:
-        u = normalize_url(a.get("url", ""))
-        t = _normalize_title(a.get("title", ""))
-        if u in seen_urls or (t and t in seen_titles):
-            continue
-        seen_urls.add(u)
-        if t:
-            seen_titles.add(t)
-        fresh.append(a)
-    return fresh
 
 # Legacy aliases (backward compatibility) — both names are fully supported
 # public API, not deprecated. New code may use either; these longer names
