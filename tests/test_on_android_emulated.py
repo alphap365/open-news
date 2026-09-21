@@ -20,7 +20,7 @@ Run:
 import os  # FIX: was missing, TestEmulationSetup uses os.environ
 import socket
 import threading
-from typing import Any, Dict, List
+from typing import Any, Dict, List, cast
 
 import pytest
 
@@ -357,7 +357,9 @@ class TestPublicAPISmoke:
 
     def test_fetch_articles_are_not_homepages(self):
         from open_news.fetch.url_resolver import is_hub_url
-        articles = _call_or_skip(fetch, category="tech", max_results=5)
+        articles = cast(List[Dict[str, Any]], _call_or_skip(
+            fetch, category="tech", max_results=5,
+        ))
         for a in articles:
             assert not is_hub_url(a["url"]), (
                 f"homepage/hub leaked through: {a['url']!r}"
@@ -389,7 +391,9 @@ class TestStreaming:
         try:
             assert hasattr(stream, "__iter__") and hasattr(stream, "__next__")
         finally:
-            stream.close()
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
 
     @needs_network
     @pytest.mark.network
@@ -402,7 +406,9 @@ class TestStreaming:
                 pytest.skip("Stream closed without yielding")
             _assert_article_list(batch, where="stream_search")
         finally:
-            stream.close()
+            close = getattr(stream, "close", None)
+            if close is not None:
+                close()
 
 
 # ======================================================================
@@ -470,8 +476,14 @@ def _api_samples() -> Dict[str, List[Dict[str, Any]]]:
     if not _HAS_NETWORK:
         pytest.skip("No route to news.google.com:443")
     return {
-        "fetch": _call_or_skip(fetch, category="tech", max_results=3),
-        "search": _call_or_skip(search, "technology", max_results=3),
+        "fetch": cast(
+            List[Dict[str, Any]],
+            _call_or_skip(fetch, category="tech", max_results=3),
+        ),
+        "search": cast(
+            List[Dict[str, Any]],
+            _call_or_skip(search, "technology", max_results=3),
+        ),
     }
 
 
