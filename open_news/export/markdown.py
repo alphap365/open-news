@@ -7,15 +7,24 @@ import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
+from ..utils.textutil import MARKS
 from ._shape import normalize_input
 
 logger = logging.getLogger(__name__)
-_SLUG_RE = re.compile(r"[^a-z0-9]+")
+
+# Keep word chars, combining marks (Devanagari vowel signs, nukta, anusvara,
+# Arabic harakat, ...), whitespace, and dashes. Strip everything else.
+_SLUG_STRIP_RE = re.compile(rf"[^\w{MARKS}\s-]+", re.UNICODE)
+_SLUG_SPACE_RE = re.compile(r"\s+")
+_SLUG_DASH_RE = re.compile(r"-+")
 
 
 def _slug(text: str) -> str:
-    return _SLUG_RE.sub("-", (text or "").lower()).strip("-") or "section"
-
+    t = (text or "").lower().strip()
+    t = _SLUG_STRIP_RE.sub("", t)
+    t = _SLUG_SPACE_RE.sub("-", t)
+    t = _SLUG_DASH_RE.sub("-", t)
+    return t.strip("-") or "section"
 
 def _fmt_dt(value) -> str:
     if not value:
