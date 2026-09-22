@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.4a2"
+version = "1.0.4"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
