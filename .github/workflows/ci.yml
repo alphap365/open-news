@@ -2,63 +2,73 @@ name: CI
 
 on:
   push:
-    branches: [main]
   pull_request:
-    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  test:
-    name: Python ${{ matrix.python-version }}
+  tests:
+    name: Test suite
+    uses: ./.github/workflows/tests.yml
+
+  build:
+    name: Build and verify distributions
+    uses: ./.github/workflows/build.yml
+
+  security:
+    name: Dependency audit
+    uses: ./.github/workflows/security.yml
+
+  workflow-check:
+    name: Workflow policy and syntax
+    uses: ./.github/workflows/workflow-check.yml
+
+  result-summary:
+    name: Required verification summary
+    if: ${{ always() }}
+    needs: [tests, build, security, workflow-check]
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ['3.10', '3.11', '3.12', '3.13']
-
+    permissions:
+      contents: read
     steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
+      - name: Report verification results and enforce fail-closed status
+        env:
+          TESTS_RESULT: ${{ needs.tests.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          SECURITY_RESULT: ${{ needs.security.result }}
+          WORKFLOW_RESULT: ${{ needs.workflow-check.result }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          {
+            echo "## Open News CI result"
+            echo
+            echo "| Required check | Result |"
+            echo "|---|---|"
+            echo "| Tests | ${TESTS_RESULT} |"
+            echo "| Build and artifact verification | ${BUILD_RESULT} |"
+            echo "| Dependency audit | ${SECURITY_RESULT} |"
+            echo "| Workflow policy | ${WORKFLOW_RESULT} |"
+            echo
+            echo "[Open full workflow run](${RUN_URL})"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: ${{ matrix.python-version }}
+          failed=0
+          for result in "$TESTS_RESULT" "$BUILD_RESULT" "$SECURITY_RESULT" "$WORKFLOW_RESULT"; do
+            if [ "$result" != "success" ]; then
+              failed=1
+            fi
+          done
 
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
+          if [ "$failed" -ne 0 ]; then
+            echo "Required verification failed, was cancelled, or did not complete. Merge/release must remain blocked." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
 
-      - name: Install project
-        run: uv sync --python ${{ matrix.python-version }}
-
-      - name: Run tests
-        run: uv run --python ${{ matrix.python-version }} pytest -q
-
-      - name: Compile package
-        run: uv run --python ${{ matrix.python-version }} python -m compileall -q open_news
-
-  build-check:
-    name: Build sanity check
-    runs-on: ubuntu-latest
-    needs: test
-    steps:
-      - name: Check out repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: '3.12'
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v6
-
-      - name: Install build tools
-        run: uv pip install --system --upgrade build twine
-
-      - name: Build distributions
-        run: uv build
-
-      - name: Validate metadata
-        run: uv run --with twine twine check dist/*
+          echo "All required verification jobs passed. This CI workflow does not publish packages." | tee -a "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,54 @@
+name: Build (reusable)
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build, inspect and clean-install package
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+          cache-dependency-glob: |
+            pyproject.toml
+            uv.lock
+
+      - name: Build wheel and source distribution
+        run: uv build
+
+      - name: Verify distribution metadata
+        run: uv run --with twine twine check dist/*
+
+      - name: Verify expected artifacts
+        run: python .github/scripts/verify_artifacts.py --dist dist --version "$(python -c 'import tomllib; print(tomllib.load(open("pyproject.toml", "rb"))["project"]["version"])')"
+
+      - name: Install wheel in a clean virtual environment
+        run: |
+          python -m venv /tmp/open-news-wheel-test
+          /tmp/open-news-wheel-test/bin/python -m pip install --upgrade pip
+          /tmp/open-news-wheel-test/bin/python -m pip install dist/*.whl
+          /tmp/open-news-wheel-test/bin/python -c "import open_news; print('open_news import OK')"
+          /tmp/open-news-wheel-test/bin/open-news --help
+
+      - name: Upload verified distributions
+        uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 14

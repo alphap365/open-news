@@ -1,0 +1,41 @@
+name: Dependency maintenance check
+
+on:
+  schedule:
+    - cron: '41 7 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: maintenance-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  latest-compatible-dependencies:
+    name: Test against latest compatible dependencies
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Resolve and install latest compatible dependencies
+        run: uv sync --upgrade --all-groups
+
+      - name: Run test suite
+        run: uv run pytest -q
+
+      - name: Build distributions
+        run: uv build
