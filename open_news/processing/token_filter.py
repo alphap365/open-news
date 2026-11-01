@@ -9,6 +9,11 @@ _TOKEN_RE = re.compile(r'"([^"]+)"|(\S+)')
 _HYPHENS = "-\u2010\u2011\u2012\u2013\u2014\u2015"
 _EDGE_PUNCT = ".,;:!?()[]{}\"'"
 
+# Scripts that write words without spaces (CJK ideographs, kana, hangul).
+_CJK_RE = re.compile(
+    r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uf900-\ufaff\uac00-\ud7af]"
+)
+
 
 def _query_terms(query: str) -> List[str]:
     terms = []
@@ -23,7 +28,12 @@ def _query_terms(query: str) -> List[str]:
 def _boundary_pattern(term: str) -> "re.Pattern":
     """Match `term` as a whole token. Lookarounds instead of ``\\b`` so terms
     that start/end with symbols ("C++", "$AAPL") and Indic words with
-    combining marks behave. "covid-19" also matches "covid 19"."""
+    combining marks behave. "covid-19" also matches "covid 19".
+
+    An edge that is a CJK character gets no boundary lookaround: ``\\w``
+    matches those characters too, so "景区" inside "某景区发生" would
+    otherwise never match."""
+
     def esc(t: str) -> str:
         return re.escape(t).replace(r"\ ", r"\s+")
 
@@ -32,7 +42,9 @@ def _boundary_pattern(term: str) -> "re.Pattern":
     if spaced != term:
         variants.add(esc(spaced))
     alt = "|".join(sorted(variants, key=len, reverse=True))
-    return re.compile(rf"(?<!{WORD})(?:{alt})(?!{WORD})", re.IGNORECASE)
+    left = "" if _CJK_RE.match(term[:1]) else rf"(?<!{WORD})"
+    right = "" if _CJK_RE.match(term[-1:]) else rf"(?!{WORD})"
+    return re.compile(rf"{left}(?:{alt}){right}", re.IGNORECASE)
 
 
 def _field_text(article: Dict, search_in: List[str]) -> str:
@@ -46,7 +58,9 @@ def _field_text(article: Dict, search_in: List[str]) -> str:
     return nfc(" ".join(p for p in parts if p))
 
 
-def matches_query(article: Dict, query: str, query_mode: str, search_in: List[str]) -> bool:
+def matches_query(
+    article: Dict, query: str, query_mode: str, search_in: List[str]
+) -> bool:
     """Precise word-boundary confirmation after the engine's own (looser) search."""
     text = _field_text(article, search_in)
     if not text:
@@ -63,7 +77,9 @@ def matches_query(article: Dict, query: str, query_mode: str, search_in: List[st
     return all(hits) if query_mode == "all" else any(hits)
 
 
-def excludes_terms(article: Dict, exclude_terms: Optional[List[str]], search_in: List[str]) -> bool:
+def excludes_terms(
+    article: Dict, exclude_terms: Optional[List[str]], search_in: List[str]
+) -> bool:
     """True if the article does NOT contain any excluded term."""
     if not exclude_terms:
         return True
@@ -103,6 +119,7 @@ def filter_articles(
         kept.append(art)
     return kept
 
+
 def _topic_terms(topic: Union[str, List[str], None]) -> List[str]:
     if not topic:
         return []
@@ -128,8 +145,9 @@ def _topic_text(article: Dict) -> str:
     return nfc(" ".join(p for p in parts if p))
 
 
-def matches_topic(article: Dict, topic: Union[str, List[str], None],
-                  topic_mode: str = "any") -> bool:
+def matches_topic(
+    article: Dict, topic: Union[str, List[str], None], topic_mode: str = "any"
+) -> bool:
     """Topic filter — broader field coverage than matches_query()."""
     terms = _topic_terms(topic)
     if not terms:
