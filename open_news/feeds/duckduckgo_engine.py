@@ -25,6 +25,7 @@ import time
 from typing import Dict, List, Optional, Any, cast
 from urllib.parse import parse_qs, unquote, urlparse
 
+import asyncio
 import httpx
 
 from ..config import FetchConfig
@@ -201,7 +202,7 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
 # Tier 5: DDG HTML
 # ----------------------------------------------------------------------
 
-def _fetch_via_ddg_html(config: FetchConfig) -> List[Dict]:
+async def _fetch_via_ddg_html_async(config: "FetchConfig") -> List[Dict]:
     if _lxml_fromstring is None:
         logger.info("lxml not installed; DDG HTML tier unavailable")
         return []
@@ -215,23 +216,26 @@ def _fetch_via_ddg_html(config: FetchConfig) -> List[Dict]:
         "Accept-Language": "en-US,en;q=0.9",
         "Referer": "https://duckduckgo.com/",
     }
-    data = {
-        "q": query, "kl": region, "df": df, "kp": "-1",
-        "ia": "news", "iar": "news",
-    }
+    data = {"q": query, "kl": region, "df": df, "kp": "-1", "ia": "news", "iar": "news"}
 
     last_err: Optional[Exception] = None
-    for attempt in range(_RETRIES):
-        try:
-            with httpx.Client(
-                follow_redirects=True, timeout=_TIMEOUT, headers=headers,
-            ) as client:
-                resp = client.post(_HTML_ENDPOINT, data=data)
+    async with httpx.AsyncClient(
+        follow_redirects=True, timeout=_TIMEOUT, headers=headers,
+    ) as client:
+        for attempt in range(_RETRIES):
+            try:
+                resp = await client.post(_HTML_ENDPOINT, data=data)
 
                 if resp.status_code == 202:
+                    # BUG FIX: previously last_err stayed None on 202
+                    # exhaustion, hiding the real cause in the final log.
+                    last_err = httpx.HTTPStatusError(
+                        "HTTP 202 (rate limited)",
+                        request=resp.request, response=resp,
+                    )
                     wait = min(2.0 ** attempt, _MAX_RETRY_WAIT)
                     logger.warning("DDG HTML rate limit; retrying in %.1fs", wait)
-                    time.sleep(wait)
+                    await asyncio.sleep(wait)
                     continue
 
                 resp.raise_for_status()
@@ -239,20 +243,23 @@ def _fetch_via_ddg_html(config: FetchConfig) -> List[Dict]:
                 logger.info("DDG HTML fetch(%r) returned %d results", query, len(parsed))
                 return parsed
 
-        except httpx.HTTPStatusError as e:
-            last_err = e
-            if e.response.status_code == 202 and attempt < _RETRIES - 1:
-                time.sleep(min(2.0 ** attempt, _MAX_RETRY_WAIT))
-                continue
-            logger.warning("DDG HTML attempt %d failed: %s", attempt + 1, e)
-        except Exception as e:
-            last_err = e
-            logger.warning("DDG HTML attempt %d failed: %s", attempt + 1, e)
-            time.sleep(0.5)
+            except httpx.HTTPStatusError as e:
+                last_err = e
+                if e.response.status_code == 202 and attempt < _RETRIES - 1:
+                    await asyncio.sleep(min(2.0 ** attempt, _MAX_RETRY_WAIT))
+                    continue
+                logger.warning("DDG HTML attempt %d failed: %s", attempt + 1, e)
+            except Exception as e:
+                last_err = e
+                logger.warning("DDG HTML attempt %d failed: %s", attempt + 1, e)
+                await asyncio.sleep(0.5)
 
     logger.error("DDG HTML exhausted retries: %s", last_err)
     return []
 
+
+def _fetch_via_ddg_html(config) -> List[Dict]:
+    return asyncio.run(_fetch_via_ddg_html_async(config))
 
 def _parse_ddg_html(html_text: str, limit: int) -> List[Dict]:
     if not html_text or _lxml_fromstring is None:
