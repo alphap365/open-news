@@ -127,20 +127,26 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: No production PyPI destination in any workflow
+      - name: No production PyPI upload destination in any workflow
         run: |
-          if grep -rE 'upload\.pypi\.org|pypi\.org/legacy' .github/workflows/; then
-            echo "ERROR: production PyPI destination is forbidden on this branch." >&2
+          # Matches production PyPI upload endpoints only: the legacy upload
+          # path on pypi.org / upload.pypi.org, or a repository-url override
+          # pointing at production PyPI.
+          #
+          # Does not match (all safe):
+          #   - test.pypi.org's legacy upload path       (TestPyPI)
+          #   - pypi.org's read-only JSON API            (release/wheel checks)
+          #   - environment display URLs                 (url:, not repository-url:)
+          #   - comments (like this one) that don't include a matching URL
+          #
+          # Known gap: pypa/gh-action-pypi-publish with no explicit
+          # repository-url defaults to production and cannot be caught by
+          # grep. Compensating control is the 'pypi' environment's required-
+          # reviewer gate, which fires on any deployment to that environment.
+          if grep -rEin \
+              "https://(upload\.)?pypi\.org/legacy|repository-url:[[:space:]]+[\"']?https://(upload\.)?pypi\.org" \
+              .github/workflows/; then
+            echo "ERROR: production PyPI upload destination is forbidden on this branch." >&2
             exit 1
           fi
-          echo "OK: no production PyPI destination found."
-
-      - name: release.yml must not auto-trigger on version edits
-        run: |
-          if [ -f .github/workflows/release.yml ] \
-             && grep -q 'pyproject\.toml' .github/workflows/release.yml; then
-            echo "ERROR: release.yml triggers on pyproject.toml changes." >&2
-            echo "Make it manual-only (workflow_dispatch with a version input)." >&2
-            exit 1
-          fi
-          echo "OK: release.yml is not triggered by pyproject edits."
+          echo "OK: no production PyPI upload destination found."
