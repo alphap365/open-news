@@ -16,7 +16,7 @@ from .processing.dedupe import dedupe_articles
 from . import export
 from .export import to_markdown, to_json
 
-__version__ = "1.0.5a4"
+__version__ = "1.0.5b1"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
