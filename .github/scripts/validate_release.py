@@ -1,3 +1,4 @@
+# validate_release.py
 #!/usr/bin/env python3
 """Fail-closed validation for an explicitly requested package release."""
 
@@ -33,28 +34,36 @@ def main() -> int:
 
     try:
         parsed = Version(project_version)
+        parsed_tag = Version(tag_version)
+        parsed_confirm = Version(args.version)
     except InvalidVersion:
-        print(f"Refusing: pyproject version {project_version!r} is not valid PEP 440.", file=sys.stderr)
+        print(f"Refusing: a supplied version is not valid PEP 440.", file=sys.stderr)
         return 1
 
-    if args.version != project_version:
+    if parsed_confirm != parsed:
         print(
             f"Refusing: confirmation {args.version!r} does not match pyproject version {project_version!r}.",
             file=sys.stderr,
         )
         return 1
-    if tag_version != project_version:
-        print(f"Refusing: tag version {tag_version!r} does not match pyproject version {project_version!r}.", file=sys.stderr)
+    if parsed_tag != parsed:
+        print(
+            f"Refusing: tag version {tag_version!r} does not match pyproject version {project_version!r}.",
+            file=sys.stderr,
+        )
         return 1
     if not (parsed.is_prerelease or parsed.is_devrelease):
-        print(f"Refusing: {project_version} is not a prerelease/dev version; this workflow only permits TestPyPI prereleases.", file=sys.stderr)
+        print(
+            f"Refusing: {project_version} is not a prerelease/dev version; this workflow only permits TestPyPI prereleases.",
+            file=sys.stderr,
+        )
         return 1
 
     output = os.environ.get("GITHUB_OUTPUT")
     if output:
         with open(output, "a", encoding="utf-8") as handle:
             handle.write(f"version={project_version}\n")
-    print(f"Validated TestPyPI prerelease: {project_version} ({args.tag}).")
+    print(f"Validated {args.channel} prerelease: {project_version} ({args.tag}).")
     print("This workflow has no production PyPI publishing destination.")
     return 0
 
