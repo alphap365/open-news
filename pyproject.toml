@@ -38,7 +38,6 @@ Homepage = "https://github.com/alphap365/open-news"
 
 [project.scripts]
 open-news = "open_news.cli:main"
-open-news-tui = "open_news.tui:run_tui"
 
 [tool.setuptools]
 include-package-data = true
