@@ -19,11 +19,10 @@ _XML_DECL_RE = re.compile(r"^\s*<\?xml[^>]*\?>", re.I)
 
 
 def _parse_html(html: Union[str, bytes]):
-    """lxml refuses str input that carries an encoding declaration
-    (ValueError). Strip the BOM/declaration from text; bytes pass through."""
     if isinstance(html, str):
         html = _XML_DECL_RE.sub("", html.lstrip("\ufeff"), count=1)
     return cast(HtmlElement, fromstring(html))
+
 
 DEFAULT_STRATEGIES: List[ExtractionStrategy] = [
     JsonLdStrategy(),
@@ -50,8 +49,9 @@ class ArticleExtractor:
             doc.make_links_absolute(url)
 
         result: Dict = {}
-        sources: Dict[str, str] = {}          # which strategy supplied each field, for debugging/QA
+        sources: Dict[str, str] = {}
         needed = set(ALL_FIELDS)
+        json_ld_data: Optional[Dict] = None   # captured once during the loop
 
         for strategy in self.strategies:
             if not needed:
@@ -59,11 +59,20 @@ class ArticleExtractor:
             try:
                 found = strategy.extract(doc, url, needed)
             except Exception as e:
-                logger.warning(f"{strategy.name} strategy failed: {e}")
+                logger.warning("%s strategy failed: %s", strategy.name, e)
                 continue
+
+            # Capture the JSON-LD parse on first encounter so source
+            # resolution doesn't have to re-parse the same script tags.
+            if json_ld_data is None and isinstance(strategy, JsonLdStrategy):
+                try:
+                    json_ld_data = strategy._parse(doc)
+                except Exception:
+                    json_ld_data = None
+
             for field, value in found.items():
                 if field not in needed:
-                    continue  # strategy returned something we already have; ignore
+                    continue
                 if value in (None, "", [], {}):
                     continue
                 result[field] = value
@@ -73,42 +82,38 @@ class ArticleExtractor:
         for field in ALL_FIELDS:
             result.setdefault(field, _default(field))
 
-        # Aggregator-aware source resolution (msn.com, news.yahoo.com, etc.
-        # serve other outlets' stories under their own domain -- a bare
-        # urlparse(url).netloc would wrongly report "msn"/"yahoo" as the
-        # publisher). Best-effort: see source_resolver.py docstring for
-        # what "resolved" does and doesn't guarantee.
+        # Aggregator-aware source resolution.
         source_info = {"source": "", "is_aggregator": False, "resolved": True}
         if url:
-            json_ld_raw = None
-            for strategy in self.strategies:
-                if isinstance(strategy, JsonLdStrategy):
-                    try:
-                        json_ld_raw = strategy._parse(doc)
-                    except Exception:
-                        json_ld_raw = None
-                    break
             try:
-                source_info = resolve_source(doc, url, result["site_name"], json_ld_raw)
+                source_info = resolve_source(
+                    doc, url, result["site_name"], json_ld_data,
+                )
             except Exception as e:
-                logger.debug(f"source resolution failed for {url}: {e}")
+                logger.debug("source resolution failed for %s: %s", url, e)
                 from urllib.parse import urlparse as _urlparse
                 source_info = {
                     "source": _urlparse(url).netloc.replace("www.", ""),
                     "is_aggregator": False, "resolved": True,
                 }
 
+        # Guard against a custom strategy returning a non-datetime; the
+        # built-ins always return datetime, but this keeps the public
+        # contract resilient.
+        pd = result["publish_date"]
+        pd_iso = pd.isoformat() if hasattr(pd, "isoformat") else (pd or None)
+
         return {
             "title": result["title"] or "",
             "authors": result["authors"] or [],
-            "publish_date": result["publish_date"].isoformat() if result["publish_date"] else None,
+            "publish_date": pd_iso,
             "category": result["category"] or "",
             "text": result["text"] or "",
             "top_image": result["top_image"],
             "images": result["images"] or [],
             "videos": result["videos"] or [],
             "source": source_info["source"],
-            "description": result["description"] or "",   # promoted alongside meta.description
+            "description": result["description"] or "",
             "meta": {
                 "canonical": result["canonical"] or (url or ""),
                 "description": result["description"] or "",
@@ -118,10 +123,9 @@ class ArticleExtractor:
                 "source_is_aggregator": source_info["is_aggregator"],
                 "source_resolved": source_info["resolved"],
             },
-            "_field_sources": sources,   # which strategy filled each field (QA/debugging aid)
+            "_field_sources": sources,
         }
 
 
 def extract_article(html: str, url: Optional[str] = None) -> Dict:
-    """Convenience function, drop-in replacement for the old API."""
     return ArticleExtractor().extract(html, url)
