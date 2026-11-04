@@ -3,8 +3,12 @@
 These exist because a real bug (batch.search_and_summarize forwarding
 `limit=` to api.search, whose parameter is `max_results=`) got through
 every prior test. The fix is trivial; the value is in making sure it
-can't come back."""
-from unittest.mock import patch
+can't come back.
+"""
+from contextlib import nullcontext
+from unittest.mock import AsyncMock, patch
+
+import pytest
 
 from open_news.processing import batch
 
@@ -28,4 +32,53 @@ def test_search_and_summarize_forwards_max_results():
     assert "limit" not in captured, (
         "search_and_summarize forwarded `limit=` to api.search, which "
         "does not accept it"
+    )
+
+
+def _stub_fetch():
+    """Return a context manager that stubs whichever fetch function
+    batch.py imported — sync (get_article) or async (get_article_async).
+
+    Patching the module-local name (batch.get_article_async) is required
+    because `from X import Y` binds Y into the importing module's
+    namespace; patching the source module wouldn't intercept the call."""
+    stub = {"text": "body text long enough for a summary", "title": "Same"}
+    if hasattr(batch, "get_article_async"):
+        return patch(
+            "open_news.processing.batch.get_article_async",
+            new_callable=AsyncMock,
+            return_value=stub,
+        )
+    if hasattr(batch, "get_article"):
+        return patch(
+            "open_news.processing.batch.get_article",
+            return_value=stub,
+        )
+    return nullcontext()
+
+
+def test_search_and_summarize_calls_search_exactly_once():
+    """search_and_summarize must not re-fetch search results to dedupe.
+
+    The historical bug called search() a second time when dedupe=True
+    (once for results, once "to dedupe" — which did nothing). This test
+    pins the correct behaviour: exactly one network round-trip, and
+    deduplication runs on the list already in memory.
+    """
+    call_count = {"n": 0}
+
+    def fake_search(query, **kwargs):
+        call_count["n"] += 1
+        return [
+            {"title": "Same", "url": "https://a.com/1"},
+            {"title": "Same", "url": "https://a.com/1?utm_source=x"},
+        ]
+
+    with patch("open_news.api.search", side_effect=fake_search), _stub_fetch():
+        batch.search_and_summarize("query", limit=2, dedupe=True)
+
+    assert call_count["n"] == 1, (
+        f"search() called {call_count['n']} times; must be exactly 1. "
+        f"The dedupe branch re-fetches results instead of deduping the "
+        f"list already in memory."
     )
