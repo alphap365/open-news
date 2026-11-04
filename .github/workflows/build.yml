@@ -1,3 +1,4 @@
+# build.yml
 name: Build (reusable)
 
 on:
@@ -39,11 +40,21 @@ jobs:
 
       - name: Install wheel in a clean virtual environment
         run: |
+          rm -rf /tmp/open-news-wheel-test
           python -m venv /tmp/open-news-wheel-test
           /tmp/open-news-wheel-test/bin/python -m pip install --upgrade pip
           /tmp/open-news-wheel-test/bin/python -m pip install dist/*.whl
           /tmp/open-news-wheel-test/bin/python -c "import open_news; print('open_news import OK')"
           /tmp/open-news-wheel-test/bin/open-news --help
+
+      - name: Install sdist in a clean virtual environment
+        run: |
+          rm -rf /tmp/open-news-sdist-test
+          python -m venv /tmp/open-news-sdist-test
+          /tmp/open-news-sdist-test/bin/python -m pip install --upgrade pip
+          /tmp/open-news-sdist-test/bin/python -m pip install dist/*.tar.gz
+          /tmp/open-news-sdist-test/bin/python -c "import open_news; print('open_news import OK from sdist')"
+          /tmp/open-news-sdist-test/bin/open-news --help
 
       - name: Upload verified distributions
         uses: actions/upload-artifact@v4
