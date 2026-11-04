@@ -1,12 +1,67 @@
+import asyncio
 import logging
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Optional, cast
+from typing import Dict, List, cast
 
-from ..fetch.article import get_article
+from ..fetch.article import get_article_async
 from .summarizer import summarize_text
 from .dedupe import dedupe_articles
 
 logger = logging.getLogger(__name__)
+
+
+async def batch_summarize_async(
+    urls: List[str],
+    sentence_count: int = 3,
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
+    max_concurrency: int = 5,
+    timeout_per_article: int = 30,
+    js: bool = False,
+    dedupe: bool = True,
+) -> List[Dict]:
+    if dedupe and urls:
+        deduped = dedupe_articles([{"url": u, "title": ""} for u in urls])
+        urls = [a["url"] for a in deduped]
+
+    sem = asyncio.Semaphore(max_concurrency)
+
+    async def process(url: str) -> Dict:
+        async with sem:
+            try:
+                logger.info("Processing: %s", url)
+                article = await get_article_async(
+                    url, timeout=timeout_per_article, js=js,
+                )
+                if not article.get("text"):
+                    return {
+                        "url": url, "status": "failed", "title": "",
+                        "summary": "Could not extract article content",
+                        "error": "Empty text",
+                    }
+                summary = summarize_text(article["text"], sentence_count)
+                result = {
+                    "url": url, "status": "success",
+                    "title": article.get("title", ""),
+                    "summary": summary,
+                }
+                if include_full_text:
+                    result["text"] = article.get("text", "")
+                if include_images_videos:
+                    result["images"] = article.get("images", [])
+                    result["videos"] = article.get("videos", [])
+                    result["top_image"] = article.get("top_image")
+                return result
+            except Exception as e:
+                logger.error("Error processing %s: %s", url, e)
+                return {
+                    "url": url, "status": "failed", "title": "",
+                    "summary": "", "error": str(e),
+                }
+
+    results = await asyncio.gather(*(process(u) for u in urls))
+    success = sum(1 for r in results if r["status"] == "success")
+    logger.info("Batch done: %d/%d successful", success, len(urls))
+    return list(results)
 
 
 def batch_summarize(
@@ -19,74 +74,50 @@ def batch_summarize(
     js: bool = False,
     dedupe: bool = True,
 ) -> List[Dict]:
-    """
-    Fetch and summarize multiple articles concurrently.
+    """Sync wrapper — `max_workers` maps to async concurrency limit."""
+    return asyncio.run(batch_summarize_async(
+        urls, sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_workers,
+        timeout_per_article=timeout_per_article,
+        js=js, dedupe=dedupe,
+    ))
 
-    Args:
-        urls: List of article URLs.
-        sentence_count: Sentences per summary.
-        include_full_text: Include full article text in result.
-        include_images_videos: Include images and videos in result.
-        max_workers: Number of concurrent threads.
-        timeout_per_article: Timeout per article in seconds.
-        js: If True, render each page with a headless browser before
-            extraction (requires `pip install open-news-api[js]`).
-        dedupe: If True (default), normalize and dedupe URLs before
-            fetching — avoids wasting network/extraction time on the
-            same article reached via two different links (e.g. a
-            Google News redirect and the outlet's direct URL).
-    """
-    if dedupe and urls:
-        deduped = dedupe_articles([{"url": u, "title": ""} for u in urls])
-        urls = [a["url"] for a in deduped]
 
-    results = []
+async def search_and_summarize_async(
+    query: str,
+    limit: int = 10,
+    sentence_count: int = 3,
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
+    max_concurrency: int = 5,
+    js: bool = False,
+    dedupe: bool = True,
+) -> List[Dict]:
+    from ..api import search  # deferred: avoid circular import
 
-    def process(url: str) -> Dict:
-        try:
-            logger.info(f"Processing: {url}")
-            article = get_article(url, timeout=timeout_per_article, js=js)
-            if not article.get("text"):
-                return {
-                    "url": url,
-                    "status": "failed",
-                    "title": "",
-                    "summary": "Could not extract article content",
-                    "error": "Empty text"
-                }
+    articles = cast(List[Dict], search(query, max_results=limit))
+    if not articles:
+        logger.warning("No articles found for %r", query)
+        return []
 
-            summary = summarize_text(article["text"], sentence_count)
-            result = {
-                "url": url,
-                "status": "success",
-                "title": article.get("title", ""),
-                "summary": summary,
-            }
-            if include_full_text:
-                result["text"] = article.get("text", "")
-            if include_images_videos:
-                result["images"] = article.get("images", [])
-                result["videos"] = article.get("videos", [])
-                result["top_image"] = article.get("top_image")
-            return result
-        except Exception as e:
-            logger.error(f"Error processing {url}: {e}")
-            return {
-                "url": url,
-                "status": "failed",
-                "title": "",
-                "summary": "",
-                "error": str(e)
-            }
+    # BUG FIX: the previous code ran search() a second time here and never
+    # deduped. We now dedupe the list we already have.
+    if dedupe:
+        articles = dedupe_articles(articles, fuzzy=True)
 
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_url = {executor.submit(process, url): url for url in urls}
-        for future in as_completed(future_to_url):
-            results.append(future.result())
+    urls = [art["url"] for art in articles]
+    batch_results = await batch_summarize_async(
+        urls, sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_concurrency, js=js,
+        dedupe=False,  # already deduped above
+    )
 
-    success = sum(1 for r in results if r["status"] == "success")
-    logger.info(f"Batch done: {success}/{len(urls)} successful")
-    return results
+    url_to_search = {art["url"]: art for art in articles}
+    return [{**url_to_search.get(br["url"], {}), **br} for br in batch_results]
 
 
 def search_and_summarize(
@@ -99,50 +130,13 @@ def search_and_summarize(
     js: bool = False,
     dedupe: bool = True,
 ) -> List[Dict]:
-    """
-    Search Google News, fetch articles, and summarize them.
-
-    Args:
-        query: Search term.
-        limit: Maximum number of articles.
-        sentence_count: Sentences per summary.
-        include_full_text: Include full text.
-        include_images_videos: Include images/videos.
-        max_workers: Concurrent threads.
-        js: If True, render each article page with a headless browser.
-        dedupe: If True (default), dedupe search results (by normalized
-            URL, falling back to fuzzy title match across <=300 results)
-            before fetching/summarizing.
-    """
-    from ..api import search  # avoid circular import
-
-    articles = search(query, max_results=limit)
-    if not articles:
-        logger.warning(f"No articles found for '{query}'")
-        return []
-
-    if dedupe:
-        articles = cast(List[Dict], search(query, max_results=limit))
-
-    urls = [cast(Dict, art)["url"] for art in articles]
-    batch_results = batch_summarize(
-        urls,
-        sentence_count=sentence_count,
+    return asyncio.run(search_and_summarize_async(
+        query, limit=limit, sentence_count=sentence_count,
         include_full_text=include_full_text,
         include_images_videos=include_images_videos,
-        max_workers=max_workers,
-        js=js,
-        dedupe=False,  # already deduped above with title-aware fuzzy match
-    )
+        max_concurrency=max_workers, js=js, dedupe=dedupe,
+    ))
 
-    url_to_search = {
-        cast(Dict, art)["url"]: cast(Dict, art) for art in articles
-    }
-    merged = []
-    for br in batch_results:
-        search_data = url_to_search.get(br["url"], {})
-        merged.append({**search_data, **br})
-    return merged
 
 # Legacy aliases
 fetch_and_summarize_batch = batch_summarize
