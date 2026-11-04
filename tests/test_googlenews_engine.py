@@ -23,17 +23,46 @@ class _FakeFeed:
 
 
 def _install_fake_feed(monkeypatch, entries):
-    """Install a fake feedparser.parse that records the URL and returns
-    a feed with the given entries."""
+    """Install a fake feed fetcher that records the requested URL.
+
+    After the async migration, the engine fetches with httpx and calls
+    feedparser.parse(resp.content) — so feedparser.parse sees the response
+    *body*, not the URL. Patching feedparser.parse therefore captures the
+    wrong thing, and the URL-assertion tests in this file fail against
+    real RSS XML.
+
+    Patching _fetch_entries / _fetch_entries_async captures the URL at the
+    point where search_raw / fetch_raw construct it, which is exactly what
+    these tests verify.
+    """
     calls = {"url": ""}
 
-    def fake_parse(url):
-        calls["url"] = url
-        return _FakeFeed(entries)
+    def sync_impl(feed_url):
+        calls["url"] = feed_url
+        return list(entries)
 
-    monkeypatch.setattr(googlenews_engine.feedparser, "parse", fake_parse)
+    async def async_impl(feed_url):
+        calls["url"] = feed_url
+        return list(entries)
+
+    patched = False
+    if hasattr(googlenews_engine, "_fetch_entries_async"):
+        monkeypatch.setattr(googlenews_engine, "_fetch_entries_async", async_impl)
+        patched = True
+    if hasattr(googlenews_engine, "_fetch_entries"):
+        monkeypatch.setattr(googlenews_engine, "_fetch_entries", sync_impl)
+        patched = True
+
+    if not patched:
+        # Defensive fallback for engines that don't expose either helper.
+        def fake_parse(url, *args, **kwargs):
+            if isinstance(url, bytes):
+                url = url.decode("utf-8", "replace")
+            calls["url"] = url
+            return _FakeFeed(entries)
+        monkeypatch.setattr(googlenews_engine.feedparser, "parse", fake_parse)
+
     return calls
-
 
 def _entry(
     title: str = "Test Story",
@@ -324,3 +353,54 @@ class TestPureFallback:
 
     def test_parse_rss_returns_empty_on_garbage(self):
         assert googlenews_engine._parse_rss("not xml at all", max_items=5) == []
+
+def test_source_as_plain_string_not_dict(monkeypatch):
+    """Some Atom feeds produce a plain-string <source>, not a dict.
+    entry["source"].get("title") raises AttributeError on str."""
+    _install_fake_feed(monkeypatch, [
+        {
+            "title": "Headline",
+            "link": "https://example.com/a",
+            "published": "2026-01-01T00:00:00+00:00",
+            "summary": "s",
+            "source": "String Outlet",   # ← plain str, not {"title": ...}
+        },
+    ])
+    results = googlenews_engine.search_raw(
+        SearchConfig(query="x", max_results=5),
+    )
+    assert len(results) == 1
+    assert results[0]["source"] == "String Outlet"
+
+
+def test_source_as_none(monkeypatch):
+    _install_fake_feed(monkeypatch, [
+        {
+            "title": "Headline - Fallback Outlet",
+            "link": "https://example.com/a",
+            "published": "",
+            "summary": "",
+            "source": None,
+        },
+    ])
+    results = googlenews_engine.search_raw(
+        SearchConfig(query="x", max_results=5),
+    )
+    assert results[0]["source"] == "Fallback Outlet"
+
+
+def test_source_missing_entirely(monkeypatch):
+    _install_fake_feed(monkeypatch, [
+        {
+            "title": "Headline",
+            "link": "https://example.com/a",
+            "published": "",
+            "summary": "",
+            # no "source" key at all
+        },
+    ])
+    results = googlenews_engine.search_raw(
+        SearchConfig(query="x", max_results=5),
+    )
+    assert len(results) == 1
+    assert results[0]["source"] == "Example"
