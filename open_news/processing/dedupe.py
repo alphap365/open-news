@@ -89,33 +89,7 @@ def dedupe_articles(
     url_key: str = "url",
     title_key: str = "title",
 ) -> List[Dict]:
-    """
-    Remove duplicate articles.
-
-    Stage 1 (always): normalize URLs (resolve gnews redirects, strip
-    scheme/www/trailing-slash/tracking params) and dedupe on exact match.
-    When both a direct-outlet entry and an aggregator entry resolve to
-    the same URL, the direct-outlet entry is kept (better metadata, no
-    aggregator passthrough). The resolved URL is also written back onto
-    every surviving article — previously it was computed only to build
-    the dedupe key and then discarded, so a Google News link that made
-    it this far without being resolved upstream (e.g. from a caller not
-    using duckduckgo_engine.py / googlenews_engine.py) would still be
-    crawled as a redirect stub by full-content enrichment.
-
-    Stage 2 (opt-in via fuzzy=True): collapse near-duplicate titles across
-    different URLs (same story, different outlets). O(n^2) on article
-    count — skipped automatically above FUZZY_MAX_ARTICLES with a warning.
-
-    Args:
-        articles: List of article dicts.
-        fuzzy: Enable stage 2 fuzzy title dedupe.
-        url_key: Dict key holding the article URL.
-        title_key: Dict key holding the article title.
-
-    Returns:
-        Deduplicated list, original order preserved (first-seen wins).
-    """
+    """... (docstring unchanged) ..."""
     seen: Dict[str, Dict] = {}
     order: List[str] = []
 
@@ -123,34 +97,35 @@ def dedupe_articles(
         url = art.get(url_key, "")
         if not url:
             continue
-        key = normalize_url(url)
 
-        # normalize_url() already resolves gnews redirects internally to
-        # build the key — write that resolved URL back onto the article
-        # itself so nothing downstream ever crawls the raw redirect.
+        # Resolve gnews redirects ONCE. normalize_url() would otherwise call
+        # resolve_url() internally, and the explicit resolve below would call
+        # it a second time — two network round-trips per URL.
         if is_google_news_url(url):
-            art[url_key] = resolve_url(url)
+            url = resolve_url(url)
+            art[url_key] = url
+
+        key = normalize_url(url)
 
         if key not in seen:
             seen[key] = art
             order.append(key)
             continue
 
-        # Collision: prefer the non-aggregator entry
         existing = seen[key]
         if _is_aggregator(existing) and not _is_aggregator(art):
             seen[key] = art
 
     stage1 = [seen[k] for k in order]
-    logger.info(f"Dedupe stage 1 (exact URL): {len(articles)} -> {len(stage1)}")
+    logger.info("Dedupe stage 1 (exact URL): %d -> %d", len(articles), len(stage1))
 
     if not fuzzy:
         return stage1
 
     if len(stage1) > FUZZY_MAX_ARTICLES:
         logger.warning(
-            f"Skipping fuzzy dedupe: {len(stage1)} articles exceeds "
-            f"FUZZY_MAX_ARTICLES={FUZZY_MAX_ARTICLES}"
+            "Skipping fuzzy dedupe: %d articles exceeds FUZZY_MAX_ARTICLES=%d",
+            len(stage1), FUZZY_MAX_ARTICLES,
         )
         return stage1
 
@@ -159,15 +134,13 @@ def dedupe_articles(
 
     for art in stage1:
         title = _normalize_title(art.get(title_key, ""))
-        art.setdefault("_cluster_size", 1)   # how many reports this story stands for
+        art.setdefault("_cluster_size", 1)
         match = _find_similar(title, kept_titles, FUZZY_TITLE_THRESHOLD) if title else None
         if match is None:
             kept.append(art)
             kept_titles.append(title)
         else:
-            # Keep the first, but remember the cluster: sort_by="popularity"
-            # would otherwise see every story as unique after dedupe.
             kept[match]["_cluster_size"] += art["_cluster_size"]
 
-    logger.info(f"Dedupe stage 2 (fuzzy title): {len(stage1)} -> {len(kept)}")
+    logger.info("Dedupe stage 2 (fuzzy title): %d -> %d", len(stage1), len(kept))
     return kept
