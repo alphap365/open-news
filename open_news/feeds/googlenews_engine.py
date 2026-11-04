@@ -18,6 +18,7 @@ from concurrent.futures import ThreadPoolExecutor
 
 import feedparser
 import httpx
+import asyncio
 
 try:
     import lxml.etree as _lxml_etree
@@ -74,9 +75,8 @@ def _region_name(location: Optional[str]) -> str:
 # ----------------------------------------------------------------------
 # Public: keyword search
 # ----------------------------------------------------------------------
-
-def search_raw(
-    config: SearchConfig,
+async def search_raw_async(
+    config: "SearchConfig",
     country: Optional[str] = None,
     language: Optional[str] = None,
 ) -> List[Dict]:
@@ -85,11 +85,12 @@ def search_raw(
         f"https://news.google.com/rss/search?"
         f"q={quote_plus(query)}&{_locale_params(country, language)}"
     )
-    entries = _fetch_entries(feed_url)
-    results = _normalize_entries(entries[: config.max_results * 2])
-    logger.info("Google News search(%r) returned %d raw results", query, len(results))
-    return results
+    entries = await _fetch_entries_async(feed_url)
+    return await _normalize_entries_async(entries[: config.max_results * 2])
 
+def search_raw(config, country=None, language=None):
+    logger.info("Google News search(...) via sync wrapper")
+    return asyncio.run(search_raw_async(config, country=country, language=language))
 
 _QUERY_TOKEN_RE = re.compile(r'"[^"]+"|\S+')
 
@@ -147,8 +148,7 @@ def _locale_from_location(location: Optional[str]) -> str:
     lang = parts[1] if len(parts) > 1 else "en"
     return _locale_params(country, lang)
 
-
-def fetch_raw(config: FetchConfig) -> List[Dict]:
+async def fetch_raw_async(config: "FetchConfig") -> List[Dict]:
     category = (config.category or "").lower().strip()
     location = (config.location or "").lower().strip()
     locale = _locale_from_location(location)
@@ -158,59 +158,57 @@ def fetch_raw(config: FetchConfig) -> List[Dict]:
     if topic and has_location:
         region = _region_name(location)
         query = f"{region} {category} news"
-        feed_url = (
-            f"https://news.google.com/rss/search?"
-            f"q={quote_plus(query)}&{locale}"
-        )
+        feed_url = f"https://news.google.com/rss/search?q={quote_plus(query)}&{locale}"
     elif topic:
-        feed_url = (
-            f"https://news.google.com/rss/headlines/section/topic/{topic}?{locale}"
-        )
+        feed_url = f"https://news.google.com/rss/headlines/section/topic/{topic}?{locale}"
     else:
-        # General news, with or without a location. The locale carries the
-        # country (gl=IN etc.), so no geo/ path is needed.
         feed_url = f"https://news.google.com/rss?{locale}"
 
-    entries = _fetch_entries(feed_url)
-    results = _normalize_entries(entries[: config.max_results * 2])
-    logger.info("Google News category feed returned %d raw results", len(results))
-    return results
+    entries = await _fetch_entries_async(feed_url)
+    return await _normalize_entries_async(entries[: config.max_results * 2])
 
+def fetch_raw(config):
+    return asyncio.run(fetch_raw_async(config))
 
 # ----------------------------------------------------------------------
 # Internal
 # ----------------------------------------------------------------------
 
-def _fetch_entries(feed_url: str) -> List[Any]:
+async def _fetch_entries_async(feed_url: str) -> List[Any]:
     try:
-        feed = feedparser.parse(feed_url)
-        entries = list(feed.entries)
+        async with httpx.AsyncClient(follow_redirects=True, timeout=_TIMEOUT) as c:
+            resp = await c.get(feed_url, headers={"User-Agent": _DEFAULT_UA})
+            resp.raise_for_status()
+            return list(feedparser.parse(resp.content).entries)
     except Exception as e:
-        logger.error("Google News feedparser failed: %s", e)
-        entries = []
+        logger.error("Google News feed fetch failed: %s", e)
+        return []
 
-    if not entries and _pure_fallback_enabled():
-        try:
-            entries = _fetch_and_parse_pure(feed_url)
-        except Exception as e:
-            logger.error("Pure-Python Google News fetch failed: %r", e)
-    return entries
-
-
-def _normalize_entries(entries: List[Any]) -> List[Dict]:
+async def _normalize_entries_async(entries: List[Any]) -> List[Dict]:
     entries = [e for e in entries if e.get("link")]
     if not entries:
         return []
 
-    # Decode redirects concurrently; pool.map preserves input order.
-    with ThreadPoolExecutor(max_workers=4) as pool:
-        urls = list(pool.map(lambda e: resolve_url(e["link"]), entries))
+    # Resolve URLs concurrently. resolve_url() is a network call for gnews
+    # redirects; to_thread moves it off the event loop.
+    async def one(link: str) -> str:
+        return await asyncio.to_thread(resolve_url, link)
+
+    urls = await asyncio.gather(*(one(e["link"]) for e in entries))
 
     results: List[Dict] = []
     for entry, real_url in zip(entries, urls):
         link = entry["link"]
 
-        source = entry.get("source", {}).get("title", "")
+        # feedparser usually yields a FeedParserDict here, but some feeds
+        # produce a plain string — .get("title") on str raises.
+        src = entry.get("source")
+        if isinstance(src, dict):
+            source = src.get("title", "")
+        elif isinstance(src, str):
+            source = src
+        else:
+            source = ""
         if not source and " - " in entry.get("title", ""):
             source = entry["title"].split(" - ")[-1]
         if not source:
@@ -225,7 +223,6 @@ def _normalize_entries(entries: List[Any]) -> List[Dict]:
             "_tier": _TIER,
         })
     return results
-
 
 def _fetch_and_parse_pure(feed_url: str) -> List[Dict[str, Any]]:
     headers = {
