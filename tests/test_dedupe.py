@@ -64,3 +64,38 @@ def test_dedupe_fuzzy_title():
     ]
     result = dedupe_articles(articles, fuzzy=True)
     assert len(result) == 2
+
+def test_dedupe_resolves_google_url_once_per_entry(mocker):
+    """dedupe_articles must resolve each Google News URL exactly once.
+
+    normalize_url() already calls resolve_url() internally. An explicit
+    second resolve_url() per gnews URL costs a network round-trip for no
+    benefit."""
+    spy = mocker.patch(
+        "open_news.processing.dedupe.resolve_url",
+        return_value="https://real.example.com/story",
+    )
+    dedupe_articles(
+        [{"url": "https://news.google.com/rss/articles/abc", "title": "A"}],
+        fuzzy=False,
+    )
+    assert spy.call_count <= 1, (
+        f"resolve_url called {spy.call_count} times for a single Google "
+        f"News URL; must be at most 1"
+    )
+
+
+def test_dedupe_never_resolves_non_google_urls(mocker):
+    """Direct-outlet URLs must not go through resolve_url at all."""
+    spy = mocker.patch(
+        "open_news.processing.dedupe.resolve_url",
+        return_value="https://irrelevant.example/",
+    )
+    dedupe_articles(
+        [
+            {"url": "https://a.com/story", "title": "A"},
+            {"url": "https://b.com/story", "title": "B"},
+        ],
+        fuzzy=False,
+    )
+    spy.assert_not_called()

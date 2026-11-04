@@ -9,7 +9,7 @@ from urllib.parse import urljoin, urlparse
 
 from dateutil import parser as date_parser
 from lxml.html import HtmlElement
-
+import weakref
 from ..utils.dates import parse_datetime
 
 logger = logging.getLogger(__name__)
@@ -50,6 +50,21 @@ AUTHOR_ROLE_SUFFIX_RE = re.compile(
     r"opinion|columnist|special to.*|updated.*|published.*)\s*$", re.I,
 )
 
+# JSON-LD parsed once per document, keyed by the doc object itself.
+# Weak-keyed so the entry vanishes when the lxml tree is garbage-collected —
+# extract_article() calls create a fresh tree per invocation, so this cache
+# never outlives a single extraction.
+_JSON_LD_CACHE: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
+
+
+def get_cached_json_ld(doc) -> Optional[Dict]:
+    """Return the JSON-LD data parsed from `doc`, or None if it hasn't
+    been parsed yet. Does NOT trigger a parse — callers that need the
+    data must first let JsonLdStrategy.extract() run."""
+    try:
+        return _JSON_LD_CACHE.get(doc)
+    except TypeError:
+        return None
 
 def _empty(v: Any) -> bool:
     return v is None or v == "" or v == [] or v == {}
@@ -121,7 +136,7 @@ class JsonLdStrategy(ExtractionStrategy):
     name = "json_ld"
 
     def extract(self, doc: HtmlElement, url: Optional[str], needed: Set[str]) -> Dict[str, Any]:
-        ld = self._parse(doc)
+        ld = self._get_or_parse(doc)
         if not ld:
             return {}
 
@@ -180,8 +195,8 @@ class JsonLdStrategy(ExtractionStrategy):
 
     # -- helpers ---------------------------------------------------
     def _parse(self, doc: HtmlElement) -> Dict:
-        """Merge all JSON-LD blocks, preferring Article/NewsArticle types
-        for fields that conflict with Organization/WebSite/Breadcrumb blocks."""
+        """Parse all JSON-LD blocks on `doc`. No caching here — the cache
+        lives in _get_or_parse so this method runs at most once per doc."""
         data: Dict[str, Any] = {}
         for script in doc.xpath('//script[@type="application/ld+json"]'):
             try:
@@ -189,7 +204,6 @@ class JsonLdStrategy(ExtractionStrategy):
             except Exception:
                 continue
             items = parsed if isinstance(parsed, list) else [parsed]
-            # unwrap @graph containers
             expanded = []
             for item in items:
                 if isinstance(item, dict) and "@graph" in item and isinstance(item["@graph"], list):
@@ -200,12 +214,28 @@ class JsonLdStrategy(ExtractionStrategy):
                 if not isinstance(item, dict):
                     continue
                 schema_type = str(item.get("@type", ""))
-                is_article = "Article" in schema_type or "NewsArticle" in schema_type or "BlogPosting" in schema_type
+                is_article = (
+                    "Article" in schema_type
+                    or "NewsArticle" in schema_type
+                    or "BlogPosting" in schema_type
+                )
                 for key, value in item.items():
                     if key not in data or is_article:
                         data[key] = value
         return data
-
+    
+    def _get_or_parse(self, doc: HtmlElement) -> Dict:
+        """Cache-or-parse. The only method that calls `_parse`."""
+        cached = get_cached_json_ld(doc)
+        if cached is not None:
+            return cached
+        data = self._parse(doc)
+        try:
+            _JSON_LD_CACHE[doc] = data
+        except TypeError:
+            pass
+        return data
+    
     def _authors(self, ld: Dict) -> List[str]:
         auth = ld.get("author")
         names: List[str] = []

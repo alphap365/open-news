@@ -51,7 +51,6 @@ class ArticleExtractor:
         result: Dict = {}
         sources: Dict[str, str] = {}
         needed = set(ALL_FIELDS)
-        json_ld_data: Optional[Dict] = None   # captured once during the loop
 
         for strategy in self.strategies:
             if not needed:
@@ -64,11 +63,6 @@ class ArticleExtractor:
 
             # Capture the JSON-LD parse on first encounter so source
             # resolution doesn't have to re-parse the same script tags.
-            if json_ld_data is None and isinstance(strategy, JsonLdStrategy):
-                try:
-                    json_ld_data = strategy._parse(doc)
-                except Exception:
-                    json_ld_data = None
 
             for field, value in found.items():
                 if field not in needed:
@@ -83,14 +77,19 @@ class ArticleExtractor:
             result.setdefault(field, _default(field))
 
         # Aggregator-aware source resolution.
+        # Source resolution: reuse JSON-LD that JsonLdStrategy already
+        # parsed during the strategy loop. Reading the cache (rather than
+        # calling _parse again) avoids a second pass over the same
+        # <script> tags.
+        from .strategies import get_cached_json_ld
+
         source_info = {"source": "", "is_aggregator": False, "resolved": True}
         if url:
+            json_ld_raw = get_cached_json_ld(doc)
             try:
-                source_info = resolve_source(
-                    doc, url, result["site_name"], json_ld_data,
-                )
+                source_info = resolve_source(doc, url, result["site_name"], json_ld_raw)
             except Exception as e:
-                logger.debug("source resolution failed for %s: %s", url, e)
+                logger.debug(f"source resolution failed for {url}: {e}")
                 from urllib.parse import urlparse as _urlparse
                 source_info = {
                     "source": _urlparse(url).netloc.replace("www.", ""),
