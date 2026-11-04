@@ -1,3 +1,4 @@
+# maintenance.yml
 name: Dependency maintenance check
 
 on:
@@ -13,6 +14,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  lock-freshness:
+    name: Verify uv.lock is not stale
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Assert lockfile is consistent with pyproject.toml
+        # Fails if `uv lock` would need to change uv.lock to satisfy pyproject.toml.
+        run: uv lock --locked
+
   latest-compatible-dependencies:
     name: Test against latest compatible dependencies
     runs-on: ubuntu-latest

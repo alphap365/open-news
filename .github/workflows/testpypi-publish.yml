@@ -1,3 +1,4 @@
+# testpypi-publish.yml
 name: Publish prerelease to TestPyPI
 
 on:
@@ -71,6 +72,7 @@ jobs:
     needs: [validate-release, tests, build]
     if: ${{ needs.validate-release.result == 'success' && needs.tests.result == 'success' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     environment:
       name: testpypi
       url: https://test.pypi.org/p/open-news-api
@@ -78,6 +80,11 @@ jobs:
       contents: read
       id-token: write
     steps:
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
       - name: Download distributions built by the verified build job
         uses: actions/download-artifact@v4
         with:
