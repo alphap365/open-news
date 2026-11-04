@@ -9,6 +9,14 @@ from ..fetch.url_resolver import is_google_news_url, resolve_url
 
 logger = logging.getLogger(__name__)
 
+def _coerce_source(raw) -> str:
+    """feedparser usually returns a FeedParserDict here, but some feeds
+    produce a plain string — .get("title") on str raises."""
+    if isinstance(raw, dict):
+        return raw.get("title", "") or ""
+    if isinstance(raw, str):
+        return raw
+    return ""
 
 def from_rss(feed_url: str, limit: int = 10, resolve_google_urls: bool = True) -> List[Dict]:
     """
@@ -30,6 +38,8 @@ def from_rss(feed_url: str, limit: int = 10, resolve_google_urls: bool = True) -
             if resolve_google_urls and is_google_news_url(link):
                 real_url = resolve_url(link)
 
+            source = _coerce_source(entry.get("source")) or feed.feed.get("title", "Unknown RSS")
+
             description = entry.get("description", entry.get("summary", ""))
             if description:
                 soup = BeautifulSoup(description, "html.parser")
@@ -38,7 +48,8 @@ def from_rss(feed_url: str, limit: int = 10, resolve_google_urls: bool = True) -
             articles.append({
                 "title": entry.get("title", "No title"),
                 "url": real_url,
-                "source": feed.feed.get("title", "Unknown RSS"),
+                # "source": feed.feed.get("title", "Unknown RSS"),
+                "source": source,
                 "published": entry.get("published", entry.get("pubDate", "")),
                 "description": description[:500],
             })
@@ -61,12 +72,11 @@ def from_google_news(query: str, limit: int = 10) -> List[Dict]:
                 continue
             real_url = resolve_url(redirect_url)
 
-            source = entry.get("source", {}).get("title", "")
+            source = _coerce_source(entry.get("source"))
             if not source and " - " in entry.get("title", ""):
                 source = entry["title"].split(" - ")[-1]
             if not source and real_url:
-                domain = urlparse(real_url).netloc
-                source = domain.replace("www.", "").split(".")[0].title()
+                source = urlparse(real_url).netloc.replace("www.", "").split(".")[0].title()
 
             description = entry.get("description", entry.get("summary", ""))
             if description:
