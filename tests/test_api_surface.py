@@ -12,10 +12,14 @@ Two failure modes this file exists to catch:
      pip install . metadata disagrees with open_news.__version__.
 """
 
-import tomllib
 from pathlib import Path
 
 import pytest
+
+try:
+    import tomllib  # Python 3.11+
+except ModuleNotFoundError:  # Python 3.10
+    import tomli as tomllib
 
 import open_news
 
