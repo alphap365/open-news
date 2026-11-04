@@ -1,3 +1,4 @@
+import asyncio
 import logging
 from datetime import date, datetime
 from typing import cast, Dict, Iterator, List, Optional, Union
@@ -10,10 +11,10 @@ from .fetch.crawler import crawl_site
 from .feeds.sources import from_rss, search_site as _search_site
 from .feeds.rss_discovery import discover_rss_feed
 from .feeds.duckduckgo_engine import fetch_raw
-from .feeds.googlenews_engine import search_raw
+from .feeds.googlenews_engine import search_raw, search_raw_async
 from .config import FetchConfig, SearchConfig
 from .processing.dedupe import dedupe_articles
-from .processing.pipeline import run_pipeline
+from .processing.pipeline import run_pipeline, run_pipeline_async
 from .processing.token_filter import filter_articles as _token_filter
 
 logger = logging.getLogger(__name__)
@@ -21,6 +22,77 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # Simplified public API
 # ------------------------------------------------------------------
+
+async def fetch_async(
+    category: str = "general",
+    location: Optional[str] = None,
+    time_limit: str = "d",
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    search_in: Optional[List[str]] = None,
+    js: bool = False,
+    dedupe: bool = True,
+) -> List[Dict]:
+    """Async variant of fetch(). Streaming is sync-only; use sync fetch for it."""
+    config = FetchConfig(
+        category=category, location=location, time_limit=time_limit,
+        max_results=max_results, language=language, whitelist=whitelist,
+        blacklist=blacklist, sort_by=sort_by, full_content=full_content,
+        search_in=search_in or ["title", "description"],
+    )
+    # fetch_raw is still sync internally; call it via to_thread so the loop
+    # can schedule other tasks. (Further tier-by-tier async upgrades can
+    # layer on top of this later.)
+    raw = await asyncio.to_thread(fetch_raw, config)
+    return await run_pipeline_async(
+        raw, max_results=config.max_results, language=config.language,
+        whitelist=config.whitelist, blacklist=config.blacklist,
+        sort_by=config.sort_by, full_content=config.full_content,
+        search_in=config.search_in, dedupe=dedupe, js=js,
+    )
+
+
+async def search_async(
+    query: str,
+    query_mode: str = "any",
+    exclude_terms: Optional[List[str]] = None,
+    time_limit: str = "d",
+    start_date: Optional[Union[str, date, datetime]] = None,
+    end_date: Optional[Union[str, date, datetime]] = None,
+    country: Optional[str] = None,
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    search_in: Optional[List[str]] = None,
+    js: bool = False,
+    dedupe: bool = True,
+) -> List[Dict]:
+    """Async variant of search()."""
+    config = SearchConfig(
+        query=query, query_mode=query_mode, exclude_terms=exclude_terms,
+        time_limit=time_limit, start_date=start_date, end_date=end_date,
+        max_results=max_results, language=language,
+        whitelist=whitelist, blacklist=blacklist, sort_by=sort_by,
+        full_content=full_content,
+        search_in=search_in or ["title", "description"],
+    )
+    raw = await search_raw_async(config, country=country, language=config.language)
+    return await run_pipeline_async(
+        raw, max_results=config.max_results, language=config.language,
+        query=config.query, query_mode=config.query_mode,
+        exclude_terms=config.exclude_terms, search_in=config.search_in,
+        whitelist=config.whitelist, blacklist=config.blacklist,
+        sort_by=config.sort_by, full_content=config.full_content,
+        dedupe=dedupe, js=js,
+    )
+
 
 def get_article(url: str, timeout: int = 15, js: bool = False) -> Dict:
     """Fetch full article content, metadata, images, videos."""
@@ -74,13 +146,13 @@ def fetch(
     if refresh_interval:
         return _fetch_stream(config, js=js, dedupe=dedupe)
 
-    raw = fetch_raw(config)
-    return run_pipeline(
-        raw, max_results=config.max_results, language=config.language,
-        whitelist=config.whitelist, blacklist=config.blacklist,
-        sort_by=config.sort_by, full_content=config.full_content,
-        search_in=config.search_in, dedupe=dedupe, js=js,
-    )
+    return asyncio.run(fetch_async(
+        category=category, location=location, time_limit=time_limit,
+        max_results=max_results, language=language,
+        whitelist=whitelist, blacklist=blacklist,
+        sort_by=sort_by, full_content=full_content,
+        search_in=search_in, js=js, dedupe=dedupe,
+    ))
 
 
 def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[Dict]]:
@@ -161,16 +233,15 @@ def search(
 
     if refresh_interval:
         return _search_stream(config, country=country, js=js, dedupe=dedupe)
-
-    raw = search_raw(config, country=country, language=config.language)
-    return run_pipeline(
-        raw, max_results=config.max_results, language=config.language,
-        query=config.query, query_mode=config.query_mode,
-        exclude_terms=config.exclude_terms, search_in=config.search_in,
-        whitelist=config.whitelist, blacklist=config.blacklist,
-        sort_by=config.sort_by, full_content=config.full_content,
-        dedupe=dedupe, js=js,
-    )
+    
+    return asyncio.run(search_async(
+        query=query, query_mode=query_mode, exclude_terms=exclude_terms,
+        time_limit=time_limit, start_date=start_date, end_date=end_date,
+        country=country, max_results=max_results, language=language,
+        whitelist=whitelist, blacklist=blacklist, sort_by=sort_by,
+        full_content=full_content, search_in=search_in,
+        js=js, dedupe=dedupe,
+    ))
 
 def _search_stream(config: SearchConfig, country: Optional[str], js: bool, dedupe: bool) -> Iterator[List[Dict]]:
     """Generator backing search(refresh_interval=...) / stream_search():
