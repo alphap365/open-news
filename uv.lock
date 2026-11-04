@@ -1516,7 +1516,7 @@ wheels = [
 
 [[package]]
 name = "open-news-api"
-version = "1.0.5a2"
+version = "1.0.5a3"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -1541,6 +1541,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-vcr" },
     { name = "respx" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tox" },
 ]
 js = [
@@ -1564,6 +1565,7 @@ all = [
     { name = "pytest-vcr" },
     { name = "respx" },
     { name = "sumy" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tox" },
 ]
 dev = [
@@ -1575,6 +1577,7 @@ dev = [
     { name = "pytest-mock" },
     { name = "pytest-vcr" },
     { name = "respx" },
+    { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tox" },
 ]
 js = [
@@ -1607,6 +1610,7 @@ requires-dist = [
     { name = "requests" },
     { name = "respx", marker = "extra == 'dev'", specifier = ">=0.20" },
     { name = "sumy", marker = "extra == 'nlp'", specifier = ">=0.10.0" },
+    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
     { name = "tox", marker = "extra == 'dev'", specifier = ">=4.0" },
 ]
 provides-extras = ["js", "nlp", "dev"]
@@ -1623,6 +1627,7 @@ all = [
     { name = "pytest-vcr", specifier = ">=1.0" },
     { name = "respx", specifier = ">=0.20" },
     { name = "sumy", specifier = ">=0.10.0" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "tox", specifier = ">=4.0" },
 ]
 dev = [
@@ -1633,6 +1638,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.0" },
     { name = "pytest-vcr", specifier = ">=1.0" },
     { name = "respx", specifier = ">=0.20" },
+    { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0" },
     { name = "tox", specifier = ">=4.0" },
 ]
 js = [{ name = "playwright", specifier = ">=1.40.0" }]
