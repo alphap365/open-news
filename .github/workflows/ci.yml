@@ -1,3 +1,4 @@
+
 # Automatic PR / push gate.
 # Tests oldest and newest supported Python, builds distributions, audits deps.
 # No side effects — safe to re-run anytime.
@@ -24,9 +25,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # Oldest and newest supported — the two versions that expose the
-        # most regressions. Widen only when a real inter-version bug shows up.
+        # Oldest and newest supported Python versions.
         python-version: ['3.10', '3.13']
+
     steps:
       - uses: actions/checkout@v4
 
@@ -38,8 +39,6 @@ jobs:
         with:
           enable-cache: true
 
-      # --locked: fail if uv.lock disagrees with pyproject.toml,
-      # instead of silently re-resolving on the runner.
       - name: Install project (locked)
         run: uv sync --locked --python ${{ matrix.python-version }}
 
@@ -54,6 +53,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -72,12 +72,21 @@ jobs:
       - name: Reject unexpected files in dist/
         run: |
           extra=$(find dist -maxdepth 1 -type f \
-            ! -name '*.whl' ! -name '*.tar.gz' ! -name '*.zip' | wc -l)
-          if [ "$extra" -ne 0 ]; then
-            echo "Unexpected files in dist/:" >&2
+            ! -name '*.whl' \
+            ! -name '*.tar.gz' \
+            ! -name '*.zip' \
+            ! -name '.gitignore' | wc -l)
+
+          wheels=$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)
+          sdists=$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)
+
+          if [ "$extra" -ne 0 ] || [ "$wheels" -ne 1 ] || [ "$sdists" -ne 1 ]; then
+            echo "Unexpected distribution contents:" >&2
             ls -la dist/ >&2
             exit 1
           fi
+
+          echo "OK: exactly one wheel and one source distribution found."
 
       - name: Install wheel in a clean venv
         run: |
@@ -100,6 +109,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     needs: test
+
     steps:
       - uses: actions/checkout@v4
 
@@ -111,12 +121,18 @@ jobs:
         with:
           enable-cache: true
 
-      - name: Install project (locked)
-        run: uv sync --locked
+      - name: Export locked dependencies
+        run: |
+          uv export --locked \
+            --format requirements-txt \
+            --no-emit-project \
+            --output-file /tmp/requirements-audit.txt
 
-      # --strict: unresolved or skipped deps are failures, not notes.
-      - name: pip-audit
-        run: uv run --with pip-audit pip-audit --strict
+      - name: Audit dependencies
+        run: |
+          uv run --with pip-audit pip-audit \
+            --strict \
+            -r /tmp/requirements-audit.txt
 
   policy:
     name: Workflow policy
@@ -124,29 +140,19 @@ jobs:
     timeout-minutes: 2
     permissions:
       contents: read
+
     steps:
       - uses: actions/checkout@v4
 
       - name: No production PyPI upload destination in any workflow
         run: |
-          # Matches production PyPI upload endpoints only: the legacy upload
-          # path on pypi.org / upload.pypi.org, or a repository-url override
-          # pointing at production PyPI.
-          #
-          # Does not match (all safe):
-          #   - test.pypi.org's legacy upload path       (TestPyPI)
-          #   - pypi.org's read-only JSON API            (release/wheel checks)
-          #   - environment display URLs                 (url:, not repository-url:)
-          #   - comments (like this one) that don't include a matching URL
-          #
-          # Known gap: pypa/gh-action-pypi-publish with no explicit
-          # repository-url defaults to production and cannot be caught by
-          # grep. Compensating control is the 'pypi' environment's required-
-          # reviewer gate, which fires on any deployment to that environment.
+          # Matches production PyPI upload endpoints only.
+          # TestPyPI is intentionally allowed.
           if grep -rEin \
               "https://(upload\.)?pypi\.org/legacy|repository-url:[[:space:]]+[\"']?https://(upload\.)?pypi\.org" \
               .github/workflows/; then
             echo "ERROR: production PyPI upload destination is forbidden on this branch." >&2
             exit 1
           fi
+
           echo "OK: no production PyPI upload destination found."
