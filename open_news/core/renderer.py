@@ -106,11 +106,22 @@ class PersistentRenderer:
             page.close()
 
     def __exit__(self, exc_type, exc_val, exc_tb):
-        try:
-            if self._context:
-                self._context.close()
-            if self._browser:
-                self._browser.close()
-        finally:
-            if self._pw:
+        # Close each resource in its own try/except: a failure closing the
+        # context must not skip closing the browser, and a failure closing
+        # the browser must not skip stopping the Playwright driver.
+        for attr in ("_context", "_browser"):
+            obj = getattr(self, attr, None)
+            if obj is not None:
+                try:
+                    obj.close()
+                except Exception as e:
+                    logger.warning("%s.close() failed: %s", attr, e)
+                finally:
+                    setattr(self, attr, None)
+        if self._pw is not None:
+            try:
                 self._pw.stop()
+            except Exception as e:
+                logger.warning("playwright driver stop failed: %s", e)
+            finally:
+                self._pw = None
