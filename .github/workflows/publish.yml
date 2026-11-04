@@ -1,0 +1,172 @@
+# Manual publishing to TestPyPI or PyPI. Builds from the tag inside this
+# workflow (never trusts pre-built release assets), so what ships is
+# verifiably the source at that tag.
+#
+# Pre-releases are rejected for the `pypi` target — this closes the old
+# publish-prerelease.yml path that sent pre-releases to production.
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Git tag to publish (e.g. v1.0.3 or v1.0.3a3)'
+        required: true
+        type: string
+      target:
+        description: 'Where to publish. Pre-releases: TestPyPI only.'
+        required: true
+        type: choice
+        options:
+          - testpypi
+          - pypi
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-${{ inputs.tag }}-${{ inputs.target }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    name: Validate tag, version, and target
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+          fetch-depth: 1
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install packaging
+        run: python -m pip install packaging
+
+      - name: Enforce tag/version/target agreement
+        id: check
+        env:
+          TAG: ${{ inputs.tag }}
+          TARGET: ${{ inputs.target }}
+        run: |
+          python3 - <<'PY'
+          import os, sys, tomllib
+          from packaging.version import Version, InvalidVersion
+
+          tag = os.environ["TAG"]
+          target = os.environ["TARGET"]
+
+          if not tag.startswith("v"):
+              sys.exit(f"Refusing: tag must start with 'v', got {tag!r}")
+
+          pyver = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          try:
+              v_py, v_tag = Version(pyver), Version(tag[1:])
+          except InvalidVersion as e:
+              sys.exit(f"Invalid version: {e}")
+
+          if v_py != v_tag:
+              sys.exit(f"Tag {tag} does not match pyproject {pyver!r}")
+
+          is_pre = v_py.is_prerelease or v_py.is_devrelease
+
+          # Hard guard: pre-releases may only target TestPyPI.
+          if is_pre and target == "pypi":
+              sys.exit(
+                  f"Refusing: {pyver} is a pre-release; publish to testpypi first, "
+                  "then a stable version to pypi."
+              )
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={pyver}\n")
+          print(f"Will publish {pyver} to {target}.")
+          PY
+
+  build:
+    name: Build distributions from tag
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag }}
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Validate metadata
+        run: uv run --with twine twine check dist/*
+
+      - name: Verify exactly one wheel and one sdist
+        run: |
+          wheels=$(find dist -maxdepth 1 -name '*.whl' | wc -l)
+          sdists=$(find dist -maxdepth 1 \( -name '*.tar.gz' -o -name '*.zip' \) | wc -l)
+          if [ "$wheels" -ne 1 ] || [ "$sdists" -ne 1 ]; then
+            echo "Expected 1 wheel and 1 sdist, got $wheels wheel(s), $sdists sdist(s)" >&2
+            ls -la dist/ >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: python-distributions
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  publish-testpypi:
+    name: Publish to TestPyPI
+    needs: [validate, build]
+    if: inputs.target == 'testpypi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    environment:
+      name: testpypi
+      url: https://test.pypi.org/p/open-news-api
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          repository-url: https://test.pypi.org/legacy/
+
+  publish-pypi:
+    name: Publish to PyPI
+    needs: [validate, build]
+    if: inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Configure this environment in Settings → Environments with a
+    # "Required reviewers" gate. This is the last line of defence before
+    # production — do not remove the approval requirement.
+    environment:
+      name: pypi
+      url: https://pypi.org/p/open-news-api
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: python-distributions
+          path: dist
+
+      - uses: pypa/gh-action-pypi-publish@release/v1

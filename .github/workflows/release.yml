@@ -1,0 +1,363 @@
+# Manual: validate → test → package release (draft) → optional dep-wheels zip.
+# Nothing publishes to any package index here. A human must run publish.yml
+# against the created (or existing) tag.
+name: Release (tag + draft, optional dep wheels)
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Exact version from pyproject.toml, e.g. 1.1.0 or 1.1.0a1'
+        required: true
+        type: string
+      include_dependency_wheels:
+        description: 'Also build & attach dependency wheels as dependency-wheels.zip (slow; experimental)'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ---- Always runs ------------------------------------------------
+  validate:
+    name: Validate version against pyproject
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.check.outputs.version }}
+      tag: ${{ steps.check.outputs.tag }}
+      is_prerelease: ${{ steps.check.outputs.is_prerelease }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install packaging
+
+      - name: Confirm version matches pyproject.toml
+        id: check
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          python3 - <<'PY'
+          import os, sys, tomllib
+          from packaging.version import Version, InvalidVersion
+
+          pyver = tomllib.load(open("pyproject.toml", "rb"))["project"]["version"]
+          confirm = os.environ["INPUT_VERSION"]
+
+          try:
+              v_py, v_in = Version(pyver), Version(confirm)
+          except InvalidVersion as e:
+              sys.exit(f"Invalid version: {e}")
+
+          if v_py != v_in:
+              sys.exit(f"Version mismatch: pyproject={pyver!r} input={confirm!r}")
+
+          is_pre = v_py.is_prerelease or v_py.is_devrelease
+          tag = f"v{pyver}"
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"version={pyver}\n")
+              f.write(f"tag={tag}\n")
+              f.write(f"is_prerelease={'true' if is_pre else 'false'}\n")
+          print(f"Validated {pyver} ({'pre-release' if is_pre else 'stable'}), tag={tag}")
+          PY
+
+  test:
+    name: Test before tagging
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - run: uv run --locked pytest -q
+
+  # ---- Creates tag + draft release with package files -------------
+  package-release:
+    name: Tag and draft release (package artifacts)
+    needs: [validate, test]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Validate metadata
+        run: uv run --with twine twine check dist/*
+
+      - name: Create tag (if it doesn't already exist)
+        env:
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if git rev-parse "$TAG" >/dev/null 2>&1; then
+            echo "Tag $TAG already exists — skipping tag creation."
+          else
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
+
+      - name: Create draft release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.validate.outputs.tag }}
+          name: v${{ needs.validate.outputs.version }}
+          draft: true
+          prerelease: ${{ needs.validate.outputs.is_prerelease == 'true' }}
+          files: dist/*
+
+  # ---- Optional: dependency wheels --------------------------------
+  dep-matrix:
+    name: Detect dependency-wheel gaps
+    needs: package-release
+    if: inputs.include_dependency_wheels
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+      has_gaps: ${{ steps.filter.outputs.has_gaps }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install httpx
+
+      - name: Compute gaps
+        id: gen
+        run: python .github/scripts/compute_wheel_gaps.py
+
+      - name: Filter and emit matrix
+        id: filter
+        env:
+          MATRIX_IN: ${{ steps.gen.outputs.matrix }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          matrix = json.loads(os.environ["MATRIX_IN"])
+          EXCLUDE = {"lxml"}   # handled by our install script, not here
+          matrix = [m for m in matrix if m["package"].lower() not in EXCLUDE]
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(matrix)}\n")
+              f.write(f"has_gaps={'true' if matrix else 'false'}\n")
+          print(f"{len(matrix)} combination(s) will be built.")
+          for m in matrix:
+              print(" -", m)
+          PY
+
+  dep-build:
+    name: ${{ matrix.package }} ${{ matrix.version }} / ${{ matrix.target }} / ${{ matrix.py_tag }}
+    needs: dep-matrix
+    if: needs.dep-matrix.outputs.has_gaps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.dep-matrix.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Fetch sdist for ${{ matrix.package }}==${{ matrix.version }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          pkg, version = "${{ matrix.package }}", "${{ matrix.version }}"
+          data = json.load(urllib.request.urlopen(
+              f"https://pypi.org/pypi/{pkg}/{version}/json"))
+          sdist = next(u for u in data["urls"] if u["packagetype"] == "sdist")
+          open("sdist_url.txt", "w").write(sdist["url"])
+          PY
+          URL=$(cat sdist_url.txt)
+          curl -fL --retry 3 --retry-delay 2 -o src_archive "$URL"
+          mkdir -p pkgsrc
+          case "$URL" in
+            *.tar.gz|*.tgz) tar xf src_archive -C pkgsrc --strip-components=1 ;;
+            *.zip)
+              mkdir -p pkgsrc_tmp
+              unzip -q src_archive -d pkgsrc_tmp
+              mv pkgsrc_tmp/*/* pkgsrc/ ;;
+            *) echo "Unknown archive: $URL" >&2; exit 1 ;;
+          esac
+
+      - name: Strip dependency [tool.cibuildwheel] config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path("pkgsrc/pyproject.toml")
+          if not p.exists():
+              sys.exit(0)
+          original = p.read_text(encoding="utf-8")
+          text, n = re.subn(
+              r'(?ms)^\[tool\.cibuildwheel(?:\.[^\]]+)*\][^\n]*\n.*?(?=^\[|\Z)',
+              '', original)
+          if text != original:
+              p.write_text(text, encoding="utf-8")
+              print(f"Removed {n} cibuildwheel section(s) from {p}")
+          PY
+
+      - uses: pypa/cibuildwheel@v4.2.0
+        with:
+          package-dir: pkgsrc
+        env:
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          CIBW_BUILD: ${{ matrix.cibw_build_id }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_ENABLE: cpython-prerelease
+          CIBW_SKIP: cp31?t-*
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: wheel-${{ matrix.package }}-${{ matrix.target }}-${{ matrix.py_tag }}
+          path: wheelhouse/*.whl
+          if-no-files-found: warn
+
+  dep-zip:
+    name: Bundle wheels as dependency-wheels.zip
+    needs: [validate, package-release, dep-matrix, dep-build]
+    # Run if the package release exists AND we opted in AND there was a
+    # matrix. Regardless of whether dep-build succeeded or failed (partial
+    # success should still ship — the manifest records what's missing).
+    if: |
+      always()
+      && inputs.include_dependency_wheels
+      && needs.package-release.result == 'success'
+      && needs.dep-matrix.result == 'success'
+      && needs.dep-matrix.outputs.has_gaps == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Download all wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: all-wheels
+        continue-on-error: true   # empty result handled in the python step
+
+      - name: Assemble zip + manifest
+        env:
+          VERSION: ${{ needs.validate.outputs.version }}
+          TAG: ${{ needs.validate.outputs.tag }}
+          MATRIX_JSON: ${{ needs.dep-matrix.outputs.matrix }}
+          COMMIT_SHA: ${{ github.sha }}
+        run: |
+          python3 - <<'PY'
+          import json, os, pathlib, sys, zipfile
+          from datetime import datetime, timezone
+
+          version = os.environ["VERSION"]
+          tag = os.environ["TAG"]
+          matrix = json.loads(os.environ["MATRIX_JSON"])
+          sha = os.environ["COMMIT_SHA"]
+
+          root = pathlib.Path("all-wheels")
+          wheels = []
+          for entry in matrix:
+              cell = root / f"wheel-{entry['package']}-{entry['target']}-{entry['py_tag']}"
+              if cell.is_dir():
+                  found = list(cell.glob("*.whl"))
+                  if found:
+                      wheels.append((entry, found[0]))
+
+          if not wheels:
+              print("No dependency wheels built — refusing to attach empty zip.",
+                    file=sys.stderr)
+              sys.exit(1)
+
+          built = {(e["package"], e["target"], e["py_tag"]) for e, _ in wheels}
+          missing = [m for m in matrix
+                     if (m["package"], m["target"], m["py_tag"]) not in built]
+
+          lines = [
+              f"open-news-api {version} — dependency wheel bundle",
+              f"Tag: {tag}",
+              f"Source commit: {sha}",
+              f"Built: {datetime.now(timezone.utc).isoformat()}",
+              "",
+              f"Built {len(wheels)} of {len(matrix)} requested wheel(s).",
+              "",
+              "IMPORTANT: this zip contains only third-party dependency wheels.",
+              "The open-news-api wheel and sdist are separate release assets.",
+              "",
+              "Contents:",
+          ]
+          for entry, f in wheels:
+              lines.append(f"  {f.name}  ({f.stat().st_size} bytes)")
+
+          if missing:
+              lines += ["", "Missing (build failed):"]
+              for m in missing:
+                  lines.append(
+                      f"  {m['package']} {m['version']} / {m['target']} / {m['py_tag']}"
+                  )
+
+          lines += [
+              "",
+              "Usage (offline / air-gapped install):",
+              "  unzip dependency-wheels.zip -d wheels",
+              "  pip install --no-index --find-links=./wheels open-news-api==" + version,
+              "",
+              "These wheels are pinned to the versions in uv.lock at this tag.",
+              "Do NOT use them with a *different* version of open-news-api —",
+              "the resolver may pick a wheel that violates that release's",
+              "dependency constraints. For normal installs, use plain",
+              "  pip install open-news-api",
+              "and let PyPI serve prebuilt wheels.",
+          ]
+
+          manifest = "\n".join(lines) + "\n"
+          pathlib.Path("MANIFEST.txt").write_text(manifest, encoding="utf-8")
+          print(manifest)
+
+          with zipfile.ZipFile("dependency-wheels.zip", "w", zipfile.ZIP_DEFLATED) as zf:
+              zf.write("MANIFEST.txt")
+              for _, f in wheels:
+                  zf.write(f, arcname=f.name)
+
+          print(f"Wrote dependency-wheels.zip ({len(wheels)} wheel(s)).")
+          if missing:
+              print(f"WARNING: {len(missing)} wheel(s) missing — see MANIFEST.txt.")
+          PY
+
+      - name: Upload zip to the draft release (replace if exists)
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          gh release upload "$TAG" dependency-wheels.zip \
+            --repo ${{ github.repository }} --clobber
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: dependency-wheels-zip
+          path: dependency-wheels.zip
+          if-no-files-found: ignore
+          retention-days: 14

@@ -1,0 +1,150 @@
+# Manual, isolated dependency-wheel builder. Failure here does not touch
+# releases or publishing. Reruns are cheap because each matrix cell is
+# independent and continue-on-error keeps one broken wheel from masking
+# the rest.
+name: Build dependency wheels (experimental)
+
+on:
+  workflow_dispatch:
+    inputs:
+      packages:
+        description: 'Comma-separated package names to build (blank = all detected gaps)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: wheels-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  matrix-gen:
+    name: Detect wheel gaps
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      matrix: ${{ steps.filter.outputs.matrix }}
+      has_gaps: ${{ steps.filter.outputs.has_gaps }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install httpx
+        run: pip install httpx
+
+      - name: Compute gaps
+        id: gen
+        run: python .github/scripts/compute_wheel_gaps.py
+
+      - name: Filter and emit matrix
+        id: filter
+        env:
+          MATRIX_IN: ${{ steps.gen.outputs.matrix }}
+          PKG_FILTER: ${{ inputs.packages }}
+        run: |
+          python3 - <<'PY'
+          import json, os
+          matrix = json.loads(os.environ["MATRIX_IN"])
+
+          # Packages built through our install script rather than here.
+          EXCLUDE = {"lxml"}
+          matrix = [m for m in matrix if m["package"].lower() not in EXCLUDE]
+
+          wanted = {p.strip().lower()
+                    for p in os.environ.get("PKG_FILTER", "").split(",") if p.strip()}
+          if wanted:
+              matrix = [m for m in matrix if m["package"].lower() in wanted]
+
+          with open(os.environ["GITHUB_OUTPUT"], "a") as f:
+              f.write(f"matrix={json.dumps(matrix)}\n")
+              f.write(f"has_gaps={'true' if matrix else 'false'}\n")
+          print(f"{len(matrix)} combination(s) will be built.")
+          for m in matrix:
+              print(" -", m)
+          PY
+
+  build:
+    name: ${{ matrix.package }} ${{ matrix.version }} / ${{ matrix.target }} / ${{ matrix.py_tag }}
+    needs: matrix-gen
+    if: needs.matrix-gen.outputs.has_gaps == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        include: ${{ fromJSON(needs.matrix-gen.outputs.matrix) }}
+    runs-on: ${{ matrix.runner }}
+    continue-on-error: true
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Fetch sdist for ${{ matrix.package }}==${{ matrix.version }}
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import json, urllib.request
+          pkg, version = "${{ matrix.package }}", "${{ matrix.version }}"
+          data = json.load(urllib.request.urlopen(
+              f"https://pypi.org/pypi/{pkg}/{version}/json"
+          ))
+          sdist = next(u for u in data["urls"] if u["packagetype"] == "sdist")
+          open("sdist_url.txt", "w").write(sdist["url"])
+          PY
+          URL=$(cat sdist_url.txt)
+          curl -fL --retry 3 --retry-delay 2 -o src_archive "$URL"
+          mkdir -p pkgsrc
+          case "$URL" in
+            *.tar.gz|*.tgz) tar xf src_archive -C pkgsrc --strip-components=1 ;;
+            *.zip)
+              mkdir -p pkgsrc_tmp
+              unzip -q src_archive -d pkgsrc_tmp
+              mv pkgsrc_tmp/*/* pkgsrc/ ;;
+            *) echo "Unrecognized archive type: $URL" >&2; exit 1 ;;
+          esac
+
+      # Third-party sdists ship [tool.cibuildwheel] sections referencing
+      # their own repo layout (custom requirement paths, groups that
+      # cibuildwheel v4 rejects). Strip the whole table so cibuildwheel
+      # only sees the CIBW_* env vars we pass below.
+      - name: Strip dependency [tool.cibuildwheel] config
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import pathlib, re, sys
+          p = pathlib.Path("pkgsrc/pyproject.toml")
+          if not p.exists():
+              sys.exit(0)
+          original = p.read_text(encoding="utf-8")
+          text, n = re.subn(
+              r'(?ms)^\[tool\.cibuildwheel(?:\.[^\]]+)*\][^\n]*\n.*?(?=^\[|\Z)',
+              '', original,
+          )
+          if text != original:
+              p.write_text(text, encoding="utf-8")
+              print(f"Removed {n} cibuildwheel section(s) from {p}")
+          else:
+              print(f"No cibuildwheel sections found in {p}")
+          PY
+
+      - uses: pypa/cibuildwheel@v4.2.0
+        with:
+          package-dir: pkgsrc
+        env:
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          CIBW_BUILD: ${{ matrix.cibw_build_id }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_ENABLE: cpython-prerelease
+          CIBW_SKIP: cp31?t-*
+
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: wheel-${{ matrix.package }}-${{ matrix.target }}-${{ matrix.py_tag }}
+          path: wheelhouse/*.whl
+          if-no-files-found: warn

@@ -1,0 +1,4 @@
+# Publishing and release workflows require review by the maintainer(s).
+/.github/workflows/publish.yml     @alphap365
+/.github/workflows/release.yml     @alphap365
+/.github/scripts/                  @alphap365

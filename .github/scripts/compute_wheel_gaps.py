@@ -2,16 +2,14 @@
 GHA matrix of only the (package, target, py_tag) combinations that are
 actually missing — scoped to runtime dependencies only.
 
-Confirmed via `cibuildwheel --platform android --help`:
-  - Android's only supported --archs value is `arm64_v8a`.
-  - Android build identifiers start at cp313 (CPython's Android port floor).
+Android tag note:
+  PyPI uses `android_<api>_<arch>` filenames (e.g. `android_21_arm64_v8a`).
+  The API level is forward-compatible at runtime, so we match on the arch
+  token alone rather than pinning an API level.
 
-Android tag note: PyPI uses `android_<api>_<arch>` filenames (e.g.
-`android_21_arm64_v8a`). The API level is forward-compatible at runtime,
-so we match on the arch token alone rather than pinning an API level.
-
-NOTE: Not currently wired into any workflow. When wheels.yml lands, it
-should consume the `matrix` and `has_gaps` outputs.
+Coverage matching is arch-aware: a `manylinux_x86_64` wheel does NOT
+satisfy a `manylinux_aarch64` target. The earlier family-prefix match
+("manylinux") produced a silently incomplete matrix.
 """
 from __future__ import annotations
 
@@ -24,9 +22,9 @@ import tomllib
 import httpx
 
 # ----------------------------------------------------------------------
-# Targets: (label, cibw_platform, cibw_archs, runner, tag_hint, py_tags)
-#   tag_hint is used only to build cibuildwheel --build IDs; coverage
-#   matching uses _ARCH_TOKENS[label] instead.
+# Targets: (label, cibw_platform, cibw_archs, runner, build_id_hint, py_tags)
+#   build_id_hint is used only to compose cibuildwheel --build IDs.
+#   Coverage matching uses _ARCH_TOKENS[label] instead.
 # ----------------------------------------------------------------------
 TARGETS = [
     ("manylinux_x86_64",  "linux",   "x86_64",    "ubuntu-latest",  "manylinux",
@@ -47,7 +45,7 @@ TARGETS = [
      ["cp313", "cp314"]),
 ]
 
-# Per-target wheel-filename pattern. Anchored to `-` or `.` on both sides so
+# Per-target wheel-filename pattern. Anchored with (?=[-.]) so
 # manylinux_x86_64 cannot match manylinux_aarch64 (and vice versa).
 _ARCH_TOKENS = {
     "manylinux_x86_64": re.compile(
@@ -77,14 +75,12 @@ ABI3_RE = re.compile(r"-(cp\d+)-abi3-")
 _REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
-def cibw_build_id_for(platform_: str, tag_hint: str, py_tag: str) -> str:
-    if platform_ == "linux":
-        return f"{py_tag}-{tag_hint}_*"
-    return f"{py_tag}-*"
+def cibw_build_id_for(platform_: str, hint: str, py_tag: str) -> str:
+    return f"{py_tag}-{hint}_*" if platform_ == "linux" else f"{py_tag}-*"
 
 
 # ----------------------------------------------------------------------
-# Runtime dependency graph (excludes dev/test tooling)
+# Runtime dependency graph
 # ----------------------------------------------------------------------
 def _norm(name: str) -> str:
     """PEP 503 name normalisation: Foo_Bar, foo.bar, foo-bar -> foo-bar."""
@@ -96,7 +92,6 @@ def _dep_name_from_requirement(spec: str) -> str | None:
 
     Handles `foo`, `foo>=1.0`, `foo[extra]>=1.0`, `foo!=1.0`, `foo~=1.0`,
     `foo===1.0`, `foo @ https://...`, `foo; python_version<"3.10"`.
-    The previous `.split("=")[0]` approach produced `foo !` on `!=`.
     """
     head = spec.split(";", 1)[0].split("[", 1)[0].strip()
     m = _REQ_NAME_RE.match(head)
@@ -142,16 +137,14 @@ def load_compiled_packages() -> dict[str, str]:
     """Returns {name: version} for reachable deps that are NOT pure-Python.
 
     Includes sdist-only packages (wheels == []) — they're the most
-    worthwhile candidates for wheel building and were previously skipped.
+    worthwhile candidates for wheel building.
     """
     lock = load_lock()
-    roots = get_runtime_roots()
-    reachable = walk_dependency_graph(lock, roots)
+    reachable = walk_dependency_graph(lock, get_runtime_roots())
 
     compiled: dict[str, str] = {}
     for pkg in lock["package"]:
-        name = _norm(pkg["name"])
-        if name not in reachable:
+        if _norm(pkg["name"]) not in reachable:
             continue
         wheels = pkg.get("wheels", [])
         is_pure = bool(wheels) and all("-none-any.whl" in w["url"] for w in wheels)
@@ -164,8 +157,8 @@ def load_compiled_packages() -> dict[str, str]:
 # PyPI wheel-coverage check
 # ----------------------------------------------------------------------
 def existing_filenames(pkg_name: str, pkg_version: str) -> set[str]:
-    """Return PyPI filenames for this version. 404 -> empty set; other
-    non-2xx raises (never mistake a 5xx for 'not published')."""
+    """Return PyPI filenames for this version. 404 -> empty set;
+    any other non-2xx raises (never confuse a 5xx with 'not published')."""
     resp = httpx.get(
         f"https://pypi.org/pypi/{pkg_name}/{pkg_version}/json",
         timeout=20,
@@ -180,9 +173,7 @@ def existing_filenames(pkg_name: str, pkg_version: str) -> set[str]:
 def _py_ver(tag: str) -> tuple[int, int] | None:
     """cp312 -> (3, 12); cp39 -> (3, 9). None for non-cp tags."""
     m = re.match(r"cp(\d)(\d+)$", tag)
-    if not m:
-        return None
-    return (int(m.group(1)), int(m.group(2)))
+    return (int(m.group(1)), int(m.group(2))) if m else None
 
 
 def wheel_covers_py_tag(filename: str, py_tag: str, target_name: str) -> bool:
@@ -190,9 +181,7 @@ def wheel_covers_py_tag(filename: str, py_tag: str, target_name: str) -> bool:
 
     Order matters:
       1. Pure-Python wheels cover every target.
-      2. Target-specific arch pattern MUST match. (Previously only the
-         family prefix matched, so manylinux_x86_64 satisfied
-         manylinux_aarch64.)
+      2. Target-specific arch pattern MUST match.
       3. abi3 wheels cover the ABI floor version and every later minor.
       4. Otherwise the exact cp tag must be present.
     """
@@ -207,9 +196,7 @@ def wheel_covers_py_tag(filename: str, py_tag: str, target_name: str) -> bool:
     if abi3:
         floor = _py_ver(abi3.group(1))
         want = _py_ver(py_tag)
-        if floor and want:
-            return want >= floor
-        return False
+        return bool(floor and want and want >= floor)
 
     return py_tag in filename
 
@@ -234,7 +221,7 @@ def main() -> int:
             print(f"PyPI lookup failed for {pkg_name}=={version}: {exc}", file=sys.stderr)
             return 1
 
-        for target_name, platform_, archs, runner, tag_hint, py_tags in TARGETS:
+        for target_name, platform_, archs, runner, hint, py_tags in TARGETS:
             for py_tag in py_tags:
                 if any(wheel_covers_py_tag(fn, py_tag, target_name) for fn in existing):
                     continue
@@ -248,7 +235,7 @@ def main() -> int:
                     "target": target_name,
                     "cibw_platform": platform_,
                     "cibw_archs": archs,
-                    "cibw_build_id": cibw_build_id_for(platform_, tag_hint, py_tag),
+                    "cibw_build_id": cibw_build_id_for(platform_, hint, py_tag),
                     "py_tag": py_tag,
                     "runner": runner,
                 })

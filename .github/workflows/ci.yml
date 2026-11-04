@@ -1,76 +1,146 @@
-# ci.yml
+# Automatic PR / push gate.
+# Tests oldest and newest supported Python, builds distributions, audits deps.
+# No side effects — safe to re-run anytime.
 name: CI
 
 on:
   push:
+    branches: [main]
   pull_request:
-  workflow_dispatch:
+    branches: [main]
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.ref }}
+  group: ci-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  tests:
-    name: Test suite
-    uses: ./.github/workflows/tests.yml
+  test:
+    name: Test Python ${{ matrix.python-version }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        # Oldest and newest supported — the two versions that expose the
+        # most regressions. Widen only when a real inter-version bug shows up.
+        python-version: ['3.10', '3.13']
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      # --locked: fail if uv.lock disagrees with pyproject.toml,
+      # instead of silently re-resolving on the runner.
+      - name: Install project (locked)
+        run: uv sync --locked --python ${{ matrix.python-version }}
+
+      - name: Run tests
+        run: uv run --locked --python ${{ matrix.python-version }} pytest -q
+
+      - name: Compile package
+        run: uv run --locked --python ${{ matrix.python-version }} python -m compileall -q open_news
 
   build:
-    name: Build and verify distributions
-    uses: ./.github/workflows/build.yml
-
-  security:
-    name: Dependency audit
-    uses: ./.github/workflows/security.yml
-
-  workflow-check:
-    name: Workflow policy and syntax
-    uses: ./.github/workflows/workflow-check.yml
-
-  result-summary:
-    name: Required verification summary
-    if: ${{ always() }}
-    needs: [tests, build, security, workflow-check]
+    name: Build sanity check
     runs-on: ubuntu-latest
-    timeout-minutes: 5
-    permissions:
-      contents: read
+    timeout-minutes: 10
+    needs: test
     steps:
-      - name: Report verification results and enforce fail-closed status
-        env:
-          TESTS_RESULT: ${{ needs.tests.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
-          SECURITY_RESULT: ${{ needs.security.result }}
-          WORKFLOW_RESULT: ${{ needs.workflow-check.result }}
-          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+
+      - name: Build distributions
+        run: uv build
+
+      - name: Validate metadata
+        run: uv run --with twine twine check dist/*
+
+      - name: Reject unexpected files in dist/
         run: |
-          {
-            echo "## Open News CI result"
-            echo
-            echo "| Required check | Result |"
-            echo "|---|---|"
-            echo "| Tests | ${TESTS_RESULT} |"
-            echo "| Build and artifact verification | ${BUILD_RESULT} |"
-            echo "| Dependency audit | ${SECURITY_RESULT} |"
-            echo "| Workflow policy | ${WORKFLOW_RESULT} |"
-            echo
-            echo "[Open full workflow run](${RUN_URL})"
-            echo
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          failed=0
-          for result in "$TESTS_RESULT" "$BUILD_RESULT" "$SECURITY_RESULT" "$WORKFLOW_RESULT"; do
-            if [ "$result" != "success" ]; then
-              failed=1
-            fi
-          done
-
-          if [ "$failed" -ne 0 ]; then
-            echo "Required verification failed, was cancelled, or did not complete. Merge/release must remain blocked." | tee -a "$GITHUB_STEP_SUMMARY"
+          extra=$(find dist -maxdepth 1 -type f \
+            ! -name '*.whl' ! -name '*.tar.gz' ! -name '*.zip' | wc -l)
+          if [ "$extra" -ne 0 ]; then
+            echo "Unexpected files in dist/:" >&2
+            ls -la dist/ >&2
             exit 1
           fi
 
-          echo "All required verification jobs passed. This CI workflow does not publish packages." | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Install wheel in a clean venv
+        run: |
+          rm -rf /tmp/wheel-test
+          python -m venv /tmp/wheel-test
+          /tmp/wheel-test/bin/pip install dist/*.whl
+          /tmp/wheel-test/bin/python -c "import open_news"
+          /tmp/wheel-test/bin/open-news --help
+
+      - name: Install sdist in a clean venv
+        run: |
+          rm -rf /tmp/sdist-test
+          python -m venv /tmp/sdist-test
+          /tmp/sdist-test/bin/pip install dist/*.tar.gz
+          /tmp/sdist-test/bin/python -c "import open_news"
+          /tmp/sdist-test/bin/open-news --help
+
+  audit:
+    name: Dependency audit
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Install project (locked)
+        run: uv sync --locked
+
+      # --strict: unresolved or skipped deps are failures, not notes.
+      - name: pip-audit
+        run: uv run --with pip-audit pip-audit --strict
+
+  policy:
+    name: Workflow policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: No production PyPI destination in any workflow
+        run: |
+          if grep -rE 'upload\.pypi\.org|pypi\.org/legacy' .github/workflows/; then
+            echo "ERROR: production PyPI destination is forbidden on this branch." >&2
+            exit 1
+          fi
+          echo "OK: no production PyPI destination found."
+
+      - name: release.yml must not auto-trigger on version edits
+        run: |
+          if [ -f .github/workflows/release.yml ] \
+             && grep -q 'pyproject\.toml' .github/workflows/release.yml; then
+            echo "ERROR: release.yml triggers on pyproject.toml changes." >&2
+            echo "Make it manual-only (workflow_dispatch with a version input)." >&2
+            exit 1
+          fi
+          echo "OK: release.yml is not triggered by pyproject edits."
