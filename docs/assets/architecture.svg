@@ -1,0 +1,36 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="850" viewBox="0 0 1500 850" role="img" aria-labelledby="title desc">
+<title id="title">Open News architecture</title><desc id="desc">Architecture layers from client interfaces through public API, acquisition and extraction, processing, and export.</desc>
+<defs>
+ <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#101827"/><stop offset="1" stop-color="#202b45"/></linearGradient>
+ <linearGradient id="a" x2="1" y2="1"><stop stop-color="#2463eb"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+ <linearGradient id="b" x2="1" y2="1"><stop stop-color="#087f8c"/><stop offset="1" stop-color="#16a085"/></linearGradient>
+ <linearGradient id="c" x2="1" y2="1"><stop stop-color="#8b5cf6"/><stop offset="1" stop-color="#c026d3"/></linearGradient>
+ <linearGradient id="d" x2="1" y2="1"><stop stop-color="#b45309"/><stop offset="1" stop-color="#ea580c"/></linearGradient>
+ <marker id="arrow" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0 0 L12 6 L0 12z" fill="#94a3b8"/></marker>
+ <style>text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#f8fafc}.muted{fill:#cbd5e1;font-size:20px}.head{font-size:30px;font-weight:700}.small{font-size:18px;fill:#e2e8f0}.wire{stroke:#94a3b8;stroke-width:4;fill:none;marker-end:url(#arrow)}</style>
+</defs>
+<rect width="1500" height="850" rx="32" fill="url(#bg)"/>
+<text x="750" y="70" text-anchor="middle" font-size="42" font-weight="800">Open News · System Architecture</text>
+<text x="750" y="108" text-anchor="middle" class="muted">Composable interfaces over a resilient news acquisition and processing core</text>
+<rect x="500" y="145" width="500" height="90" rx="18" fill="url(#a)"/>
+<text x="750" y="182" text-anchor="middle" class="head">Client interfaces</text><text x="750" y="212" text-anchor="middle" class="small">Python API · CLI · Your application</text>
+<path class="wire" d="M750 235 V285"/>
+<rect x="500" y="290" width="500" height="90" rx="18" fill="#26364f" stroke="#64748b" stroke-width="2"/>
+<text x="750" y="328" text-anchor="middle" class="head">Public API · api.py</text><text x="750" y="356" text-anchor="middle" class="small">Sync + async orchestration · config validation</text>
+<path class="wire" d="M750 380 V430"/>
+<rect x="70" y="440" width="410" height="160" rx="18" fill="url(#b)"/>
+<text x="275" y="482" text-anchor="middle" class="head">Acquisition</text><text x="275" y="520" text-anchor="middle" class="small">Feeds · RSS · Search providers</text><text x="275" y="550" text-anchor="middle" class="small">Fallback chain · URL discovery</text>
+<rect x="545" y="440" width="410" height="160" rx="18" fill="url(#c)"/>
+<text x="750" y="482" text-anchor="middle" class="head">Extraction</text><text x="750" y="520" text-anchor="middle" class="small">Article retrieval · HTML parsing</text><text x="750" y="550" text-anchor="middle" class="small">JSON-LD · Open Graph · optional browser</text>
+<rect x="1020" y="440" width="410" height="160" rx="18" fill="url(#d)"/>
+<text x="1225" y="482" text-anchor="middle" class="head">Processing</text><text x="1225" y="520" text-anchor="middle" class="small">Filter · dedupe · rank · cluster</text><text x="1225" y="550" text-anchor="middle" class="small">Summarize · async enrichment</text>
+<path class="wire" d="M750 380 V410 H275 V435"/>
+<path class="wire" d="M750 380 V435"/>
+<path class="wire" d="M750 410 H1225 V435"/>
+<path class="wire" d="M275 600 V650 H750"/>
+<path class="wire" d="M750 600 V650"/>
+<path class="wire" d="M1225 600 V650 H750"/>
+<rect x="500" y="665" width="500" height="105" rx="18" fill="#26364f" stroke="#64748b" stroke-width="2"/>
+<text x="750" y="708" text-anchor="middle" class="head">Output &amp; export</text><text x="750" y="740" text-anchor="middle" class="small">Article records · Markdown · schema-versioned JSON</text>
+<text x="750" y="815" text-anchor="middle" font-size="16" fill="#94a3b8">Optional dependencies: Playwright browser rendering · BM25 / NLP extras</text>
+</svg>
