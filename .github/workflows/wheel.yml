@@ -1,14 +1,6 @@
 name: Build dependency wheels
 
 on:
-  push:
-    branches: [main]
-    paths:
-      - "pyproject.toml"
-      - "uv.lock"
-      - ".github/scripts/compute_wheel_gaps.py"
-      - ".github/workflows/build.yml"
-
   workflow_dispatch:
 
 permissions:
