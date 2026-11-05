@@ -1,7 +1,7 @@
 # Manual: validate → test → package release (draft) → optional dep-wheels zip.
 # Nothing publishes to any package index here. A human must run publish.yml
 # against the created (or existing) tag.
-name: Release (tag + draft, optional dep wheels)
+name: Release
 
 on:
   workflow_dispatch:

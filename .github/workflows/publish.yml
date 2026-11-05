@@ -132,19 +132,23 @@ jobs:
     if: inputs.target == 'testpypi'
     runs-on: ubuntu-latest
     timeout-minutes: 10
+
     environment:
       name: testpypi
       url: https://test.pypi.org/p/open-news-api
+
     permissions:
       contents: read
       id-token: write
+
     steps:
       - uses: actions/download-artifact@v4
         with:
           name: python-distributions
           path: dist
 
-      - uses: pypa/gh-action-pypi-publish@release/v1
+      - name: Publish to TestPyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
         with:
           repository-url: https://test.pypi.org/legacy/
 
