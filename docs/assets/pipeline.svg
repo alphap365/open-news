@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1500" height="620" viewBox="0 0 1500 620" role="img" aria-labelledby="title desc">
+<title id="title">Open News processing pipeline</title><desc id="desc">Six stages: acquire, normalize, filter and deduplicate, rank and cluster, enrich and summarize, export or return.</desc>
+<defs>
+ <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111827"/><stop offset="1" stop-color="#26334e"/></linearGradient>
+ <linearGradient id="g1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
+ <linearGradient id="g2"><stop stop-color="#0f766e"/><stop offset="1" stop-color="#14b8a6"/></linearGradient>
+ <linearGradient id="g3"><stop stop-color="#7c3aed"/><stop offset="1" stop-color="#a855f7"/></linearGradient>
+ <linearGradient id="g4"><stop stop-color="#a16207"/><stop offset="1" stop-color="#eab308"/></linearGradient>
+ <linearGradient id="g5"><stop stop-color="#c2410c"/><stop offset="1" stop-color="#f97316"/></linearGradient>
+ <linearGradient id="g6"><stop stop-color="#be185d"/><stop offset="1" stop-color="#e879f9"/></linearGradient>
+ <marker id="arr" markerWidth="12" markerHeight="12" refX="9" refY="6" orient="auto"><path d="M0 0 L12 6 L0 12z" fill="#cbd5e1"/></marker>
+ <style>text{font-family:Inter,Segoe UI,Arial,sans-serif;fill:#fff}.h{font-size:27px;font-weight:700}.s{font-size:18px;fill:#e2e8f0}.a{stroke:#cbd5e1;stroke-width:4;fill:none;marker-end:url(#arr)}</style>
+</defs>
+<rect width="1500" height="620" rx="30" fill="url(#bg)"/>
+<text x="750" y="68" text-anchor="middle" font-size="42" font-weight="800">From discovery to usable news data</text>
+<text x="750" y="105" text-anchor="middle" font-size="20" fill="#cbd5e1">A composable pipeline shared by synchronous and asynchronous workflows</text>
+<g transform="translate(55 190)">
+ <rect width="205" height="190" rx="20" fill="url(#g1)"/><text x="102" y="55" text-anchor="middle" class="h">01 · Acquire</text><text x="102" y="100" text-anchor="middle" class="s">Feeds and search</text><text x="102" y="130" text-anchor="middle" class="s">Provider fallbacks</text>
+</g>
+<path class="a" d="M265 285 H295"/>
+<g transform="translate(305 190)">
+ <rect width="205" height="190" rx="20" fill="url(#g2)"/><text x="102" y="55" text-anchor="middle" class="h">02 · Normalize</text><text x="102" y="100" text-anchor="middle" class="s">Common article shape</text><text x="102" y="130" text-anchor="middle" class="s">URLs and metadata</text>
+</g>
+<path class="a" d="M515 285 H545"/>
+<g transform="translate(555 190)">
+ <rect width="205" height="190" rx="20" fill="url(#g3)"/><text x="102" y="55" text-anchor="middle" class="h">03 · Filter</text><text x="102" y="100" text-anchor="middle" class="s">Topic and language</text><text x="102" y="130" text-anchor="middle" class="s">Domains · dedupe</text>
+</g>
+<path class="a" d="M765 285 H795"/>
+<g transform="translate(805 190)">
+ <rect width="205" height="190" rx="20" fill="url(#g4)"/><text x="102" y="55" text-anchor="middle" class="h">04 · Analyze</text><text x="102" y="100" text-anchor="middle" class="s">BM25 / TF-IDF rank</text><text x="102" y="130" text-anchor="middle" class="s">Story clustering</text>
+</g>
+<path class="a" d="M1015 285 H1045"/>
+<g transform="translate(1055 190)">
+ <rect width="205" height="190" rx="20" fill="url(#g5)"/><text x="102" y="55" text-anchor="middle" class="h">05 · Enrich</text><text x="102" y="100" text-anchor="middle" class="s">Full article text</text><text x="102" y="130" text-anchor="middle" class="s">Summarization</text>
+</g>
+<path class="a" d="M1265 285 H1295"/>
+<g transform="translate(1305 190)">
+ <rect width="150" height="190" rx="20" fill="url(#g6)"/><text x="75" y="55" text-anchor="middle" class="h">06 · Output</text><text x="75" y="100" text-anchor="middle" class="s">Python</text><text x="75" y="130" text-anchor="middle" class="s">CLI / JSON</text><text x="75" y="158" text-anchor="middle" class="s">Markdown</text>
+</g>
+<rect x="180" y="450" width="1140" height="85" rx="16" fill="#172338" stroke="#52627c" stroke-width="2"/>
+<text x="750" y="485" text-anchor="middle" font-size="22" font-weight="700">Optional paths</text>
+<text x="750" y="515" text-anchor="middle" font-size="18" fill="#cbd5e1">Async I/O · Playwright rendering · NLP extras · batch summarization</text>
+</svg>
