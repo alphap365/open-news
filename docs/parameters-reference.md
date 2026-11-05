@@ -1,142 +1,10 @@
-# 🌍 Parameters Reference
+# Parameters reference
 
-This page collects parameter formats and validation rules that appear across the Open News API and CLI.
+This page summarizes common parameter conventions. For the definitive signature of a particular installed release, inspect `help()` or the function docstring.
 
----
+## Categories
 
-## 🌐 Country / region codes
-
-### `search(country=...)`
-
-`country` is an ISO 3166-1 alpha-2 style region code such as:
-
-```text
-us · in · gb · ca · au · de · fr · jp · br · za · sg · ae
-```
-
-The value controls Google News locale parameters (`gl` / `ceid`) and is case-insensitive.
-
-Example:
-
-```python
-search("monsoon", country="in", language="hi")
-```
-
-### `fetch(location=...)`
-
-`location` is a **query hint**, not a post-acquisition filter. It steers
-the acquisition engines toward a region — Bing's `cc` param, Google
-News' `gl`/`ceid`, Yahoo's query text — but it does **not** guarantee
-that every returned article was published by an outlet in that region.
-
-Common examples:
-
-```text
-in · us · gb · au · ca · nz · pk · bd · lk
-```
-
-Unrecognized values degrade to broader results rather than raising a
-validation error.
-
-#### Why off-region articles can appear
-
-- **Syndication.** A US outlet's story can be indexed by Yahoo News
-  under `yahoo.com/entertainment/...` and surface in an India feed
-  because the aggregator treats it as entertainment content.
-- **Aggregator editions.** MSN and Yahoo serve country-specific
-  editions (`msn.com/en-in/...`) of stories that originated elsewhere.
-- **Query ambiguity.** Category words like `general` and `business` are
-  translated into region-name queries ("India breaking news today"),
-  which search engines can answer with stories *about* the region
-  rather than *from* it.
-
-#### How to enforce region
-
-Use `whitelist` when region correctness matters:
-
-```python
-fetch(
-    category="general",
-    location="in",
-    whitelist=[
-        "thehindu.com", "indianexpress.com", "timesofindia.indiatimes.com",
-        "hindustantimes.com", "news18.com", "ndtv.com",
-    ],
-)
-```
-
-`whitelist` runs in the processing pipeline after acquisition, so it
-removes anything that slipped through the region hint. Combined with
-`blacklist=["yahoo.com", "msn.com"]` it is a hard filter.
-
-A first-class region filter (TLD + curated domain map) is planned for a
-future release.
----
-
-## 🗣️ Language codes
-
-`language` uses ISO 639-1-style two-letter language codes:
-
-```text
-en · hi · es · fr · de · ja · ...
-```
-
-Language filtering is performed by the processing layer using `langdetect` when available.
-
-The guard operates on downloaded title/description text rather than acting as a hard upstream query constraint.
-
-Very short text may be kept when language detection cannot reliably identify a language.
-
----
-
-## 📅 Date formats
-
-### `search(start_date=..., end_date=...)`
-
-Accepted forms:
-
-```python
-"2026-08-01"
-"2026-08-01T14:30:00"
-date(2026, 8, 1)
-datetime(2026, 8, 1, 14, 30)
-```
-
-Both bounds are optional:
-
-```python
-search("elections", start_date="2026-08-01")
-search("elections", end_date="2026-08-31")
-search("elections", start_date="2026-08-01", end_date="2026-08-31")
-```
-
-When either custom bound is supplied, it takes precedence over `time_limit`.
-
-Internally, the search engine maps these bounds to Google News RSS date operators.
-
-### `time_limit`
-
-| Value | Window |
-|---|---|
-| `d` | Last day |
-| `w` | Last week |
-| `m` | Last month |
-
----
-
-## 🕐 Publication dates
-
-Extracted article results use `publish_date` as an ISO-style datetime string when a valid date is available.
-
-Raw search/fetch engine records may instead carry a `published` field containing the source engine's original date representation.
-
-Ranking uses tolerant date parsing for ordering.
-
----
-
-## 📰 Categories
-
-`fetch(category=...)` accepts exactly:
+`fetch()` category values in the source include:
 
 ```text
 general
@@ -148,66 +16,59 @@ science
 entertainment
 ```
 
-An unsupported category raises a configuration validation error.
+## Country and location
 
----
+- `search(country=...)` supplies a country/edition hint to the news search provider. Use a two-letter country code such as `in`, `us`, or `gb`.
+- `fetch(location=...)` steers acquisition toward a region. It is a query hint and a provider hint, not a strict post-acquisition publisher filter.
 
-## 📊 Sorting
-
-| Function | Values |
-|---|---|
-| `fetch()` | `date`, `relevance`, `popularity` |
-| `search()` | `date`, `relevance` |
-
-`search()` does not support popularity sorting because its processing path does not run the popularity clustering stage.
-
----
-
-## 🔎 Search modes
-
-`search(query_mode=...)` accepts:
-
-```text
-any
-all
-exact_phrase
-```
-
-CLI equivalent:
-
-```bash
---mode any
---mode all
---mode exact_phrase
-```
-
----
-
-## ⏱️ Streaming intervals
-
-`fetch(refresh_interval=...)`, `search(refresh_interval=...)`, and `stream_search(..., refresh_interval=...)` use seconds.
-
-The documented minimum interval is **5 seconds**.
-
-Example:
+If publisher geography must be constrained, use a domain whitelist:
 
 ```python
-stream_search("AI", refresh_interval=30)
+articles = fetch(
+    category="general",
+    location="in",
+    whitelist=["thehindu.com", "indianexpress.com", "ndtv.com"],
+)
 ```
 
-CLI:
+A location hint can still surface syndicated or aggregator-hosted stories from outside the requested region.
 
-```bash
-open-news search "AI" --stream 30
+## Language
+
+Language values use common ISO 639-1 two-letter codes, such as `en`, `hi`, `fr`, or `de`. Language handling can involve both provider hints and post-download checks. Very short records may not be reliably classifiable.
+
+## Date ranges
+
+Search supports date bounds in common string/date/datetime forms. Examples:
+
+```python
+search("elections", start_date="2026-01-01")
+search("elections", start_date="2026-01-01", end_date="2026-01-31")
 ```
 
-Streaming yields only articles not previously seen by that generator instance.
+When custom date bounds are provided, they take precedence over the relative time window where the API supports both.
 
----
+## Relative time windows
 
-## 🌐 Domain filters
+| Value | Meaning |
+|---|---|
+| `d` | Day |
+| `w` | Week |
+| `m` | Month |
 
-`whitelist` and `blacklist` accept lists of domain names:
+## Search matching modes
+
+| Mode | Meaning |
+|---|---|
+| `any` | Any query term may match |
+| `all` | All query terms should match |
+| `exact_phrase` | Treat the input as a phrase |
+
+CLI spelling is `--mode`; Python search uses `query_mode`.
+
+## Domain filters
+
+Use a whitelist to keep only matching domains and a blacklist to remove domains.
 
 ```python
 fetch(
@@ -216,140 +77,78 @@ fetch(
 )
 ```
 
-At the processing layer, a whitelist restricts the surviving domain set; a blacklist removes matching domains.
-
-CLI form:
+CLI values are comma-separated:
 
 ```bash
 --whitelist reuters.com,bbc.com
 --blacklist example.com
 ```
 
----
+## Topic filtering
 
-## 📄 Full content
+Topic matching is distinct from the primary search query. Supported topic modes in the processing/CLI surface are:
 
-`full_content=True` performs additional article retrieval and extraction after the normal result-processing stages.
+- `any`
+- `all`
+- `exact_phrase`
 
-This ordering is intentional:
-
-```text
-raw results
- → filters
- → dedupe
- → ranking
- → max_results
- → full-content enrichment
-```
-
-It avoids expensive crawling of articles that will not be returned.
-
----
-
-## 🌐 JavaScript rendering
-
-`js=True` enables Playwright-backed rendering where supported.
-
-It is useful for sites whose content is generated client-side.
-
-It is not required for normal RSS/search or static HTML workflows.
-
----
-
-## 🧹 Deduplication
-
-`dedupe=True` is the default on public fetch/search flows.
-
-The processing system can use exact URL deduplication and, where requested, fuzzy title matching.
-
-The streaming layer additionally tracks normalized URLs and normalized titles so previously yielded articles are not emitted again.
-
----
-
-## 🏷️ Topic filtering (v1.0.4)
-
-`filter_articles(topic=...)`, `cluster_articles(topic=...)`, and the CLI `--topic` flag all accept the same input forms:
+Example:
 
 ```python
-topic=None                                # no filtering
-topic="AI"                                # single term
-topic="AI, LLM"                           # comma-separated
-topic=["AI", "LLM"]                       # list
+filter_articles(articles, topic=["AI", "machine learning"], topic_mode="any")
 ```
 
-Matching scans a broader field set than `query` does:
+When both query and topic filters are supplied in a pipeline, they narrow the results together.
+
+## Ranking
+
+Ranking methods exposed by the API/CLI include:
+
+| Method | Description |
+|---|---|
+| `auto` | Prefer BM25 when available; otherwise use TF-IDF fallback |
+| `bm25` | Optional `bm25s` backend |
+| `tfidf` | TF-IDF ranking |
+| `basic` | Basic term-frequency ranking |
+
+The `nlp` optional extra installs BM25 support.
+
+## Streaming
+
+Streaming helpers poll repeatedly and yield batches containing newly seen articles. Intervals are measured in seconds. Choose an interval that is respectful of upstream providers and appropriate for your application.
+
+```python
+for batch in stream_search("AI", refresh_interval=30):
+    ...
+```
+
+The CLI equivalent is:
+
+```bash
+open-news search "AI" --stream 30
+```
+
+## Full-content extraction
+
+Full-content extraction is optional because it costs additional network and parsing work. JavaScript rendering is separately optional and requires the `js` extra and a Playwright browser installation.
+
+## Article fields
+
+Article dictionaries may include:
 
 ```text
-title · description · text · category · keywords
+url
+title
+text
+description
+authors
+publish_date
+category
+top_image
+images
+videos
+source
+meta
 ```
 
-### `topic_mode`
-
-| Value | Meaning |
-|---|---|
-| `any` (default) | Match if any term is present |
-| `all` | Match only if every term is present |
-| `exact_phrase` | Treat the whole topic string as one phrase |
-
-When `query` and `topic` are both supplied to `filter_articles()`, they are ANDed.
-
----
-
-## 📊 Rank methods (v1.0.4)
-
-`rank_articles(method=...)` and the CLI `--rank-method` accept:
-
-| Value | Backend | Notes |
-|---|---|---|
-| `auto` (default) | BM25 → TF-IDF | Falls back silently |
-| `bm25` | `bm25s` | Requires `open-news-api[nlp]` |
-| `tfidf` | Pure-Python TF-IDF | No optional deps |
-| `basic` | Term frequency | No IDF weighting |
-
-`--rank-query` is required for ranking to do anything. Without it, articles pass through with `_rank_score = 0.0` and their original order preserved.
-
----
-
-## 🧩 Cluster parameters (v1.0.4)
-
-`cluster_articles(...)` and the CLI `cluster` subcommand:
-
-| Parameter | Default | Range / values |
-|---|---:|---|
-| `threshold` | `0.75` | `0 < t ≤ 1`; higher = tighter grouping |
-| `min_cluster_size` | `1` | Integer ≥ 1 |
-| `drop_singletons` | `False` | Convenience for `min_cluster_size=2` |
-| `sort_by` | `"score"` | `score`, `size`, `date` |
-| `rank_query` | `None` | Optional; uses the ranking system above |
-| `rank_method` | `"auto"` | As above |
-
-At `threshold=0.75`, titles that differ by a suffix (e.g. "Live", "Update", "(video)") tend to group; titles that differ by a proper noun usually don't. Tune between `0.65` and `0.85` in practice.
-
----
-
-## 📤 Export parameters (v1.0.4)
-
-`export.to_markdown(...)`:
-
-| Parameter | Default | Meaning |
-|---|---:|---|
-| `path` | `None` | Write target; parent dirs created |
-| `title` | `None` | Overrides the auto-generated `# News Export` heading |
-| `include_text` | `True` | Include the article body |
-| `include_summary` | `True` | Include the description blockquote |
-| `include_metadata` | `True` | Source / published / authors line |
-| `include_toc` | `True` | Emit a table of contents for multi-item input |
-| `max_text_chars` | `4000` | Truncate long bodies |
-| `include_all_members` | `False` | For cluster input: list every member, not just the representative |
-
-`export.to_json(...)`:
-
-| Parameter | Default | Meaning |
-|---|---:|---|
-| `path` | `None` | Write target; parent dirs created |
-| `indent` | `2` | JSON indent; `None` for compact |
-| `envelope` | `True` | Wrap in `{schema_version, generated_at, count, kind, ...}` |
-| `include_internal` | `False` | Keep keys like `_tier`, `_field_sources` |
-| `ensure_ascii` | `False` | Preserve non-ASCII characters |
-| `extra_meta` | `None` | Extra top-level keys merged into the envelope |
-
+Fields depend on the publisher and extraction signals; consumers should use `.get()` or validate required keys rather than assume every publisher provides every field.
