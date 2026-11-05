@@ -38,10 +38,10 @@ jobs:
           enable-cache: true
 
       - name: Run tests
-        run: uv run --locked pytest -q
+        run: uv run pytest -q
 
       - name: Compile package
-        run: uv run --locked python -m compileall -q open_news
+        run: uv run python -m compileall -q open_news
 
   build:
     name: Build package
@@ -97,7 +97,7 @@ jobs:
 
       - name: Audit dependencies
         run: |
-          uv export --locked \
+          uv export \
             --format requirements-txt \
             --no-emit-project \
             --output-file /tmp/requirements.txt
