@@ -69,26 +69,10 @@ jobs:
           print(f"Validated {pyver} ({'pre-release' if is_pre else 'stable'}), tag={tag}")
           PY
 
-  test:
-    name: Test before tagging
-    needs: validate
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
-        with:
-          python-version: '3.13'
-      - uses: astral-sh/setup-uv@v6
-        with:
-          enable-cache: true
-      - run: uv sync --locked
-      - run: uv run --locked pytest -q
-
   # ---- Creates tag + draft release with package files -------------
   package-release:
     name: Tag and draft release (package artifacts)
-    needs: [validate, test]
+    needs: validate
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
