@@ -1,14 +1,52 @@
 # 📝 Changelog
 
-All notable Open News changes are documented here.
+This file tracks the project’s release history in a clear, version-by-version format.
 
-The release history follows the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
+The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
+
+> Note: the package metadata in this checkout reports version `1.0.5`, while the latest Git tag is `v1.0.5a1`. The changelog below records both the tagged pre-release and the current release-version baseline that is intended to be finalized as `v1.0.5`.
+
+---
+
+# [1.0.5] — 2026-11-06
+
+This section reflects the current package version (`1.0.5`) that is being prepared for the final release tag. It is intentionally kept separate from the tag-based alpha release entry below because the repository metadata and Git tag history are not yet fully aligned.
+
+## ✨ Release preparation
+
+- Final package version aligned to `1.0.5` in `pyproject.toml` and `open_news.__init__`.
+- Release flow is being prepared for a final tagged release after the `v1.0.5a1` pre-release checkpoint.
+- CI and release automation are being finalized to match the intended production release workflow.
+
+## 🐛 Maintenance
+
+- Release automation cleaned up so the workflow does not depend on a separate test job before packaging.
+- Python 3.14 is included in the CI matrix to keep the release path future-proof.
+
+---
+
+# [1.0.5a1] — 2026-11-05
+
+This pre-release focused on release automation and CI readiness rather than new product behavior.
+
+## ✨ Added
+
+- CI workflow updated to include Python 3.14.
+- Release process simplified by removing the test-job dependency from the release automation path.
+
+## 🔄 Changed
+
+- Release automation was aligned with the current publishing flow so the final release can be cut more predictably.
+
+## ℹ️ Version note
+
+This tag is the newest Git milestone, while the package metadata in the project working tree reports `1.0.5` for the final release version.
 
 ---
 
 # [1.0.4] — 2026-09-21
 
-> v1.0.4 is a feature release on top of the v1.0.3 stable baseline. Acquisition, extraction, and URL handling are unchanged; the new work is concentrated in **processing** (clustering, topic filtering, relevance ranking) and **output** (Markdown/JSON export), plus a keyboard-driven TUI refresh.
+v1.0.4 is a feature release on top of the v1.0.3 stable baseline. Acquisition, extraction, and URL handling are unchanged; the new work is concentrated in **processing** (clustering, topic filtering, relevance ranking) and **output** (Markdown/JSON export), plus a keyboard-driven TUI refresh.
 
 ## 🎯 Release focus
 
@@ -91,7 +129,7 @@ v1.0.3 froze the acquisition architecture. v1.0.4 makes the *results* of that ac
 
 ## ⚠️ Compatibility notes
 
-The public API introduced in v1.0 and stabilized in v1.0.3 remains the basis for v1.0.4. Existing v1.0.3 call sites continue to work unchanged. The new api's are as follows:
+The public API introduced in v1.0 and stabilized in v1.0.3 remains the basis for v1.0.4. Existing v1.0.3 call sites continue to work unchanged. The new API additions are:
 
 ```python
 cluster_articles()
@@ -100,6 +138,7 @@ filter_articles()
 export.to_markdown()
 export.to_json()
 ```
+
 ## ⚠️ Known issues
 
 - **`location=` is a query hint, not a post-acquisition filter.** An
@@ -122,7 +161,7 @@ export.to_json()
 
 # [1.0.4a2] - 2026-09-22
 
-Fixed test issues in ci.
+Fixed CI test issues and kept the release candidate stable for smoke testing.
 
 # [1.0.4a1] - 2026-09-21
 
@@ -364,28 +403,36 @@ The internal feed and extraction engines are implementation details and may cont
 ---
 
 # [1.0.3b2] - 2026-09-20
-Testing some Featurees and resolving bugs.
+
+Release-candidate testing and targeted bug fixes for the 1.0.3 line.
 
 # [1.0.3b1] - 2026-09-19
-Testing some Featurees and resolving bugs.
+
+Additional release-candidate fixes and validation for the upcoming 1.0.3 milestone.
 
 # [1.0.3a6] - 2026-09-19
-Testing some Featurees and resolving bugs.
+
+Pre-release validation and small bug fixes across the acquisition and processing stack.
 
 # [1.0.3a5] - 2026-09-19
-Testing some Featurees and resolving bugs.
+
+Pre-release validation with a focus on stability and edge-case fixes.
 
 # [1.0.3a4] - 2026-09-19
-Testing some Featurees and resolving bugs.
+
+Pre-release cleanup and bug fixes based on early validation feedback.
 
 # [1.0.3a3] - 2026-09-19
-Testing some Featurees and resolving bugs.
+
+Pre-release testing with additional fixes for unstable paths and edge cases.
 
 # [1.0.3a2] - 2026-09-18
-Testing some Featurees and resolving bugs.
+
+Early pre-release validation and bug fixes for the 1.0.3 development track.
 
 # [1.0.3a1] - 2026-09-18
-Testing some Featurees and resolving bugs.
+
+Initial 1.0.3 pre-release checks, bug fixes, and feature validation.
 
 # [1.0.2] — 2026-09-13
 
@@ -462,15 +509,7 @@ The old registry-backed interfaces were retired:
 - `search_news()`
 - old feed-cache control workflow
 
-### Migration
-
-| Previous API | v1 API |
-|---|---|
-| `live_news(category=..., country=...)` | `fetch(category=..., location=...)` |
-| `search_news(query, limit=...)` | `search(query, max_results=...)` |
-| `fetch_article(url)` | `get_article(url)` |
-| `get_articles_from_website_rss(url)` | `discover_and_get(url)` |
-| `fetch_and_summarize_batch(urls)` | `batch_summarize(urls)` |
+The older API names were replaced by the v1 surface centered around `fetch()`, `search()`, `get_article()`, `discover_and_get()`, and `batch_summarize()`.
 
 ---
 
@@ -500,11 +539,12 @@ The old registry-backed interfaces were retired:
 
 ## 🔗 Release comparison links
 
-[Unreleased]: https://github.com/alphap365/open-news/compare/v1.0.4...HEAD
-[1.0.4]: https://github.com/alphap365/open-news/releases/tag/1.0.4
-[1.0.4a2]: https://github.com/alphap365/open-news/releases/tag/1.0.4a2
-[1.0.4a1]: https://github.com/alphap365/open-news/releases/tag/1.0.4a1
-[1.0.3]: https://github.com/alphap365/open-news/releases/tag/1.0.3
+[1.0.5]: https://github.com/alphap365/open-news/releases/tag/v1.0.5
+[1.0.5a1]: https://github.com/alphap365/open-news/releases/tag/v1.0.5a1
+[1.0.4]: https://github.com/alphap365/open-news/releases/tag/v1.0.4
+[1.0.4a2]: https://github.com/alphap365/open-news/releases/tag/v1.0.4a2
+[1.0.4a1]: https://github.com/alphap365/open-news/releases/tag/v1.0.4a1
+[1.0.3]: https://github.com/alphap365/open-news/releases/tag/v1.0.3
 [1.0.3b2]: https://github.com/alphap365/open-news/releases/tag/1.0.3b2
 [1.0.3b1]: https://github.com/alphap365/open-news/releases/tag/1.0.3b1
 [1.0.3a6]: https://github.com/alphap365/open-news/releases/tag/1.0.3a6
