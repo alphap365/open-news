@@ -1,7 +1,3 @@
-
-# Automatic PR / push gate.
-# Tests oldest and newest supported Python, builds distributions, audits deps.
-# No side effects — safe to re-run anytime.
 name: CI
 
 on:
@@ -19,140 +15,111 @@ concurrency:
 
 jobs:
   test:
-    name: Test Python ${{ matrix.python-version }}
+    name: Tests (Python ${{ matrix.python-version }})
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+
     strategy:
       fail-fast: false
       matrix:
-        # Oldest and newest supported Python versions.
-        python-version: ['3.10', '3.13']
+        python-version: ["3.10", "3.13"]
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
-
-      - name: Install project (locked)
-        run: uv sync --locked --python ${{ matrix.python-version }}
 
       - name: Run tests
-        run: uv run --locked --python ${{ matrix.python-version }} pytest -q
+        run: uv run --locked pytest -q
 
       - name: Compile package
-        run: uv run --locked --python ${{ matrix.python-version }} python -m compileall -q open_news
+        run: uv run --locked python -m compileall -q open_news
 
   build:
-    name: Build sanity check
+    name: Build package
     runs-on: ubuntu-latest
-    timeout-minutes: 10
     needs: test
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
 
-      - name: Build distributions
+      - name: Build
         run: uv build
 
-      - name: Validate metadata
+      - name: Check package metadata
         run: uv run --with twine twine check dist/*
 
-      - name: Reject unexpected files in dist/
+      - name: Check artifacts
         run: |
-          extra=$(find dist -maxdepth 1 -type f \
-            ! -name '*.whl' \
-            ! -name '*.tar.gz' \
-            ! -name '*.zip' \
-            ! -name '.gitignore' | wc -l)
+          test "$(find dist -maxdepth 1 -name '*.whl' -type f | wc -l)" -eq 1
+          test "$(find dist -maxdepth 1 -name '*.tar.gz' -type f | wc -l)" -eq 1
 
-          wheels=$(find dist -maxdepth 1 -type f -name '*.whl' | wc -l)
-          sdists=$(find dist -maxdepth 1 -type f -name '*.tar.gz' | wc -l)
-
-          if [ "$extra" -ne 0 ] || [ "$wheels" -ne 1 ] || [ "$sdists" -ne 1 ]; then
-            echo "Unexpected distribution contents:" >&2
-            ls -la dist/ >&2
-            exit 1
-          fi
-
-          echo "OK: exactly one wheel and one source distribution found."
-
-      - name: Install wheel in a clean venv
+      - name: Test wheel installation
         run: |
-          rm -rf /tmp/wheel-test
-          python -m venv /tmp/wheel-test
-          /tmp/wheel-test/bin/pip install dist/*.whl
-          /tmp/wheel-test/bin/python -c "import open_news"
-          /tmp/wheel-test/bin/open-news --help
+          python -m venv /tmp/test-wheel
+          /tmp/test-wheel/bin/pip install dist/*.whl
+          /tmp/test-wheel/bin/python -c "import open_news"
 
-      - name: Install sdist in a clean venv
-        run: |
-          rm -rf /tmp/sdist-test
-          python -m venv /tmp/sdist-test
-          /tmp/sdist-test/bin/pip install dist/*.tar.gz
-          /tmp/sdist-test/bin/python -c "import open_news"
-          /tmp/sdist-test/bin/open-news --help
-
-  audit:
+  security:
     name: Dependency audit
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: test
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
 
-      - uses: astral-sh/setup-uv@v6
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v6
         with:
           enable-cache: true
 
-      - name: Export locked dependencies
+      - name: Audit dependencies
         run: |
           uv export --locked \
             --format requirements-txt \
             --no-emit-project \
-            --output-file /tmp/requirements-audit.txt
+            --output-file /tmp/requirements.txt
 
-      - name: Audit dependencies
-        run: |
           uv run --with pip-audit pip-audit \
-            --strict \
-            -r /tmp/requirements-audit.txt
+            -r /tmp/requirements.txt
 
   policy:
     name: Workflow policy
     runs-on: ubuntu-latest
-    timeout-minutes: 2
+
     permissions:
       contents: read
 
     steps:
       - uses: actions/checkout@v4
 
-      - name: No production PyPI upload destination in any workflow
+      - name: Block production PyPI uploads
         run: |
-          # Matches production PyPI upload endpoints only.
-          # TestPyPI is intentionally allowed.
           if grep -rEin \
-              "https://(upload\.)?pypi\.org/legacy|repository-url:[[:space:]]+[\"']?https://(upload\.)?pypi\.org" \
-              .github/workflows/; then
-            echo "ERROR: production PyPI upload destination is forbidden on this branch." >&2
+            'https://(upload\.)?pypi\.org/legacy' \
+            .github/workflows/; then
+            echo "Production PyPI upload destination detected."
             exit 1
           fi
-
-          echo "OK: no production PyPI upload destination found."

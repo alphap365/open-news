@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.5b5"
+dynamic = ["version"]
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
@@ -41,6 +41,9 @@ open-news = "open_news.cli:main"
 
 [tool.setuptools]
 include-package-data = true
+
+[tool.setuptools.dynamic]
+version = {attr = "open_news.__version__"}
 
 [tool.setuptools.packages.find]
 include = ["open_news*"]
