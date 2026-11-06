@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Verify dependency wheels against wheel-build-plan.json.
@@ -6,6 +5,7 @@ Verify dependency wheels against wheel-build-plan.json.
 Checks:
 - Wheel filename and package/version identity.
 - Python and platform compatibility with each planned build.
+- Platform floors (glibc / musl / macOS / Android API).
 - Internal METADATA and WHEEL metadata.
 - ZIP archive path safety.
 - RECORD file hashes and sizes.
@@ -26,6 +26,7 @@ Exit code:
 from __future__ import annotations
 
 import argparse
+import base64
 import csv
 import hashlib
 import io
@@ -41,6 +42,10 @@ from typing import Any
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import InvalidVersion, Version
 
+
+# ---------------------------------------------------------------------------
+# JSON / plan loaders
+# ---------------------------------------------------------------------------
 
 def load_json(path: Path) -> Any:
     try:
@@ -67,14 +72,7 @@ def load_plan(path: Path) -> list[dict[str, Any]]:
         if not isinstance(build, dict):
             raise ValueError(f"Build entry {index} must be an object.")
 
-        required = (
-            "package",
-            "version",
-            "target",
-            "py_tags",
-            "cibw_archs",
-        )
-
+        required = ("package", "version", "target", "py_tags", "cibw_archs")
         missing = [key for key in required if key not in build]
         if missing:
             raise ValueError(
@@ -88,6 +86,10 @@ def load_plan(path: Path) -> list[dict[str, Any]]:
 
     return builds
 
+
+# ---------------------------------------------------------------------------
+# Wheel integrity checks
+# ---------------------------------------------------------------------------
 
 def safe_archive_path(name: str) -> bool:
     path = PurePosixPath(name)
@@ -108,10 +110,7 @@ def verify_record(archive: zipfile.ZipFile) -> list[str]:
     errors: list[str] = []
 
     names = set(archive.namelist())
-    record_files = [
-        name for name in names
-        if name.endswith(".dist-info/RECORD")
-    ]
+    record_files = [n for n in names if n.endswith(".dist-info/RECORD")]
 
     if len(record_files) != 1:
         return [
@@ -152,8 +151,6 @@ def verify_record(archive: zipfile.ZipFile) -> list[str]:
             digest = hashlib.new(algorithm)
             digest.update(archive.read(filename))
             actual_hash = digest.digest()
-
-            import base64
             actual_encoded = (
                 base64.urlsafe_b64encode(actual_hash)
                 .rstrip(b"=")
@@ -171,9 +168,7 @@ def verify_record(archive: zipfile.ZipFile) -> list[str]:
             try:
                 actual_size = len(archive.read(filename))
                 if actual_size != int(size_value):
-                    errors.append(
-                        f"RECORD size mismatch: {filename}"
-                    )
+                    errors.append(f"RECORD size mismatch: {filename}")
             except ValueError:
                 errors.append(f"Invalid RECORD size for {filename}")
 
@@ -209,25 +204,19 @@ def verify_archive(path: Path) -> dict[str, Any]:
             bad_member = archive.testzip()
 
             if bad_member:
-                result["errors"].append(
-                    f"Corrupt ZIP member: {bad_member}"
-                )
+                result["errors"].append(f"Corrupt ZIP member: {bad_member}")
 
             names = archive.namelist()
 
             for name in names:
                 if not safe_archive_path(name):
-                    result["errors"].append(
-                        f"Unsafe archive path: {name}"
-                    )
+                    result["errors"].append(f"Unsafe archive path: {name}")
 
             metadata_files = [
-                name for name in names
-                if name.endswith(".dist-info/METADATA")
+                n for n in names if n.endswith(".dist-info/METADATA")
             ]
             wheel_files = [
-                name for name in names
-                if name.endswith(".dist-info/WHEEL")
+                n for n in names if n.endswith(".dist-info/WHEEL")
             ]
 
             if len(metadata_files) != 1:
@@ -244,18 +233,14 @@ def verify_archive(path: Path) -> dict[str, Any]:
                 metadata_version = metadata.get("Version")
 
                 if not metadata_name:
-                    result["errors"].append(
-                        "METADATA has no Name field."
-                    )
+                    result["errors"].append("METADATA has no Name field.")
                 elif canonicalize_name(metadata_name) != result["package"]:
                     result["errors"].append(
                         "METADATA package name does not match filename."
                     )
 
                 if not metadata_version:
-                    result["errors"].append(
-                        "METADATA has no Version field."
-                    )
+                    result["errors"].append("METADATA has no Version field.")
                 else:
                     try:
                         if Version(metadata_version) != version:
@@ -298,16 +283,12 @@ def verify_archive(path: Path) -> dict[str, Any]:
     return result
 
 
+# ---------------------------------------------------------------------------
+# Python tag matching
+# ---------------------------------------------------------------------------
+
 def python_tag_matches(wheel_tag: Any, requested: str) -> bool:
-    """
-    Check whether a wheel Python tag can satisfy a planned CPython version.
-
-    Supports:
-    - Exact CPython tags, e.g. cp313.
-    - abi3 wheels built for an earlier CPython version.
-    - Pure Python py3-none-any wheels.
-    """
-
+    """Support exact cpXY, abi3 back-compat, and pure py3-none-any."""
     if not re.fullmatch(r"cp3\d{2}", requested):
         return False
 
@@ -323,15 +304,17 @@ def python_tag_matches(wheel_tag: Any, requested: str) -> bool:
 
     if wheel_tag.abi == "abi3":
         match = re.fullmatch(r"cp3(\d{2})", wheel_tag.interpreter)
-
         if match:
             wheel_minor = int(match.group(1))
             requested_minor = int(requested[2:])
-
             return wheel_minor <= requested_minor
 
     return False
 
+
+# ---------------------------------------------------------------------------
+# Platform tag parsing / floor enforcement
+# ---------------------------------------------------------------------------
 
 def normalize_arch(value: str) -> str:
     value = value.lower().strip()
@@ -351,10 +334,55 @@ def normalize_arch(value: str) -> str:
     return aliases.get(value, value)
 
 
+_MANYLINUX_RE = re.compile(r"^manylinux_(\d+)_(\d+)_")
+_MANYLINUX_LEGACY = {
+    "manylinux2014": (2, 17),
+    "manylinux2010": (2, 12),
+    "manylinux1": (2, 5),
+}
+_MUSLLINUX_RE = re.compile(r"^musllinux_(\d+)_(\d+)_")
+_MACOSX_RE = re.compile(r"^macosx_(\d+)_(\d+)_")
+_ANDROID_RE = re.compile(r"^android_(\d+)_")
+
+
+def parse_manylinux_tag(platform: str) -> tuple[int, int] | None:
+    match = _MANYLINUX_RE.match(platform)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+
+    for prefix, version in _MANYLINUX_LEGACY.items():
+        if platform.startswith(f"{prefix}_"):
+            return version
+
+    return None
+
+
+def parse_musllinux_tag(platform: str) -> tuple[int, int] | None:
+    match = _MUSLLINUX_RE.match(platform)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def parse_macos_tag(platform: str) -> tuple[int, int] | None:
+    match = _MACOSX_RE.match(platform)
+    if match:
+        return int(match.group(1)), int(match.group(2))
+    return None
+
+
+def parse_android_tag(platform: str) -> int | None:
+    match = _ANDROID_RE.match(platform)
+    if match:
+        return int(match.group(1))
+    return None
+
+
 def platform_tag_matches(
     wheel_tag: Any,
     target: str,
     archs: str | list[str],
+    floor: dict | None,
 ) -> bool:
     platform = wheel_tag.platform.lower()
     target = target.lower()
@@ -369,12 +397,24 @@ def platform_tag_matches(
         expected_archs = [str(item) for item in archs]
 
     expected = {normalize_arch(item) for item in expected_archs}
-
     if not expected:
         return False
 
+    floor = floor or {}
+    floor_type = floor.get("type")
+
+    # ------------------------- Android -------------------------
     if target.startswith("android"):
         if "android_" not in platform:
+            return False
+
+        api = parse_android_tag(platform)
+        if api is None:
+            return False
+
+        target_api = floor.get("api_level")
+        if target_api is not None and api > int(target_api):
+            # Wheel requires a newer API level than the target floor.
             return False
 
         return any(
@@ -383,45 +423,70 @@ def platform_tag_matches(
             if normalize_arch(arch) in expected
         )
 
+    # ------------------------- manylinux -------------------------
     if target.startswith("manylinux"):
         if "manylinux" not in platform:
             return False
 
+        if floor_type == "glibc":
+            version = parse_manylinux_tag(platform)
+            if version is None:
+                return False
+            floor_major = int(floor.get("major", 2))
+            floor_minor = int(floor.get("minor", 0))
+            if version > (floor_major, floor_minor):
+                return False
+
+    # ------------------------- musllinux -------------------------
     elif target.startswith("musllinux"):
         if "musllinux" not in platform:
             return False
 
+        if floor_type == "musl":
+            version = parse_musllinux_tag(platform)
+            if version is None:
+                return False
+            floor_major = int(floor.get("major", 1))
+            floor_minor = int(floor.get("minor", 0))
+            if version > (floor_major, floor_minor):
+                return False
+
+    # ------------------------- macOS -------------------------
     elif target.startswith("macos"):
         if "macosx" not in platform:
             return False
 
+        if floor_type == "macos":
+            version = parse_macos_tag(platform)
+            if version is None:
+                return False
+            floor_major = int(floor.get("major", 0))
+            floor_minor = int(floor.get("minor", 0))
+            if version > (floor_major, floor_minor):
+                return False
+
+    # ------------------------- Windows -------------------------
     elif target.startswith("win"):
         if not platform.startswith("win_"):
             return False
 
+    # ------------------------- Generic -------------------------
     else:
-        # Generic targets must still match their requested architecture.
         if target not in platform:
             return False
 
+    # ------------------------- architecture -------------------------
     if "universal2" in platform:
         return expected.issubset({"x86_64", "arm64"})
 
     platform_arches = {
         "x86_64": "x86_64" in platform,
-        "arm64": (
-            "arm64" in platform
-            or "aarch64" in platform
-        ),
-        "x86": (
-            "i686" in platform
-            or platform.endswith("_x86")
-        ),
+        "arm64": ("arm64" in platform or "aarch64" in platform),
+        "x86": ("i686" in platform or platform.endswith("_x86")),
     }
 
     return any(
-        platform_arches.get(arch, arch in platform)
-        for arch in expected
+        platform_arches.get(arch, arch in platform) for arch in expected
     )
 
 
@@ -449,19 +514,25 @@ def wheel_matches_build(
     except Exception:
         return False
 
+    floor = build.get("platform_floor")
+
     for tag in tags:
         if not python_tag_matches(tag, requested_python):
             continue
-
         if platform_tag_matches(
             tag,
             str(build["target"]),
             build["cibw_archs"],
+            floor,
         ):
             return True
 
     return False
 
+
+# ---------------------------------------------------------------------------
+# Plan verification
+# ---------------------------------------------------------------------------
 
 def verify_plan(
     builds: list[dict[str, Any]],
@@ -482,11 +553,7 @@ def verify_plan(
             matching = [
                 wheel
                 for wheel in wheels
-                if wheel_matches_build(
-                    wheel,
-                    build,
-                    requested_python,
-                )
+                if wheel_matches_build(wheel, build, requested_python)
             ]
 
             for wheel in matching:
@@ -506,9 +573,7 @@ def verify_plan(
             if not matching:
                 missing.append(entry)
 
-    invalid_wheels = [
-        wheel for wheel in wheels if not wheel["valid"]
-    ]
+    invalid_wheels = [wheel for wheel in wheels if not wheel["valid"]]
 
     unmatched_wheels = [
         wheel["file"]
@@ -540,27 +605,22 @@ def main() -> int:
     )
 
     parser.add_argument(
-        "--wheel-dir",
-        type=Path,
-        default=Path("dist"),
+        "--wheel-dir", type=Path, default=Path("dist"),
         help="Directory containing built wheels (default: dist).",
     )
     parser.add_argument(
-        "--plan",
-        type=Path,
-        default=Path("wheel-build-plan.json"),
+        "--plan", type=Path, default=Path("wheel-build-plan.json"),
         help="Build plan JSON file.",
     )
     parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("wheel-verification.json"),
+        "--output", type=Path, default=Path("wheel-verification.json"),
         help="Verification report output path.",
     )
     parser.add_argument(
-        "--allow-unmatched",
-        action="store_true",
-        help="Do not fail solely because valid wheels match no planned build.",
+        "--allow-unmatched", action="store_true",
+        help=(
+            "Do not fail solely because valid wheels match no planned build."
+        ),
     )
 
     args = parser.parse_args()
@@ -574,11 +634,7 @@ def main() -> int:
             )
 
         wheel_paths = sorted(args.wheel_dir.glob("*.whl"))
-
-        wheels = [
-            verify_archive(path)
-            for path in wheel_paths
-        ]
+        wheels = [verify_archive(path) for path in wheel_paths]
 
         report = verify_plan(builds, wheels)
 

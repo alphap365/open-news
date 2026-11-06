@@ -1,4 +1,3 @@
-
 name: Build Dependency Wheels
 
 on:
@@ -41,10 +40,6 @@ env:
   ANDROID_API_LEVEL: ${{ inputs.android_api_level }}
 
 jobs:
-
-  # ---------------------------------------------------------
-  # 1. Discover missing wheels and create the build plan
-  # ---------------------------------------------------------
 
   plan:
     name: Discover and plan wheel builds
@@ -91,7 +86,6 @@ jobs:
         run: |
           echo "Build batches: ${BUILD_COUNT:-0}"
           echo "Rejected/deferred entries: ${REJECTED_COUNT:-0}"
-
           if [ -f wheel-build-plan.json ]; then
             python -m json.tool wheel-build-plan.json
           fi
@@ -108,10 +102,6 @@ jobs:
           retention-days: 30
 
 
-  # ---------------------------------------------------------
-  # 2. Build each planned package/target batch
-  # ---------------------------------------------------------
-
   build:
     name: >-
       ${{ matrix.package }} ${{ matrix.version }}
@@ -119,7 +109,6 @@ jobs:
       / ${{ matrix.cibw_build }}
 
     needs: plan
-
     if: needs.plan.outputs.has_builds == 'true'
 
     runs-on: ${{ matrix.runner }}
@@ -128,7 +117,6 @@ jobs:
     strategy:
       fail-fast: false
       max-parallel: 6
-
       matrix:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
@@ -141,7 +129,6 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Download and safely extract the exact source distribution.
       - name: Download and prepare source distribution
         env:
           PACKAGE: ${{ matrix.package }}
@@ -167,12 +154,10 @@ jobs:
 
           if not source_url:
               api = f"https://pypi.org/pypi/{package}/{version}/json"
-
               request = urllib.request.Request(
                   api,
-                  headers={"User-Agent": "open-news-wheel-builder/1.1"},
+                  headers={"User-Agent": "open-news-wheel-builder/1.2"},
               )
-
               with urllib.request.urlopen(request, timeout=60) as response:
                   data = json.load(response)
 
@@ -196,7 +181,7 @@ jobs:
           archive = pathlib.Path("source-archive")
           request = urllib.request.Request(
               source_url,
-              headers={"User-Agent": "open-news-wheel-builder/1.1"},
+              headers={"User-Agent": "open-news-wheel-builder/1.2"},
           )
 
           with urllib.request.urlopen(request, timeout=180) as response:
@@ -214,33 +199,25 @@ jobs:
 
           if tarfile.is_tarfile(archive):
               with tarfile.open(archive) as tar:
-                  # Python 3.12's data filter rejects unsafe paths and links.
                   tar.extractall(extracted, filter="data")
-
           elif zipfile.is_zipfile(archive):
               with zipfile.ZipFile(archive) as zf:
                   for item in zf.infolist():
                       name = pathlib.PurePosixPath(item.filename)
-
                       if name.is_absolute() or ".." in name.parts:
                           raise RuntimeError(
                               f"Unsafe ZIP path: {item.filename}"
                           )
-
                       mode = item.external_attr >> 16
-
                       if stat.S_ISLNK(mode):
                           raise RuntimeError(
                               f"Symbolic link in source archive: {item.filename}"
                           )
-
                   zf.extractall(extracted)
-
           else:
               raise RuntimeError("Unsupported source archive format")
 
           entries = list(extracted.iterdir())
-
           if len(entries) == 1 and entries[0].is_dir():
               source = entries[0]
           else:
@@ -257,20 +234,11 @@ jobs:
               )
 
           destination = pathlib.Path("pkgsrc")
-
-          shutil.copytree(
-              source,
-              destination,
-              dirs_exist_ok=True,
-          )
+          shutil.copytree(source, destination, dirs_exist_ok=True)
 
           print(f"Prepared {package}=={version}")
           print(f"Source SHA-256: {digest}")
           PY
-
-      # -----------------------------------------------------
-      # Platform-specific cibuildwheel configuration
-      # -----------------------------------------------------
 
       - name: Build dependency wheel
         uses: pypa/cibuildwheel@v4.3.5
@@ -288,12 +256,12 @@ jobs:
 
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
 
-          # Only build the requested Linux wheel family.
+          # Modern glibc floor (matches compute_wheel_gaps glibc_floor=2.28).
           CIBW_MANYLINUX_X86_64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'x86_64' && 'manylinux2014' || 'off' }}
+            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'x86_64' && 'manylinux_2_28' || 'off' }}
 
           CIBW_MANYLINUX_AARCH64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'aarch64' && 'manylinux2014' || 'off' }}
+            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'aarch64' && 'manylinux_2_28' || 'off' }}
 
           CIBW_MUSLLINUX_X86_64_IMAGE: >-
             ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'x86_64' && 'musllinux_1_2' || 'off' }}
@@ -301,7 +269,11 @@ jobs:
           CIBW_MUSLLINUX_AARCH64_IMAGE: >-
             ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'aarch64' && 'musllinux_1_2' || 'off' }}
 
-      # Upload successful output even if the build action failed.
+          # Modern macOS floor. macOS-only; other platforms ignore the var.
+          # Matches compute_wheel_gaps macos_floor=(14, 0).
+          MACOSX_DEPLOYMENT_TARGET: >-
+            ${{ matrix.cibw_platform == 'macos' && '14.0' || '' }}
+
       - name: Upload generated wheels
         if: always()
         uses: actions/upload-artifact@v4
@@ -311,10 +283,6 @@ jobs:
           if-no-files-found: warn
           retention-days: 30
 
-
-  # ---------------------------------------------------------
-  # 3. Collect and verify every generated wheel
-  # ---------------------------------------------------------
 
   verify:
     name: Verify generated dependency wheels
@@ -378,10 +346,6 @@ jobs:
           retention-days: 30
 
 
-  # ---------------------------------------------------------
-  # 4. Create the verified dependency bundle
-  # ---------------------------------------------------------
-
   bundle:
     name: Create dependency bundle
 
@@ -438,10 +402,6 @@ jobs:
           if-no-files-found: error
           retention-days: 90
 
-
-  # ---------------------------------------------------------
-  # 5. Optional strict policy check
-  # ---------------------------------------------------------
 
   policy:
     name: Deferred build policy

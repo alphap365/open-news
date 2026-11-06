@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """Create a cibuildwheel build matrix from discovered wheel gaps."""
 
@@ -59,15 +58,9 @@ def normalize(gap, index):
         raise ValueError(f"Invalid package name: {package}")
 
     if gap.get("sdist_available") is False:
-        raise ValueError(
-            f"{package}=={version}: no source distribution"
-        )
+        raise ValueError(f"{package}=={version}: no source distribution")
 
-    if gap.get("status") in {
-        "deferred",
-        "source_unavailable",
-        "unbuildable",
-    }:
+    if gap.get("status") in {"deferred", "source_unavailable", "unbuildable"}:
         raise ValueError(
             f"{package}=={version}: discovery marked it unbuildable"
         )
@@ -89,6 +82,7 @@ def normalize(gap, index):
         "cibw_platform": platform,
         "cibw_archs": arch,
         "runner": runner,
+        "platform_floor": gap.get("platform_floor"),
         "source_url": gap.get("sdist_url") or gap.get("source_url"),
         "source_sha256": gap.get("sdist_sha256")
         or gap.get("source_sha256"),
@@ -110,7 +104,6 @@ def make_plan(gaps, max_tags):
             gap["cibw_archs"],
             gap["runner"],
         )
-
         groups[key].setdefault(gap["py_tag"], gap)
 
     plan = []
@@ -119,24 +112,15 @@ def make_plan(gaps, max_tags):
         package, version, target, platform, arch, runner = key
         entries = groups[key]
 
-        tags = sorted(
-            entries,
-            key=lambda tag: int(tag[2:])
-        )
+        tags = sorted(entries, key=lambda tag: int(tag[2:]))
 
         for offset in range(0, len(tags), max_tags):
             batch = tags[offset:offset + max_tags]
             selected = [entries[tag] for tag in batch]
 
-            urls = {
-                item["source_url"]
-                for item in selected
-                if item["source_url"]
-            }
-
+            urls = {item["source_url"] for item in selected if item["source_url"]}
             hashes = {
-                item["source_sha256"]
-                for item in selected
+                item["source_sha256"] for item in selected
                 if item["source_sha256"]
             }
 
@@ -145,11 +129,11 @@ def make_plan(gaps, max_tags):
                     f"Inconsistent source metadata: {package}=={version}"
                 )
 
-            # cibuildwheel's build selector selects Python/ABI tags.
-            # Platform and architecture are separate matrix dimensions.
-            build_selector = " ".join(
-                f"{tag}-*" for tag in batch
-            )
+            build_selector = " ".join(f"{tag}-*" for tag in batch)
+
+            # All entries in a group share the same target, hence the
+            # same platform_floor.
+            floor = selected[0].get("platform_floor")
 
             plan.append({
                 "package": package,
@@ -160,6 +144,7 @@ def make_plan(gaps, max_tags):
                 "runner": runner,
                 "py_tags": batch,
                 "cibw_build": build_selector,
+                "platform_floor": floor,
                 "source_url": next(iter(urls), None),
                 "source_sha256": next(iter(hashes), None),
                 "batch": offset // max_tags + 1,
@@ -186,21 +171,16 @@ def main():
         if rejected and args.strict:
             raise ValueError("\n".join(rejected))
 
-        plan = make_plan(
-            valid,
-            args.max_python_tags_per_job,
-        )
+        plan = make_plan(valid, args.max_python_tags_per_job)
 
         output = Path(args.output)
         output.parent.mkdir(parents=True, exist_ok=True)
-
         output.write_text(
             json.dumps(plan, indent=2) + "\n",
             encoding="utf-8",
         )
 
         github_output = os.environ.get("GITHUB_OUTPUT")
-
         if github_output:
             with open(github_output, "a", encoding="utf-8") as file:
                 file.write(
@@ -208,9 +188,7 @@ def main():
                     + json.dumps(plan, separators=(",", ":"))
                     + "\n"
                 )
-                file.write(
-                    f"has_builds={'true' if plan else 'false'}\n"
-                )
+                file.write(f"has_builds={'true' if plan else 'false'}\n")
                 file.write(f"build_count={len(plan)}\n")
                 file.write(f"gap_count={len(valid)}\n")
                 file.write(f"rejected_count={len(rejected)}\n")

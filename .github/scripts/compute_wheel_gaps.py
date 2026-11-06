@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Discover missing third-party dependency wheels for Open News.
@@ -54,7 +53,11 @@ from packaging.version import Version
 # Target policy
 # ---------------------------------------------------------------------------
 
-PYTHON_VERSIONS = ("cp310", "cp311", "cp312", "cp313", "cp314")
+# Modern-target policy: CPython 3.11+ only. cp310 is EOL (Oct 2026).
+PYTHON_VERSIONS = ("cp311", "cp312", "cp313", "cp314")
+
+# Android CPython support is more recent; keep it conservative.
+ANDROID_PYTHON_VERSIONS = ("cp313", "cp314")
 
 # These are compatibility floors, not claims that every machine runs
 # precisely this OS version.
@@ -62,10 +65,9 @@ PYTHON_VERSIONS = ("cp310", "cp311", "cp312", "cp313", "cp314")
 # Keep these values aligned with the actual build images/configuration
 # in build.yml.
 #
-# manylinux: glibc >= 2.17
+# manylinux: glibc >= 2.28   (RHEL 8+, Debian 10+, Ubuntu 20.04+)
 # musllinux: musl >= 1.2
-# macOS Intel: >= 10.9
-# macOS ARM64: >= 11.0
+# macOS ARM64: >= 14.0       (unified-memory macOS only; x86_64 removed)
 # Android: API >= 24 (cibuildwheel's documented default)
 
 BASE_TARGETS = [
@@ -78,7 +80,8 @@ BASE_TARGETS = [
         "runner": "ubuntu-latest",
         "python_versions": PYTHON_VERSIONS,
         "build_pattern": "manylinux_*",
-        "glibc_floor": (2, 17),
+        "glibc_floor": (2, 28),
+        "platform_floor": {"type": "glibc", "major": 2, "minor": 28},
     },
     {
         "target": "manylinux_aarch64",
@@ -89,7 +92,8 @@ BASE_TARGETS = [
         "runner": "ubuntu-latest",
         "python_versions": PYTHON_VERSIONS,
         "build_pattern": "manylinux_*",
-        "glibc_floor": (2, 17),
+        "glibc_floor": (2, 28),
+        "platform_floor": {"type": "glibc", "major": 2, "minor": 28},
     },
     {
         "target": "musllinux_x86_64",
@@ -101,6 +105,7 @@ BASE_TARGETS = [
         "python_versions": PYTHON_VERSIONS,
         "build_pattern": "musllinux_*",
         "musl_floor": (1, 2),
+        "platform_floor": {"type": "musl", "major": 1, "minor": 2},
     },
     {
         "target": "musllinux_aarch64",
@@ -112,6 +117,7 @@ BASE_TARGETS = [
         "python_versions": PYTHON_VERSIONS,
         "build_pattern": "musllinux_*",
         "musl_floor": (1, 2),
+        "platform_floor": {"type": "musl", "major": 1, "minor": 2},
     },
     {
         "target": "macosx_arm64",
@@ -121,18 +127,12 @@ BASE_TARGETS = [
         "cibw_archs": "arm64",
         "runner": "macos-latest",
         "python_versions": PYTHON_VERSIONS,
-        "macos_floor": (11, 0),
+        "macos_floor": (14, 0),
+        "platform_floor": {"type": "macos", "major": 14, "minor": 0},
     },
-    {
-        "target": "macosx_x86_64",
-        "family": "macos",
-        "architecture": "x86_64",
-        "cibw_platform": "macos",
-        "cibw_archs": "x86_64",
-        "runner": "macos-latest",
-        "python_versions": PYTHON_VERSIONS,
-        "macos_floor": (10, 9),
-    },
+    # macosx_x86_64 intentionally removed. Intel macOS is end-of-life for
+    # Apple; wheels for x86_64 macOS were the single largest source of
+    # build failures in the previous run (cryptography, primp, lxml).
     {
         "target": "win_amd64",
         "family": "windows",
@@ -141,6 +141,7 @@ BASE_TARGETS = [
         "cibw_archs": "AMD64",
         "runner": "windows-latest",
         "python_versions": PYTHON_VERSIONS,
+        # No platform_floor: win_amd64 has no minimum-OS tag.
     },
     {
         "target": "android_arm64_v8a",
@@ -149,7 +150,8 @@ BASE_TARGETS = [
         "cibw_platform": "android",
         "cibw_archs": "arm64_v8a",
         "runner": "ubuntu-latest",
-        "python_versions": ("cp313", "cp314"),
+        "python_versions": ANDROID_PYTHON_VERSIONS,
+        # platform_floor is injected at runtime from --android-api-level.
     },
 ]
 
@@ -189,16 +191,11 @@ def marker_matches(marker_text: str | None, environment: dict) -> bool:
     try:
         return Marker(marker_text).evaluate(environment=environment)
     except Exception as exc:
-        # Do not silently discard a dependency because its marker
-        # could not be evaluated.
         log(f"WARNING: Cannot evaluate marker {marker_text!r}: {exc}")
         return True
 
 
-def make_marker_environment(
-    target: dict,
-    py_tag: str,
-) -> dict:
+def make_marker_environment(target: dict, py_tag: str) -> dict:
     major, minor = python_version_from_tag(py_tag)
     family = target["family"]
     architecture = target["architecture"]
@@ -215,8 +212,14 @@ def make_marker_environment(
         os_name = "posix"
         platform_machine = architecture
 
+    elif family == "android":
+        # Modern CPython on Android reports sys.platform == "android".
+        sys_platform = "android"
+        platform_system = "Android"
+        os_name = "posix"
+        platform_machine = "aarch64"
+
     else:
-        # Android's Python marker environment is Linux-like.
         sys_platform = "linux"
         platform_system = "Linux"
         os_name = "posix"
@@ -249,24 +252,19 @@ def make_marker_environment(
 # ---------------------------------------------------------------------------
 
 def manylinux_platform_tags(target: dict) -> list[str]:
-    """
-    Generate manylinux tags compatible with the configured glibc floor.
-
-    The target floor is deliberately explicit. A wheel requiring a newer
-    glibc version must not be treated as compatible with an older target.
-    """
     architecture = target["architecture"]
     floor_major, floor_minor = target["glibc_floor"]
 
     if floor_major != 2:
         raise ValueError("Only glibc 2.x policies are currently supported.")
 
+    # manylinux_2_5 is the lowest defined PEP 600 tag; range() stop of 4
+    # yields floor_minor down to 5 inclusive.
     result = [
         f"manylinux_2_{minor}_{architecture}"
         for minor in range(floor_minor, 4, -1)
     ]
 
-    # Legacy aliases.
     if floor_minor <= 17:
         result.append(f"manylinux2014_{architecture}")
 
@@ -280,24 +278,16 @@ def manylinux_platform_tags(target: dict) -> list[str]:
 
 
 def musllinux_platform_tags(target: dict) -> list[str]:
-    """
-    Generate musllinux tags compatible with the configured musl floor.
-    """
     architecture = target["architecture"]
     floor_major, floor_minor = target["musl_floor"]
 
-    result = [
+    return [
         f"musllinux_{floor_major}_{minor}_{architecture}"
         for minor in range(floor_minor, 0, -1)
     ]
 
-    return result
 
-
-def get_platform_tags(
-    target: dict,
-    android_api_level: int,
-) -> list[str]:
+def get_platform_tags(target: dict, android_api_level: int) -> list[str]:
     family = target["family"]
     architecture = target["architecture"]
 
@@ -334,12 +324,6 @@ def get_supported_tags(
     py_tag: str,
     android_api_level: int,
 ) -> list:
-    """
-    Generate the tags accepted by one exact target/Python combination.
-
-    cpython_tags handles exact CPython ABI and abi3 compatibility.
-    compatible_tags adds generic Python and pure-Python compatibility.
-    """
     python_version = python_version_from_tag(py_tag)
     platform_tags = get_platform_tags(target, android_api_level)
 
@@ -359,7 +343,6 @@ def get_supported_tags(
         )
     )
 
-    # Preserve preference order while removing duplicates.
     return list(dict.fromkeys(ordered_tags))
 
 
@@ -367,10 +350,7 @@ def get_supported_tags(
 # Runtime dependency graph from uv.lock
 # ---------------------------------------------------------------------------
 
-def version_satisfies(
-    version_text: str,
-    specifier_text: str | None,
-) -> bool:
+def version_satisfies(version_text: str, specifier_text: str | None) -> bool:
     if not specifier_text:
         return True
 
@@ -396,11 +376,6 @@ def resolve_runtime_packages(
     lock: dict,
     environment: dict,
 ) -> tuple[list[dict], list[str]]:
-    """
-    Walk the locked runtime dependency graph for one marker environment.
-
-    Optional development groups are intentionally excluded.
-    """
     lock_packages = lock.get("package", [])
 
     by_name: dict[str, list[dict]] = {}
@@ -471,10 +446,7 @@ def resolve_runtime_packages(
             if not isinstance(dependency, dict):
                 continue
 
-            if not marker_matches(
-                dependency.get("marker"),
-                environment,
-            ):
+            if not marker_matches(dependency.get("marker"), environment):
                 continue
 
             dependency_name = dependency.get("name")
@@ -615,9 +587,7 @@ def inspect_release(
                 "url": file_info.get("url"),
                 "sha256": digests.get("sha256"),
                 "best_matching_tag": str(ordered_matches[0]),
-                "matching_tags": [
-                    str(tag) for tag in ordered_matches
-                ],
+                "matching_tags": [str(tag) for tag in ordered_matches],
             })
 
         elif file_type == "sdist":
@@ -627,20 +597,6 @@ def inspect_release(
                 "sha256": digests.get("sha256"),
             })
 
-    compatible_wheels.sort(
-        key=lambda item: tag_rank.get(
-            next(
-                (
-                    tag
-                    for tag in supported_tags
-                    if str(tag) == item["best_matching_tag"]
-                ),
-                None,
-            ),
-            len(tag_rank),
-        )
-    )
-
     if compatible_wheels:
         return {
             "status": "available",
@@ -648,7 +604,6 @@ def inspect_release(
         }
 
     if source_distributions:
-        # Prefer .tar.gz, then other supported source archive formats.
         source_distributions.sort(
             key=lambda item: (
                 not item["filename"].endswith(".tar.gz"),
@@ -688,9 +643,7 @@ def discover(
     project = project_data.get("project", {})
 
     if not project:
-        raise ValueError(
-            f"No [project] table found in {project_path}"
-        )
+        raise ValueError(f"No [project] table found in {project_path}")
 
     project_name = project.get("name", "unknown-project")
     project_version = project.get("version", "unknown")
@@ -702,6 +655,10 @@ def discover(
 
         if target["family"] == "android":
             target["android_api_level"] = android_api_level
+            target["platform_floor"] = {
+                "type": "android",
+                "api_level": android_api_level,
+            }
 
         targets.append(target)
 
@@ -713,7 +670,7 @@ def discover(
     release_cache: dict[tuple[str, str], dict | None] = {}
 
     headers = {
-        "User-Agent": "Open-News-Dependency-Wheel-Builder/1.1",
+        "User-Agent": "Open-News-Dependency-Wheel-Builder/1.2",
         "Accept": "application/json",
     }
 
@@ -727,10 +684,7 @@ def discover(
             log(f"Target: {target['target']}")
 
             for py_tag in target["python_versions"]:
-                environment = make_marker_environment(
-                    target,
-                    py_tag,
-                )
+                environment = make_marker_environment(target, py_tag)
 
                 packages, warnings = resolve_runtime_packages(
                     project,
@@ -760,7 +714,6 @@ def discover(
 
                     if cache_key not in release_cache:
                         log(f"Checking PyPI: {package}=={version}")
-
                         release_cache[cache_key] = fetch_pypi_release(
                             client=client,
                             package=package,
@@ -784,6 +737,7 @@ def discover(
                         "target": target["target"],
                         "py_tag": py_tag,
                         "compatibility_profile": target["family"],
+                        "platform_floor": target.get("platform_floor"),
                     }
 
                     if target["family"] == "android":
@@ -794,9 +748,7 @@ def discover(
                             **base_record,
                             "status": "available",
                             "source": "pypi",
-                            "compatible_wheels": result[
-                                "compatible_wheels"
-                            ],
+                            "compatible_wheels": result["compatible_wheels"],
                         })
                         continue
 
@@ -808,8 +760,6 @@ def discover(
                         })
                         continue
 
-                    # Preserve the existing matrix fields expected by
-                    # plan_wheel_build.py and build.yml.
                     if target["family"] in ("manylinux", "musllinux"):
                         cibw_build_id = (
                             f"{py_tag}-{target['build_pattern']}"
@@ -834,41 +784,38 @@ def discover(
 
                     gaps.append(gap)
 
-    gaps.sort(
-        key=lambda item: (
+    def _sort_key(item):
+        return (
             item["package"].lower(),
             item["target"],
             item["py_tag"],
         )
-    )
 
-    available.sort(
-        key=lambda item: (
-            item["package"].lower(),
-            item["target"],
-            item["py_tag"],
-        )
-    )
-
-    unbuildable.sort(
-        key=lambda item: (
-            item["package"].lower(),
-            item["target"],
-            item["py_tag"],
-        )
-    )
+    gaps.sort(key=_sort_key)
+    available.sort(key=_sort_key)
+    unbuildable.sort(key=_sort_key)
 
     discovery_report = {
-        "schema_version": 2,
+        "schema_version": 3,
         "project": project_name,
         "project_version": project_version,
         "android_api_level": android_api_level,
+        "policy": {
+            "python_versions": list(PYTHON_VERSIONS),
+            "android_python_versions": list(ANDROID_PYTHON_VERSIONS),
+            "glibc_floor": [2, 28],
+            "musl_floor": [1, 2],
+            "macos_floor": [14, 0],
+            "android_api_floor": android_api_level,
+            "macos_x86_64": "excluded",
+        },
         "targets": [
             {
                 "target": target["target"],
                 "architecture": target["architecture"],
                 "python_versions": list(target["python_versions"]),
                 "runner": target["runner"],
+                "platform_floor": target.get("platform_floor"),
             }
             for target in targets
         ],
@@ -901,9 +848,7 @@ def write_github_outputs(
     if not output_file:
         return
 
-    matrix = {
-        "include": gaps,
-    }
+    matrix = {"include": gaps}
 
     outputs = {
         "matrix": json.dumps(matrix, separators=(",", ":")),
@@ -935,55 +880,23 @@ def parse_args() -> argparse.Namespace:
         )
     )
 
+    parser.add_argument("--project", type=Path, default=Path("pyproject.toml"))
+    parser.add_argument("--lock", type=Path, default=Path("uv.lock"))
     parser.add_argument(
-        "--project",
-        type=Path,
-        default=Path("pyproject.toml"),
-    )
-
-    parser.add_argument(
-        "--lock",
-        type=Path,
-        default=Path("uv.lock"),
-    )
-
-    parser.add_argument(
-        "--output",
-        type=Path,
-        default=Path("wheel-gaps.json"),
+        "--output", type=Path, default=Path("wheel-gaps.json"),
         help="Primary missing-wheel JSON output.",
     )
-
     parser.add_argument(
-        "--discovery-output",
-        type=Path,
-        default=None,
+        "--discovery-output", type=Path, default=None,
         help="Full discovery report. Defaults beside --output.",
     )
-
     parser.add_argument(
-        "--android-api-level",
-        type=int,
-        default=24,
+        "--android-api-level", type=int, default=24,
         help="Minimum Android API level used for compatibility checks.",
     )
-
-    parser.add_argument(
-        "--pypi-base-url",
-        default="https://pypi.org/pypi",
-    )
-
-    parser.add_argument(
-        "--timeout",
-        type=float,
-        default=30.0,
-    )
-
-    parser.add_argument(
-        "--retries",
-        type=int,
-        default=3,
-    )
+    parser.add_argument("--pypi-base-url", default="https://pypi.org/pypi")
+    parser.add_argument("--timeout", type=float, default=30.0)
+    parser.add_argument("--retries", type=int, default=3)
 
     return parser.parse_args()
 
@@ -992,10 +905,7 @@ def main() -> int:
     args = parse_args()
 
     if args.android_api_level < 16:
-        print(
-            "ERROR: Android API level must be at least 16.",
-            file=sys.stderr,
-        )
+        print("ERROR: Android API level must be at least 16.", file=sys.stderr)
         return 2
 
     if args.retries < 0:
@@ -1018,41 +928,25 @@ def main() -> int:
         )
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.discovery_output.parent.mkdir(
-            parents=True,
-            exist_ok=True,
-        )
+        args.discovery_output.parent.mkdir(parents=True, exist_ok=True)
 
-        # Keep this a JSON list: plan_wheel_build.py consumes it.
         args.output.write_text(
             json.dumps(gaps, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
         args.discovery_output.write_text(
-            json.dumps(
-                discovery_report,
-                indent=2,
-                sort_keys=True,
-            ) + "\n",
+            json.dumps(discovery_report, indent=2, sort_keys=True) + "\n",
             encoding="utf-8",
         )
 
-        write_github_outputs(
-            gaps,
-            discovery_report,
-            args.discovery_output,
-        )
+        write_github_outputs(gaps, discovery_report, args.discovery_output)
 
         summary = discovery_report["summary"]
-
         log("Discovery completed.")
         log(f"Missing wheel combinations: {summary['missing_wheel_count']}")
         log(f"Compatible upstream wheels: {summary['upstream_wheel_count']}")
-        log(
-            "Source unavailable: "
-            f"{summary['source_unavailable_count']}"
-        )
+        log(f"Source unavailable: {summary['source_unavailable_count']}")
         log(f"Lock warnings: {summary['lock_warning_count']}")
         log(f"Gap report: {args.output}")
         log(f"Full report: {args.discovery_output}")
