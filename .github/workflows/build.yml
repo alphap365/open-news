@@ -8,20 +8,7 @@ on:
         required: true
         default: "24"
         type: choice
-        options:
-          - "21"
-          - "23"
-          - "24"
-          - "26"
-          - "28"
-          - "29"
-          - "30"
-          - "31"
-          - "32"
-          - "33"
-          - "34"
-          - "35"
-
+        options: ["21", "23", "24", "26", "28", "29", "30", "31", "32", "33", "34", "35"]
       fail_on_deferred:
         description: Fail the workflow if some wheel combinations cannot be planned
         required: true
@@ -45,7 +32,6 @@ jobs:
     name: Discover and plan wheel builds
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_builds: ${{ steps.plan.outputs.has_builds }}
@@ -53,11 +39,9 @@ jobs:
       rejected_count: ${{ steps.plan.outputs.rejected_count }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
@@ -76,8 +60,7 @@ jobs:
 
       - name: Generate build plan
         id: plan
-        run: |
-          python .github/scripts/plan_wheel_build.py
+        run: python .github/scripts/plan_wheel_build.py
 
       - name: Display build plan
         env:
@@ -107,13 +90,10 @@ jobs:
       ${{ matrix.package }} ${{ matrix.version }}
       / ${{ matrix.target }}
       / ${{ matrix.cibw_build }}
-
     needs: plan
     if: needs.plan.outputs.has_builds == 'true'
-
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 120
-
     strategy:
       fail-fast: false
       max-parallel: 6
@@ -121,13 +101,20 @@ jobs:
         include: ${{ fromJSON(needs.plan.outputs.matrix) }}
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+
+      # Fallback for aarch64 targets on x86_64 runners. Native
+      # ubuntu-24.04-arm avoids this entirely; this step is a safety net
+      # if the native runner label is unavailable.
+      - name: Set up QEMU (aarch64 fallback)
+        if: matrix.cibw_platform == 'linux' && matrix.cibw_archs == 'aarch64' && matrix.runner == 'ubuntu-latest'
+        uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
 
       - name: Download and prepare source distribution
         env:
@@ -137,66 +124,31 @@ jobs:
           SOURCE_SHA256: ${{ matrix.source_sha256 }}
         run: |
           python - <<'PY'
-          import hashlib
-          import json
-          import os
-          import pathlib
-          import shutil
-          import tarfile
-          import urllib.request
-          import zipfile
-          import stat
-
+          import hashlib, json, os, pathlib, shutil, tarfile, urllib.request, zipfile, stat
           package = os.environ["PACKAGE"]
           version = os.environ["VERSION"]
           source_url = os.environ.get("SOURCE_URL", "").strip()
           expected_sha256 = os.environ.get("SOURCE_SHA256", "").strip()
-
           if not source_url:
               api = f"https://pypi.org/pypi/{package}/{version}/json"
-              request = urllib.request.Request(
-                  api,
-                  headers={"User-Agent": "open-news-wheel-builder/1.2"},
-              )
-              with urllib.request.urlopen(request, timeout=60) as response:
+              req = urllib.request.Request(api, headers={"User-Agent": "open-news-wheel-builder/1.3"})
+              with urllib.request.urlopen(req, timeout=60) as response:
                   data = json.load(response)
-
-              sdists = [
-                  item for item in data.get("urls", [])
-                  if item.get("packagetype") == "sdist"
-              ]
-
+              sdists = [i for i in data.get("urls", []) if i.get("packagetype") == "sdist"]
               if not sdists:
-                  raise RuntimeError(
-                      f"No source distribution found for {package}=={version}"
-                  )
-
+                  raise RuntimeError(f"No sdist for {package}=={version}")
               selected = sdists[0]
               source_url = selected["url"]
-              expected_sha256 = (
-                  expected_sha256
-                  or selected.get("digests", {}).get("sha256", "")
-              )
-
+              expected_sha256 = expected_sha256 or selected.get("digests", {}).get("sha256", "")
           archive = pathlib.Path("source-archive")
-          request = urllib.request.Request(
-              source_url,
-              headers={"User-Agent": "open-news-wheel-builder/1.2"},
-          )
-
-          with urllib.request.urlopen(request, timeout=180) as response:
+          req = urllib.request.Request(source_url, headers={"User-Agent": "open-news-wheel-builder/1.3"})
+          with urllib.request.urlopen(req, timeout=180) as response:
               archive.write_bytes(response.read())
-
           digest = hashlib.sha256(archive.read_bytes()).hexdigest()
-
           if expected_sha256 and digest.lower() != expected_sha256.lower():
-              raise RuntimeError(
-                  f"Source SHA-256 mismatch for {package}=={version}"
-              )
-
+              raise RuntimeError(f"SHA-256 mismatch for {package}=={version}")
           extracted = pathlib.Path("source-extracted")
           extracted.mkdir()
-
           if tarfile.is_tarfile(archive):
               with tarfile.open(archive) as tar:
                   tar.extractall(extracted, filter="data")
@@ -205,72 +157,49 @@ jobs:
                   for item in zf.infolist():
                       name = pathlib.PurePosixPath(item.filename)
                       if name.is_absolute() or ".." in name.parts:
-                          raise RuntimeError(
-                              f"Unsafe ZIP path: {item.filename}"
-                          )
-                      mode = item.external_attr >> 16
-                      if stat.S_ISLNK(mode):
-                          raise RuntimeError(
-                              f"Symbolic link in source archive: {item.filename}"
-                          )
+                          raise RuntimeError(f"Unsafe ZIP path: {item.filename}")
+                      if stat.S_ISLNK(item.external_attr >> 16):
+                          raise RuntimeError(f"Symlink in source: {item.filename}")
                   zf.extractall(extracted)
           else:
               raise RuntimeError("Unsupported source archive format")
-
           entries = list(extracted.iterdir())
-          if len(entries) == 1 and entries[0].is_dir():
-              source = entries[0]
-          else:
-              source = extracted
-
-          if not (
-              (source / "pyproject.toml").is_file()
-              or (source / "setup.py").is_file()
-              or (source / "setup.cfg").is_file()
-          ):
-              raise RuntimeError(
-                  "Extracted source does not contain a recognizable "
-                  "Python project."
-              )
-
-          destination = pathlib.Path("pkgsrc")
-          shutil.copytree(source, destination, dirs_exist_ok=True)
-
+          source = entries[0] if len(entries) == 1 and entries[0].is_dir() else extracted
+          if not ((source / "pyproject.toml").is_file() or (source / "setup.py").is_file() or (source / "setup.cfg").is_file()):
+              raise RuntimeError("Extracted source has no recognizable Python project.")
+          shutil.copytree(source, pathlib.Path("pkgsrc"), dirs_exist_ok=True)
           print(f"Prepared {package}=={version}")
-          print(f"Source SHA-256: {digest}")
           PY
 
-      - name: Build dependency wheel
+      # Pure-Python: one pip-wheel build, arch-independent output.
+      - name: Build pure-Python wheel (pip wheel)
+        if: matrix.build_type == 'pure_python'
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip wheel --no-deps --wheel-dir wheelhouse pkgsrc
+
+      # Native: cibuildwheel per-target.
+      - name: Build dependency wheel (cibuildwheel)
+        if: matrix.build_type != 'pure_python'
         uses: pypa/cibuildwheel@v4.3.5
         with:
           package-dir: pkgsrc
           output-dir: wheelhouse
-
         env:
           CIBW_PLATFORM: ${{ matrix.cibw_platform }}
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
-
           CIBW_BUILD_FRONTEND: build
           CIBW_BUILD_VERBOSITY: "1"
-
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
-
-          # Modern glibc floor (matches compute_wheel_gaps glibc_floor=2.28).
           CIBW_MANYLINUX_X86_64_IMAGE: >-
             ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'x86_64' && 'manylinux_2_28' || 'off' }}
-
           CIBW_MANYLINUX_AARCH64_IMAGE: >-
             ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'aarch64' && 'manylinux_2_28' || 'off' }}
-
           CIBW_MUSLLINUX_X86_64_IMAGE: >-
             ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'x86_64' && 'musllinux_1_2' || 'off' }}
-
           CIBW_MUSLLINUX_AARCH64_IMAGE: >-
             ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'aarch64' && 'musllinux_1_2' || 'off' }}
-
-          # Modern macOS floor. macOS-only; other platforms ignore the var.
-          # Matches compute_wheel_gaps macos_floor=(14, 0).
           MACOSX_DEPLOYMENT_TARGET: >-
             ${{ matrix.cibw_platform == 'macos' && '14.0' || '' }}
 
@@ -286,44 +215,31 @@ jobs:
 
   verify:
     name: Verify generated dependency wheels
-
-    needs:
-      - plan
-      - build
-
+    needs: [plan, build]
     if: >-
-      always() &&
-      needs.plan.result == 'success' &&
+      always() && needs.plan.result == 'success' &&
       needs.plan.outputs.has_builds == 'true'
-
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Install verification dependency
-        run: |
-          python -m pip install "packaging>=25.0"
+      - run: python -m pip install "packaging>=25.0"
 
-      - name: Download build plan
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: wheel-build-metadata
           path: metadata
 
-      - name: Prepare wheel directory
-        run: mkdir -p all-wheels
+      - run: mkdir -p all-wheels
 
-      - name: Download successful build artifacts
+      - uses: actions/download-artifact@v4
         continue-on-error: true
-        uses: actions/download-artifact@v4
         with:
           pattern: dependency-wheels-*
           path: all-wheels
@@ -336,9 +252,8 @@ jobs:
             --plan metadata/wheel-build-plan.json \
             --output wheel-verification.json
 
-      - name: Upload verification report
+      - uses: actions/upload-artifact@v4
         if: always()
-        uses: actions/upload-artifact@v4
         with:
           name: wheel-verification-report
           path: wheel-verification.json
@@ -348,40 +263,27 @@ jobs:
 
   bundle:
     name: Create dependency bundle
-
-    needs:
-      - plan
-      - verify
-
+    needs: [plan, verify]
     if: >-
       needs.plan.outputs.has_builds == 'true' &&
       needs.verify.result == 'success'
-
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
     steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
+      - run: python -m pip install "packaging>=25.0"
 
-      - name: Install packaging dependency
-        run: |
-          python -m pip install "packaging>=25.0"
-
-      - name: Download verified wheels
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           pattern: dependency-wheels-*
           path: all-wheels
           merge-multiple: true
 
-      - name: Download verification report
-        uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v4
         with:
           name: wheel-verification-report
           path: verification
@@ -394,8 +296,7 @@ jobs:
             --verification-report verification/wheel-verification.json \
             --output dependency-build/open-news-dependencies.zip
 
-      - name: Upload dependency bundle
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: open-news-dependency-bundle
           path: dependency-build/open-news-dependencies.zip
@@ -405,15 +306,8 @@ jobs:
 
   policy:
     name: Deferred build policy
-
-    needs:
-      - plan
-      - build
-      - verify
-      - bundle
-
+    needs: [plan, build, verify, bundle]
     if: always() && inputs.fail_on_deferred == true
-
     runs-on: ubuntu-latest
 
     steps:
@@ -424,29 +318,17 @@ jobs:
           VERIFY_RESULT: ${{ needs.verify.result }}
           REJECTED_COUNT: ${{ needs.plan.outputs.rejected_count }}
         run: |
-          echo "Plan: ${PLAN_RESULT}"
-          echo "Build: ${BUILD_RESULT}"
-          echo "Verification: ${VERIFY_RESULT}"
-          echo "Rejected/deferred: ${REJECTED_COUNT:-unknown}"
-
+          echo "Plan: ${PLAN_RESULT} / Build: ${BUILD_RESULT} / Verify: ${VERIFY_RESULT}"
           if [ "$PLAN_RESULT" != "success" ]; then
-            echo "::error::Build planning did not succeed."
-            exit 1
+            echo "::error::Build planning did not succeed."; exit 1
           fi
-
           if [ "$BUILD_RESULT" = "failure" ]; then
-            echo "::error::One or more wheel build jobs failed."
-            exit 1
+            echo "::error::One or more wheel build jobs failed."; exit 1
           fi
-
           if [ "$VERIFY_RESULT" = "failure" ]; then
-            echo "::error::Wheel verification failed."
-            exit 1
+            echo "::error::Wheel verification failed."; exit 1
           fi
-
           if [ "${REJECTED_COUNT:-0}" != "0" ]; then
-            echo "::error::Some wheel combinations were rejected or deferred."
-            exit 1
+            echo "::error::Some wheel combinations were rejected or deferred."; exit 1
           fi
-
           echo "Strict build policy passed."
