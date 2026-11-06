@@ -13,7 +13,7 @@
 [![Socket](https://socket.dev/api/badge/pypi/package/open-news-api/1.0.5)](https://socket.dev/pypi/package/open-news-api/overview/1.0.5)
 [![License](https://img.shields.io/badge/License-MIT-6C5CE7)](LICENSE)
 [![Tests](https://img.shields.io/badge/Tests-202%20passing-brightgreen)](https://github.com/alphap365/open-news/actions)
-[![Version](https://img.shields.io/badge/Version-1.0.5-blue)](https://github.com/alphap365/open-news/releases)
+[![Version](https://img.shields.io/badge/Version-1.0.6a1-blue)](https://github.com/alphap365/open-news/releases)
 [![Async API](https://img.shields.io/badge/API-Async%20%2B%20sync-4B75C9)](docs/python-api.md)
 [![Docs](https://img.shields.io/badge/Docs-Reference-8A63D2)](docs/README.md)
 [![Open in Colab](https://img.shields.io/badge/Open%20in-Colab-FF6F00?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/alphap365/open-news/blob/main/examples/colab/open_news_colab_demo.ipynb)

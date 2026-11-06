@@ -15,8 +15,20 @@ from .processing.dedupe import dedupe_articles
 
 from . import export
 from .export import to_markdown, to_json
+from .cache import (
+    EncryptedCache,
+    UserProfile,
+    store_user_profile,
+    load_user_profile,
+)
 
-__version__ = "1.0.5"
+from .feeds import (
+    FeedConfig,
+    FeedEngine,
+    FeedError,
+    FeedProfileRequiredError,
+)
+__version__ = "1.0.6a1"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
