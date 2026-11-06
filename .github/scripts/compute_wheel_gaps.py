@@ -1,57 +1,78 @@
-"""Reads uv.lock + pyproject.toml, checks PyPI for existing wheels, emits a
-GHA matrix of only the (package, target, py_tag) combinations that are
-actually missing — scoped to runtime dependencies only.
+"""Detect missing third-party dependency wheels.
 
-Android tag note:
-  PyPI uses `android_<api>_<arch>` filenames (e.g. `android_21_arm64_v8a`).
-  The API level is forward-compatible at runtime, so we match on the arch
-  token alone rather than pinning an API level.
+Reads uv.lock and pyproject.toml, traverses runtime dependencies, and checks
+PyPI for wheel coverage across supported platform/Python combinations.
 
-Coverage matching is arch-aware: a `manylinux_x86_64` wheel does NOT
-satisfy a `manylinux_aarch64` target. The earlier family-prefix match
-("manylinux") produced a silently incomplete matrix.
+Responsibilities:
+    - Identify reachable compiled dependencies.
+    - Check existing PyPI wheel coverage.
+    - Emit missing combinations as JSON.
+    - Optionally expose the matrix through GitHub Actions outputs.
+
+This script does not decide how a package should be built.
+That is the responsibility of plan_wheel_build.py.
 """
+
 from __future__ import annotations
 
+import argparse
 import json
 import os
 import re
 import sys
+import time
+from pathlib import Path
+from typing import Any
+
 try:
-    import tomllib  # Python 3.11+
-except ModuleNotFoundError:  # Python 3.10
+    import tomllib
+except ModuleNotFoundError:
     import tomli as tomllib
+
 import httpx
 
-# ----------------------------------------------------------------------
-# Targets: (label, cibw_platform, cibw_archs, runner, build_id_hint, py_tags)
-#   build_id_hint is used only to compose cibuildwheel --build IDs.
-#   Coverage matching uses _ARCH_TOKENS[label] instead.
-# ----------------------------------------------------------------------
+
+USER_AGENT = "open-news-wheel-gap-detector/1.2"
+
 TARGETS = [
-    ("manylinux_x86_64",  "linux",   "x86_64",    "ubuntu-latest",  "manylinux",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("manylinux_aarch64", "linux",   "aarch64",   "ubuntu-latest",  "manylinux",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("musllinux_x86_64",  "linux",   "x86_64",    "ubuntu-latest",  "musllinux",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("musllinux_aarch64", "linux",   "aarch64",   "ubuntu-latest",  "musllinux",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("macosx_arm64",      "macos",   "arm64",     "macos-latest",   "macosx",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("macosx_x86_64",     "macos",   "x86_64",    "macos-latest",   "macosx",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("win_amd64",         "windows", "AMD64",     "windows-latest", "win_amd64",
-     ["cp310", "cp311", "cp312", "cp313", "cp314"]),
-    ("android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",  "arm64_v8a",
-     ["cp313", "cp314"]),
+    (
+        "manylinux_x86_64", "linux", "x86_64", "ubuntu-latest",
+        "manylinux", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "manylinux_aarch64", "linux", "aarch64", "ubuntu-latest",
+        "manylinux", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "musllinux_x86_64", "linux", "x86_64", "ubuntu-latest",
+        "musllinux", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "musllinux_aarch64", "linux", "aarch64", "ubuntu-latest",
+        "musllinux", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "macosx_arm64", "macos", "arm64", "macos-latest",
+        "macosx", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "macosx_x86_64", "macos", "x86_64", "macos-latest",
+        "macosx", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "win_amd64", "windows", "AMD64", "windows-latest",
+        "win_amd64", ["cp310", "cp311", "cp312", "cp313", "cp314"],
+    ),
+    (
+        "android_arm64_v8a", "android", "arm64_v8a", "ubuntu-latest",
+        "arm64_v8a", ["cp313", "cp314"],
+    ),
 ]
 
-# Per-target wheel-filename pattern. Anchored with (?=[-.]) so
-# manylinux_x86_64 cannot match manylinux_aarch64 (and vice versa).
 _ARCH_TOKENS = {
     "manylinux_x86_64": re.compile(
-        r"(?:^|[-.])(?:manylinux1|manylinux2010|manylinux2014|manylinux_\d+_\d+)_x86_64(?=[-.])"
+        r"(?:^|[-.])(?:manylinux1|manylinux2010|manylinux2014|"
+        r"manylinux_\d+_\d+)_x86_64(?=[-.])"
     ),
     "manylinux_aarch64": re.compile(
         r"(?:^|[-.])(?:manylinux2014|manylinux_\d+_\d+)_aarch64(?=[-.])"
@@ -62,7 +83,6 @@ _ARCH_TOKENS = {
     "musllinux_aarch64": re.compile(
         r"(?:^|[-.])musllinux_\d+_\d+_aarch64(?=[-.])"
     ),
-    # universal2 covers both Apple silicon and Intel.
     "macosx_arm64": re.compile(
         r"(?:^|[-.])macosx_\d+_\d+_(?:arm64|universal2)(?=[-.])"
     ),
@@ -70,191 +90,317 @@ _ARCH_TOKENS = {
         r"(?:^|[-.])macosx_\d+_\d+_(?:x86_64|universal2|intel)(?=[-.])"
     ),
     "win_amd64": re.compile(r"(?:^|[-.])win_amd64(?=[-.])"),
-    "android_arm64_v8a": re.compile(r"(?:^|[-.])android_\d+_arm64_v8a(?=[-.])"),
+    "android_arm64_v8a": re.compile(
+        r"(?:^|[-.])android_\d+_arm64_v8a(?=[-.])"
+    ),
 }
 
 ABI3_RE = re.compile(r"-(cp\d+)-abi3-")
-_REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
+REQ_NAME_RE = re.compile(r"^\s*([A-Za-z0-9][A-Za-z0-9._-]*)")
 
 
-def cibw_build_id_for(platform_: str, hint: str, py_tag: str) -> str:
-    return f"{py_tag}-{hint}_*" if platform_ == "linux" else f"{py_tag}-*"
-
-
-# ----------------------------------------------------------------------
-# Runtime dependency graph
-# ----------------------------------------------------------------------
-def _norm(name: str) -> str:
-    """PEP 503 name normalisation: Foo_Bar, foo.bar, foo-bar -> foo-bar."""
+def normalize_name(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
-def _dep_name_from_requirement(spec: str) -> str | None:
-    """Extract the project name from a PEP 508 requirement string.
-
-    Handles `foo`, `foo>=1.0`, `foo[extra]>=1.0`, `foo!=1.0`, `foo~=1.0`,
-    `foo===1.0`, `foo @ https://...`, `foo; python_version<"3.10"`.
-    """
-    head = spec.split(";", 1)[0].split("[", 1)[0].strip()
-    m = _REQ_NAME_RE.match(head)
-    return m.group(1) if m else None
+def dependency_name(requirement: str) -> str | None:
+    head = requirement.split(";", 1)[0].split("[", 1)[0].strip()
+    match = REQ_NAME_RE.match(head)
+    return match.group(1) if match else None
 
 
-def load_lock() -> dict:
-    with open("uv.lock", "rb") as f:
-        return tomllib.load(f)
+def load_toml(path: str) -> dict[str, Any]:
+    with open(path, "rb") as file:
+        return tomllib.load(file)
 
 
-def get_runtime_roots() -> set[str]:
-    with open("pyproject.toml", "rb") as f:
-        proj = tomllib.load(f)["project"]
-    names = set()
-    for dep in proj.get("dependencies", []):
-        name = _dep_name_from_requirement(dep)
+def load_runtime_roots() -> set[str]:
+    project = load_toml("pyproject.toml")["project"]
+
+    roots = set()
+    for requirement in project.get("dependencies", []):
+        name = dependency_name(requirement)
         if name:
-            names.add(_norm(name))
-    return names
+            roots.add(normalize_name(name))
+
+    return roots
 
 
-def walk_dependency_graph(lock: dict, roots: set[str]) -> set[str]:
-    pkg_by_name = {_norm(p["name"]): p for p in lock["package"]}
+def walk_dependency_graph(
+    lock: dict[str, Any],
+    roots: set[str],
+) -> set[str]:
+    packages = {
+        normalize_name(package["name"]): package
+        for package in lock.get("package", [])
+    }
+
     visited: set[str] = set()
-    frontier = list(roots)
-    while frontier:
-        name = _norm(frontier.pop())
+    pending = list(roots)
+
+    while pending:
+        name = normalize_name(pending.pop())
+
         if name in visited:
             continue
+
         visited.add(name)
-        pkg = pkg_by_name.get(name)
-        if pkg is None:
+
+        package = packages.get(name)
+        if package is None:
             continue
-        for dep in pkg.get("dependencies", []):
-            dep_name = _norm(dep["name"])
-            if dep_name not in visited:
-                frontier.append(dep_name)
+
+        for dependency in package.get("dependencies", []):
+            dependency_name_ = normalize_name(dependency["name"])
+
+            if dependency_name_ not in visited:
+                pending.append(dependency_name_)
+
     return visited
 
 
-def load_compiled_packages() -> dict[str, str]:
-    """Returns {name: version} for reachable deps that are NOT pure-Python.
+def load_compiled_packages() -> list[dict[str, str]]:
+    lock = load_toml("uv.lock")
+    reachable = walk_dependency_graph(lock, load_runtime_roots())
 
-    Includes sdist-only packages (wheels == []) — they're the most
-    worthwhile candidates for wheel building.
-    """
-    lock = load_lock()
-    reachable = walk_dependency_graph(lock, get_runtime_roots())
+    compiled = []
 
-    compiled: dict[str, str] = {}
-    for pkg in lock["package"]:
-        if _norm(pkg["name"]) not in reachable:
+    for package in lock.get("package", []):
+        name = package["name"]
+
+        if normalize_name(name) not in reachable:
             continue
-        wheels = pkg.get("wheels", [])
-        is_pure = bool(wheels) and all("-none-any.whl" in w["url"] for w in wheels)
-        if not is_pure:
-            compiled[pkg["name"]] = pkg["version"]
+
+        wheels = package.get("wheels", [])
+
+        is_pure_python = (
+            bool(wheels)
+            and all(
+                "-none-any.whl" in wheel.get("url", "")
+                for wheel in wheels
+            )
+        )
+
+        if not is_pure_python:
+            compiled.append({
+                "package": name,
+                "version": package["version"],
+            })
+
     return compiled
 
 
-# ----------------------------------------------------------------------
-# PyPI wheel-coverage check
-# ----------------------------------------------------------------------
-def existing_filenames(pkg_name: str, pkg_version: str) -> set[str]:
-    """Return PyPI filenames for this version. 404 -> empty set;
-    any other non-2xx raises (never confuse a 5xx with 'not published')."""
-    resp = httpx.get(
-        f"https://pypi.org/pypi/{pkg_name}/{pkg_version}/json",
-        timeout=20,
-        headers={"User-Agent": "open-news-wheel-gaps/1.1"},
-    )
-    if resp.status_code == 404:
-        return set()
-    resp.raise_for_status()
-    return {f["filename"] for f in resp.json().get("urls", [])}
+def existing_filenames(
+    client: httpx.Client,
+    package: str,
+    version: str,
+    retries: int = 3,
+) -> set[str]:
+    url = f"https://pypi.org/pypi/{package}/{version}/json"
+
+    for attempt in range(retries):
+        try:
+            response = client.get(url)
+
+            if response.status_code == 404:
+                return set()
+
+            response.raise_for_status()
+
+            return {
+                item["filename"]
+                for item in response.json().get("urls", [])
+            }
+
+        except httpx.HTTPError:
+            if attempt + 1 == retries:
+                raise
+
+            time.sleep(2 ** attempt)
+
+    return set()
 
 
-def _py_ver(tag: str) -> tuple[int, int] | None:
-    """cp312 -> (3, 12); cp39 -> (3, 9). None for non-cp tags."""
-    m = re.match(r"cp(\d)(\d+)$", tag)
-    return (int(m.group(1)), int(m.group(2))) if m else None
+def python_version(tag: str) -> tuple[int, int] | None:
+    match = re.fullmatch(r"cp(\d)(\d+)", tag)
+
+    if not match:
+        return None
+
+    return int(match.group(1)), int(match.group(2))
 
 
-def wheel_covers_py_tag(filename: str, py_tag: str, target_name: str) -> bool:
-    """Does `filename` provide `py_tag` for `target_name`?
-
-    Order matters:
-      1. Pure-Python wheels cover every target.
-      2. Target-specific arch pattern MUST match.
-      3. abi3 wheels cover the ABI floor version and every later minor.
-      4. Otherwise the exact cp tag must be present.
-    """
+def wheel_covers_python(
+    filename: str,
+    python_tag: str,
+    target: str,
+) -> bool:
     if "-none-any.whl" in filename or "py3-none" in filename:
         return True
 
-    pat = _ARCH_TOKENS.get(target_name)
-    if pat is None or not pat.search(filename):
+    pattern = _ARCH_TOKENS.get(target)
+
+    if pattern is None or not pattern.search(filename):
         return False
 
     abi3 = ABI3_RE.search(filename)
+
     if abi3:
-        floor = _py_ver(abi3.group(1))
-        want = _py_ver(py_tag)
-        return bool(floor and want and want >= floor)
+        floor = python_version(abi3.group(1))
+        requested = python_version(python_tag)
 
-    return py_tag in filename
+        return bool(
+            floor
+            and requested
+            and requested >= floor
+        )
+
+    # Wheel filenames contain the interpreter tag as a dot-separated field.
+    # Checking the filename field avoids accidental substring matches.
+    wheel_parts = filename[:-4].split("-")
+
+    return len(wheel_parts) >= 5 and python_tag in wheel_parts[2].split(".")
 
 
-# ----------------------------------------------------------------------
-# Matrix generation
-# ----------------------------------------------------------------------
-def main() -> int:
-    try:
-        compiled = load_compiled_packages()
-    except FileNotFoundError as exc:
-        print(f"Missing lockfile or pyproject: {exc}", file=sys.stderr)
-        return 1
+def cibw_build_id(
+    platform: str,
+    hint: str,
+    python_tag: str,
+) -> str:
+    if platform == "linux":
+        return f"{python_tag}-{hint}_*"
+
+    return f"{python_tag}-*"
+
+
+def detect_gaps() -> list[dict[str, str]]:
+    packages = load_compiled_packages()
+    matrix: list[dict[str, str]] = []
 
     seen: set[tuple[str, str, str, str]] = set()
-    matrix: list[dict] = []
 
-    for pkg_name, version in compiled.items():
-        try:
-            existing = existing_filenames(pkg_name, version)
-        except Exception as exc:
-            print(f"PyPI lookup failed for {pkg_name}=={version}: {exc}", file=sys.stderr)
-            return 1
+    with httpx.Client(
+        timeout=30,
+        headers={"User-Agent": USER_AGENT},
+        follow_redirects=True,
+    ) as client:
 
-        for target_name, platform_, archs, runner, hint, py_tags in TARGETS:
-            for py_tag in py_tags:
-                if any(wheel_covers_py_tag(fn, py_tag, target_name) for fn in existing):
-                    continue
-                key = (pkg_name, platform_, archs, py_tag)
-                if key in seen:
-                    continue
-                seen.add(key)
-                matrix.append({
-                    "package": pkg_name,
-                    "version": version,
-                    "target": target_name,
-                    "cibw_platform": platform_,
-                    "cibw_archs": archs,
-                    "cibw_build_id": cibw_build_id_for(platform_, hint, py_tag),
-                    "py_tag": py_tag,
-                    "runner": runner,
-                })
+        for package in packages:
+            name = package["package"]
+            version = package["version"]
 
-    has_gaps = "true" if matrix else "false"
-    gh_out = os.environ.get("GITHUB_OUTPUT")
+            filenames = existing_filenames(client, name, version)
 
-    if gh_out:
-        with open(gh_out, "a", encoding="utf-8") as f:
-            f.write(f"matrix={json.dumps(matrix)}\n")
-            f.write(f"has_gaps={has_gaps}\n")
-    else:
-        print("(GITHUB_OUTPUT not set — running locally, skipping GHA output write)")
+            for (
+                target,
+                platform,
+                archs,
+                runner,
+                hint,
+                python_tags,
+            ) in TARGETS:
 
-    print(f"Found {len(matrix)} missing (package, target, py_tag) combinations.")
-    for m in matrix:
-        print(" -", m)
+                for python_tag in python_tags:
+                    covered = any(
+                        wheel_covers_python(
+                            filename,
+                            python_tag,
+                            target,
+                        )
+                        for filename in filenames
+                    )
+
+                    if covered:
+                        continue
+
+                    key = (
+                        normalize_name(name),
+                        target,
+                        python_tag,
+                        version,
+                    )
+
+                    if key in seen:
+                        continue
+
+                    seen.add(key)
+
+                    matrix.append({
+                        "package": name,
+                        "version": version,
+                        "target": target,
+                        "cibw_platform": platform,
+                        "cibw_archs": archs,
+                        "cibw_build_id": cibw_build_id(
+                            platform,
+                            hint,
+                            python_tag,
+                        ),
+                        "py_tag": python_tag,
+                        "runner": runner,
+                    })
+
+    return matrix
+
+
+def write_github_outputs(matrix: list[dict[str, str]]) -> None:
+    output_path = os.environ.get("GITHUB_OUTPUT")
+
+    if not output_path:
+        return
+
+    payload = json.dumps(matrix, separators=(",", ":"))
+
+    # Multiline-safe output format.
+    delimiter = "WHEEL_GAPS_JSON"
+
+    with open(output_path, "a", encoding="utf-8") as output:
+        output.write(f"matrix<<{delimiter}\n")
+        output.write(payload + "\n")
+        output.write(f"{delimiter}\n")
+        output.write(f"has_gaps={'true' if matrix else 'false'}\n")
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="Detect missing runtime dependency wheels."
+    )
+    parser.add_argument(
+        "--output",
+        default="wheel-gaps.json",
+        help="Path for the JSON gap report.",
+    )
+    args = parser.parse_args()
+
+    try:
+        matrix = detect_gaps()
+
+    except FileNotFoundError as exc:
+        print(f"Required project file not found: {exc}", file=sys.stderr)
+        return 1
+
+    except (httpx.HTTPError, ValueError, KeyError) as exc:
+        print(f"Wheel-gap detection failed: {exc}", file=sys.stderr)
+        return 1
+
+    output_path = Path(args.output)
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    output_path.write_text(
+        json.dumps(matrix, indent=2) + "\n",
+        encoding="utf-8",
+    )
+
+    write_github_outputs(matrix)
+
+    print(f"Detected {len(matrix)} missing wheel combination(s).")
+
+    for item in matrix:
+        print(
+            f" - {item['package']}=={item['version']} / "
+            f"{item['target']} / {item['py_tag']}"
+        )
+
+    print(f"JSON report: {output_path}")
     return 0
 
 

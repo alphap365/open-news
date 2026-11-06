@@ -1,0 +1,289 @@
+name: Build Dependency Wheels
+
+on:
+  workflow_dispatch:
+    inputs:
+      fail_on_deferred:
+        description: "Fail the workflow if some packages require specialized recipes"
+        required: false
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependency-wheel-build-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  # ------------------------------------------------------------
+  # Detect missing wheels and produce the build plan
+  # ------------------------------------------------------------
+
+  plan:
+    name: Detect and plan dependency builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    outputs:
+      matrix: ${{ steps.planner.outputs.matrix }}
+      count: ${{ steps.planner.outputs.count }}
+      requested_count: ${{ steps.planner.outputs.requested_count }}
+      deferred_count: ${{ steps.planner.outputs.deferred_count }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install detector dependency
+        run: python -m pip install httpx
+
+      - name: Detect missing wheels
+        run: |
+          python .github/scripts/compute_wheel_gaps.py \
+            --output wheel-gaps.json
+
+      - name: Plan builds
+        id: planner
+        run: |
+          python .github/scripts/plan_wheel_build.py \
+            --input wheel-gaps.json \
+            --output build-plan.json \
+            --matrix-output build-matrix.json
+
+      - name: Upload detection and planning reports
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-wheel-plan
+          path: |
+            wheel-gaps.json
+            build-plan.json
+            build-matrix.json
+          retention-days: 30
+
+      - name: Report deferred packages
+        if: steps.planner.outputs.deferred_count != '0'
+        run: |
+          echo "Some packages require specialized build recipes."
+          echo "See build-plan.json in the dependency-wheel-plan artifact."
+
+      - name: Enforce deferred-package policy
+        if: inputs.fail_on_deferred && steps.planner.outputs.deferred_count != '0'
+        run: |
+          echo "Deferred packages were found."
+          exit 1
+
+  # ------------------------------------------------------------
+  # Build each eligible dependency wheel
+  # ------------------------------------------------------------
+
+  build:
+    name: >-
+      ${{ matrix.package }} ${{ matrix.version }} /
+      ${{ matrix.target }} / ${{ matrix.py_tag }}
+
+    needs: plan
+
+    if: needs.plan.outputs.count != '0'
+
+    strategy:
+      fail-fast: false
+      max-parallel: 4
+      matrix:
+        include: ${{ fromJSON(needs.plan.outputs.matrix) }}
+
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 60
+
+    # Keep one package failure from cancelling other matrix builds.
+    continue-on-error: true
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel and packaging
+        run: |
+          python -m pip install cibuildwheel==4.2.0 packaging
+
+      - name: Download source distribution
+        env:
+          PACKAGE: ${{ matrix.package }}
+          VERSION: ${{ matrix.version }}
+        run: |
+          python - <<'PY'
+          import json
+          import os
+          import pathlib
+          import urllib.request
+
+          package = os.environ["PACKAGE"]
+          version = os.environ["VERSION"]
+
+          url = f"https://pypi.org/pypi/{package}/{version}/json"
+
+          with urllib.request.urlopen(url, timeout=30) as response:
+              data = json.load(response)
+
+          sdists = [
+              item for item in data["urls"]
+              if item["packagetype"] == "sdist"
+          ]
+
+          if not sdists:
+              raise SystemExit(
+                  f"No source distribution found for {package}=={version}"
+              )
+
+          source = sdists[0]
+          archive = pathlib.Path("source_archive")
+
+          request = urllib.request.Request(
+              source["url"],
+              headers={"User-Agent": "open-news-wheel-builder/1.2"},
+          )
+
+          with urllib.request.urlopen(request, timeout=60) as response:
+              archive.write_bytes(response.read())
+
+          pathlib.Path("sdist-filename.txt").write_text(
+              source["filename"],
+              encoding="utf-8",
+          )
+          PY
+
+      - name: Extract source distribution
+        run: |
+          python - <<'PY'
+          import pathlib
+          import shutil
+          import tarfile
+          import zipfile
+
+          archive = pathlib.Path("source_archive")
+          extracted = pathlib.Path("extracted")
+          extracted.mkdir()
+
+          if tarfile.is_tarfile(archive):
+              with tarfile.open(archive) as tar:
+                  tar.extractall(extracted, filter="data")
+          elif zipfile.is_zipfile(archive):
+              with zipfile.ZipFile(archive) as zip_file:
+                  zip_file.extractall(extracted)
+          else:
+              raise SystemExit("Unsupported source archive format.")
+
+          entries = list(extracted.iterdir())
+
+          if len(entries) == 1 and entries[0].is_dir():
+              source = entries[0]
+          else:
+              source = extracted
+
+          shutil.copytree(
+              source,
+              "pkgsrc",
+              dirs_exist_ok=True,
+          )
+          PY
+
+      - name: Preserve upstream build configuration
+        run: |
+          echo "Upstream cibuildwheel configuration is preserved."
+          echo "Target overrides are supplied through CIBW_* environment variables."
+
+      - name: Build dependency wheel
+        uses: pypa/cibuildwheel@v4.2.0
+        with:
+          package-dir: pkgsrc
+        env:
+          CIBW_PLATFORM: ${{ matrix.cibw_platform }}
+          CIBW_BUILD: ${{ matrix.cibw_build_id }}
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_ENABLE: cpython-prerelease
+          CIBW_SKIP: cp31?t-*
+
+      - name: Validate generated wheel
+        run: |
+          python .github/scripts/verify_dependency_wheels.py \
+            --directory wheelhouse \
+            --package "${{ matrix.package }}" \
+            --version "${{ matrix.version }}" \
+            --target "${{ matrix.target }}" \
+            --python-tag "${{ matrix.py_tag }}"
+
+      - name: Upload validated wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.package }}-${{ matrix.target }}-${{ matrix.py_tag }}
+          path: wheelhouse/*.whl
+          if-no-files-found: error
+          retention-days: 30
+
+  # ------------------------------------------------------------
+  # Bundle successful builds
+  # ------------------------------------------------------------
+
+  bundle:
+    name: Create dependency-wheels.zip
+    needs:
+      - plan
+      - build
+
+    # Run even if individual matrix builds fail.
+    if: |
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.count != '0'
+
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download build plan
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-wheel-plan
+          path: reports
+
+      - name: Download successful wheel artifacts
+        uses: actions/download-artifact@v4
+        with:
+          pattern: wheel-*
+          path: all-wheels
+          merge-multiple: true
+        continue-on-error: true
+
+      - name: Create dependency bundle
+        run: |
+          python .github/scripts/create_dependency_bundle.py \
+            --wheel-dir all-wheels \
+            --plan reports/build-plan.json \
+            --output-dir bundle \
+            --tag "${GITHUB_REF_NAME}" \
+            --commit "${GITHUB_SHA}"
+
+      - name: Upload dependency bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-wheels
+          path: |
+            bundle/dependency-wheels.zip
+            bundle/manifest.json
+            bundle/MANIFEST.txt
+          if-no-files-found: error
+          retention-days: 90
