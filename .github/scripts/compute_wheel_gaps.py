@@ -705,30 +705,22 @@ def discover(
                         )
                         if candidate is not None:
                             url = candidate["url"]
-                            local: Path | None = None
-                            sha: str | None = None
-                            index_name: str | None = None
                             try:
                                 if url not in downloaded:
                                     local, sha = download_wheel(
                                         client, url, download_dir,
                                         candidate.get("sha256"),
                                     )
-                                    downloaded[url] = (local, sha, candidate["index"])
+                                    index_name = candidate["index"]
+                                    downloaded[url] = (local, sha, index_name)
                                     log(f"Downloaded {local.name} from "
-                                        f"{candidate['index']} ({sha[:12]}…)")
+                                        f"{index_name} ({sha[:12]}…)")
+
                                 local, sha, index_name = downloaded[url]
                             except Exception as exc:
                                 log(f"External download failed for "
                                     f"{package}=={version}: {exc}")
-                                candidate = None
-
-                            if (
-                                candidate is not None
-                                and local is not None
-                                and sha is not None
-                                and index_name is not None
-                            ):
+                            else:
                                 gaps.append({
                                     **base_record,
                                     "build_type": "prebuilt",

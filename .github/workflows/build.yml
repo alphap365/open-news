@@ -15,6 +15,19 @@ on:
         default: false
         type: boolean
 
+  workflow_call:
+    inputs:
+      android_api_level:
+        description: Android minimum API level
+        required: false
+        default: "24"
+        type: string
+      fail_on_deferred:
+        description: Fail the workflow if some wheel combinations cannot be planned
+        required: false
+        default: false
+        type: boolean
+
 permissions:
   contents: read
 
@@ -37,20 +50,19 @@ jobs:
       has_builds: ${{ steps.plan.outputs.has_builds }}
       build_count: ${{ steps.plan.outputs.build_count }}
       rejected_count: ${{ steps.plan.outputs.rejected_count }}
-      prebuilt_count: ${{ steps.discover.outputs.prebuilt_count }}
+      has_prebuilt: ${{ steps.discover.outputs.prebuilt_count != '0' }}
 
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
       - name: Install discovery dependencies
         run: |
           python -m pip install --upgrade pip
           python -m pip install "httpx>=0.27" "packaging>=25.0"
 
-      - name: Discover missing wheels (queries PyPI + external indexes)
+      - name: Discover missing wheels (PyPI + external indexes)
         id: discover
         run: |
           python .github/scripts/compute_wheel_gaps.py \
@@ -80,7 +92,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: dependency-wheels-prebuilt
+          name: prebuilt-wheels
           path: prebuilt_wheels/*.whl
           if-no-files-found: ignore
           retention-days: 30
@@ -95,6 +107,7 @@ jobs:
             wheel-build-plan.json
           if-no-files-found: error
           retention-days: 30
+
 
   build:
     name: >-
@@ -138,7 +151,7 @@ jobs:
           expected_sha256 = os.environ.get("SOURCE_SHA256", "").strip()
           if not source_url:
               api = f"https://pypi.org/pypi/{package}/{version}/json"
-              req = urllib.request.Request(api, headers={"User-Agent": "open-news-wheel-builder/1.4"})
+              req = urllib.request.Request(api, headers={"User-Agent": "open-news-wheel-builder/1.5"})
               with urllib.request.urlopen(req, timeout=60) as response:
                   data = json.load(response)
               sdists = [i for i in data.get("urls", []) if i.get("packagetype") == "sdist"]
@@ -148,7 +161,7 @@ jobs:
               source_url = selected["url"]
               expected_sha256 = expected_sha256 or selected.get("digests", {}).get("sha256", "")
           archive = pathlib.Path("source-archive")
-          req = urllib.request.Request(source_url, headers={"User-Agent": "open-news-wheel-builder/1.4"})
+          req = urllib.request.Request(source_url, headers={"User-Agent": "open-news-wheel-builder/1.5"})
           with urllib.request.urlopen(req, timeout=180) as response:
               archive.write_bytes(response.read())
           digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -182,20 +195,16 @@ jobs:
         if: matrix.build_type == 'pure_python'
         run: |
           python -m pip install --upgrade pip
-
-          # The prepare step should have created pkgsrc in the workspace root.
           PKGSRC="${{ github.workspace }}/pkgsrc"
           if [ ! -d "$PKGSRC" ]; then
             echo "ERROR: $PKGSRC does not exist." >&2
-            echo "Contents of workspace:" >&2
             ls -la "${{ github.workspace }}" >&2
             exit 1
           fi
-
           python -m pip wheel --no-deps --wheel-dir wheelhouse "$PKGSRC"
 
       - name: Build dependency wheel (cibuildwheel)
-        if: matrix.build_type != 'pure_python'
+        if: matrix.build_type == 'cibuildwheel'
         uses: pypa/cibuildwheel@v4.3.5
         with:
           package-dir: pkgsrc
@@ -207,15 +216,10 @@ jobs:
           CIBW_BUILD_FRONTEND: build
           CIBW_BUILD_VERBOSITY: "1"
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
-
-          # Set every Linux image unconditionally. The plan's
-          # platform-specific selector ensures cibuildwheel only builds
-          # one family per job, so the unused image is never touched.
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
           CIBW_MUSLLINUX_X86_64_IMAGE: musllinux_1_2
           CIBW_MUSLLINUX_AARCH64_IMAGE: musllinux_1_2
-
           MACOSX_DEPLOYMENT_TARGET: >-
             ${{ matrix.cibw_platform == 'macos' && '14.0' || '' }}
 
@@ -233,33 +237,48 @@ jobs:
     name: Verify generated dependency wheels
     needs: [plan, build]
     if: >-
-      always() && needs.plan.result == 'success' &&
-      needs.plan.outputs.has_builds == 'true'
+      always() &&
+      needs.plan.outputs.has_builds == 'true' ||
+      needs.plan.outputs.has_prebuilt == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install "packaging>=25.0"
+
       - uses: actions/download-artifact@v4
         with:
           name: wheel-build-metadata
           path: metadata
+
       - run: mkdir -p all-wheels
-      - uses: actions/download-artifact@v4
+
+      - name: Download built wheels
         continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           pattern: dependency-wheels-*
           path: all-wheels
           merge-multiple: true
+
+      - name: Download prebuilt external wheels
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: prebuilt-wheels
+          path: all-wheels
+
       - name: Verify wheels against build plan
         run: |
           python .github/scripts/verify_dependency_wheels.py \
             --wheel-dir all-wheels \
             --plan metadata/wheel-build-plan.json \
             --output wheel-verification.json
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -270,39 +289,81 @@ jobs:
 
 
   bundle:
-    name: Create dependency bundle
+    name: Create dependency wheel bundles
     needs: [plan, verify]
     if: >-
-      needs.plan.outputs.has_builds == 'true' &&
-      needs.verify.result == 'success'
+      needs.verify.result == 'success' &&
+      (needs.plan.outputs.has_builds == 'true' ||
+       needs.plan.outputs.has_prebuilt == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install "packaging>=25.0"
-      - uses: actions/download-artifact@v4
+
+      - name: Prepare wheel directories
+        run: |
+          mkdir -p built-wheels prebuilt-wheels bundles
+
+      - name: Download built wheels
+        if: needs.plan.outputs.has_builds == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
         with:
           pattern: dependency-wheels-*
-          path: all-wheels
+          path: built-wheels
           merge-multiple: true
+
+      - name: Download prebuilt external wheels
+        if: needs.plan.outputs.has_prebuilt == 'true'
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: prebuilt-wheels
+          path: prebuilt-wheels
+
       - uses: actions/download-artifact@v4
         with:
           name: wheel-verification-report
           path: verification
-      - name: Create dependency bundle
+
+      - name: Bundle built wheels (dependency-wheels.zip)
+        if: needs.plan.outputs.has_builds == 'true'
         run: |
           python .github/scripts/create_dependency_bundle.py \
-            --wheel-dir all-wheels \
+            --wheel-dir built-wheels \
             --project-file pyproject.toml \
             --verification-report verification/wheel-verification.json \
-            --output dependency-build/open-news-dependencies.zip
-      - uses: actions/upload-artifact@v4
+            --output bundles/dependency-wheels.zip
+
+      - name: Bundle prebuilt wheels (dependency-wheels-prebuilt.zip)
+        if: needs.plan.outputs.has_prebuilt == 'true'
+        run: |
+          python .github/scripts/create_dependency_bundle.py \
+            --wheel-dir prebuilt-wheels \
+            --project-file pyproject.toml \
+            --verification-report verification/wheel-verification.json \
+            --output bundles/dependency-wheels-prebuilt.zip
+
+      - name: Upload dependency-wheels bundle
+        if: needs.plan.outputs.has_builds == 'true'
+        uses: actions/upload-artifact@v4
         with:
-          name: open-news-dependency-bundle
-          path: dependency-build/open-news-dependencies.zip
+          name: dependency-wheels
+          path: bundles/dependency-wheels.zip
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Upload dependency-wheels-prebuilt bundle
+        if: needs.plan.outputs.has_prebuilt == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-wheels-prebuilt
+          path: bundles/dependency-wheels-prebuilt.zip
           if-no-files-found: error
           retention-days: 90
 
@@ -312,6 +373,7 @@ jobs:
     needs: [plan, build, verify, bundle]
     if: always() && inputs.fail_on_deferred == true
     runs-on: ubuntu-latest
+
     steps:
       - name: Enforce strict build policy
         env:

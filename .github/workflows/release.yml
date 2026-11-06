@@ -1,10 +1,3 @@
-# Manual release workflow:
-# validate → build sdist → optionally obtain dependency bundle → draft release.
-#
-# Open News wheels are published through PyPI, not attached to GitHub Releases.
-# Dependency wheels are supplementary third-party artifacts.
-# Nothing is published to a package index here.
-
 name: Release
 
 on:
@@ -16,50 +9,42 @@ on:
         type: string
 
       include_dependency_wheels:
-        description: "Attach a dependency-wheels.zip from a previous build.yml run"
+        description: "Run Build Dependency Wheels and attach the resulting bundles"
         required: false
         default: false
         type: boolean
 
-      dependency_build_run_id:
-        description: "GitHub Actions run ID of the Build Dependency Wheels workflow"
+      android_api_level:
+        description: "Android minimum API level (passed to Build Dependency Wheels)"
         required: false
-        type: string
+        default: "24"
+        type: choice
+        options: ["21", "23", "24", "26", "28", "29", "30", "31", "32", "33", "34", "35"]
 
 permissions:
   contents: write
-  actions: read
 
 concurrency:
   group: release-${{ inputs.version }}
   cancel-in-progress: false
 
 jobs:
-  # ------------------------------------------------------------
-  # Validate release version
-  # ------------------------------------------------------------
 
   validate:
     name: Validate release version
     runs-on: ubuntu-latest
     timeout-minutes: 5
-
     outputs:
       version: ${{ steps.check.outputs.version }}
       tag: ${{ steps.check.outputs.tag }}
       is_prerelease: ${{ steps.check.outputs.is_prerelease }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install packaging
-        run: python -m pip install packaging
+      - run: python -m pip install packaging
 
       - name: Validate version
         id: check
@@ -67,64 +52,32 @@ jobs:
           INPUT_VERSION: ${{ inputs.version }}
         run: |
           python - <<'PY'
-          import os
-          import sys
-          import tomllib
-
+          import os, sys, tomllib
           from packaging.version import InvalidVersion, Version
-
           with open("pyproject.toml", "rb") as file:
               project = tomllib.load(file)
-
           pyproject_version = project["project"]["version"]
           input_version = os.environ["INPUT_VERSION"]
-
           try:
               expected = Version(pyproject_version)
               supplied = Version(input_version)
           except InvalidVersion as exc:
               sys.exit(f"Invalid version: {exc}")
-
           if expected != supplied:
               sys.exit(
                   f"Version mismatch: pyproject.toml={pyproject_version!r}, "
                   f"input={input_version!r}"
               )
-
           tag = f"v{pyproject_version}"
           prerelease = expected.is_prerelease or expected.is_devrelease
-
           with open(os.environ["GITHUB_OUTPUT"], "a") as output:
               output.write(f"version={pyproject_version}\n")
               output.write(f"tag={tag}\n")
-              output.write(
-                  f"is_prerelease={'true' if prerelease else 'false'}\n"
-              )
-
+              output.write(f"is_prerelease={'true' if prerelease else 'false'}\n")
           print(f"Validated version: {pyproject_version}")
           print(f"Release tag: {tag}")
           PY
 
-      - name: Validate dependency build run input
-        if: inputs.include_dependency_wheels
-        env:
-          RUN_ID: ${{ inputs.dependency_build_run_id }}
-        run: |
-          if [ -z "$RUN_ID" ]; then
-            echo "A dependency_build_run_id is required when dependency wheels are enabled."
-            exit 1
-          fi
-
-          case "$RUN_ID" in
-            *[!0-9]*)
-              echo "The dependency build run ID must be numeric."
-              exit 1
-              ;;
-          esac
-
-  # ------------------------------------------------------------
-  # Build only the Open News source distribution
-  # ------------------------------------------------------------
 
   package:
     name: Build Open News source distribution
@@ -133,121 +86,50 @@ jobs:
     timeout-minutes: 15
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v6
+      - uses: astral-sh/setup-uv@v6
 
       - name: Build source distribution only
         run: uv build --sdist
 
       - name: Validate source distribution metadata
-        run: |
-          uv run --with twine twine check dist/*.tar.gz
+        run: uv run --with twine twine check dist/*.tar.gz
 
-      - name: Upload source distribution
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: release-sdist
           path: dist/*.tar.gz
           if-no-files-found: error
           retention-days: 30
 
-  # ------------------------------------------------------------
-  # Retrieve dependency bundle from a separate build.yml run
-  # ------------------------------------------------------------
 
-  dependency-bundle:
-    name: Obtain dependency wheel bundle
+  build-dependencies:
+    name: Build dependency wheels
     needs: validate
-
     if: inputs.include_dependency_wheels
+    uses: ./.github/workflows/build.yml
+    with:
+      android_api_level: ${{ inputs.android_api_level }}
+      fail_on_deferred: false
 
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-
-    steps:
-      - name: Download dependency bundle from build workflow
-        uses: actions/download-artifact@v4
-        with:
-          github-token: ${{ github.token }}
-          repository: ${{ github.repository }}
-          run-id: ${{ inputs.dependency_build_run_id }}
-          name: dependency-wheels
-          path: dependency-bundle
-
-      - name: Validate bundle files
-        run: |
-          test -s dependency-bundle/dependency-wheels.zip
-          test -s dependency-bundle/manifest.json
-          test -s dependency-bundle/MANIFEST.txt
-
-      - name: Verify bundle project version
-        env:
-          RELEASE_VERSION: ${{ needs.validate.outputs.version }}
-        run: |
-          python - <<'PY'
-          import json
-          import os
-          import pathlib
-          import sys
-
-          manifest = json.loads(
-              pathlib.Path("dependency-bundle/manifest.json").read_text()
-          )
-
-          expected = os.environ["RELEASE_VERSION"]
-          actual = manifest.get("project_version")
-
-          if actual != expected:
-              sys.exit(
-                  f"Dependency bundle version mismatch: "
-                  f"bundle={actual!r}, release={expected!r}"
-              )
-
-          print(f"Dependency bundle matches Open News {expected}.")
-          PY
-
-      - name: Upload validated dependency bundle
-        uses: actions/upload-artifact@v4
-        with:
-          name: release-dependency-bundle
-          path: dependency-bundle/
-          if-no-files-found: error
-          retention-days: 30
-
-  # ------------------------------------------------------------
-  # Create or update the GitHub draft release
-  # ------------------------------------------------------------
 
   create-release:
     name: Create GitHub draft release
-    needs:
-      - validate
-      - package
-      - dependency-bundle
-
+    needs: [validate, package, build-dependencies]
     if: |
       always() &&
       needs.validate.result == 'success' &&
       needs.package.result == 'success' &&
-      (
-        needs.dependency-bundle.result == 'success' ||
-        needs.dependency-bundle.result == 'skipped'
-      )
-
+      (needs.build-dependencies.result == 'success' ||
+       needs.build-dependencies.result == 'skipped')
     runs-on: ubuntu-latest
     timeout-minutes: 15
 
     steps:
-      - name: Checkout full history
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
 
@@ -257,12 +139,30 @@ jobs:
           name: release-sdist
           path: release-assets
 
-      - name: Download dependency bundle
+      - name: Download dependency-wheels bundle
         if: inputs.include_dependency_wheels
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: release-dependency-bundle
+          name: dependency-wheels
           path: release-assets/dependencies
+
+      - name: Download dependency-wheels-prebuilt bundle
+        if: inputs.include_dependency_wheels
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: dependency-wheels-prebuilt
+          path: release-assets/prebuilt
+
+      - name: List release assets
+        run: |
+          echo "Source distribution:"
+          ls -la release-assets/*.tar.gz 2>/dev/null || true
+          echo "Built dependency bundle:"
+          ls -la release-assets/dependencies/*.zip 2>/dev/null || true
+          echo "Prebuilt dependency bundle:"
+          ls -la release-assets/prebuilt/*.zip 2>/dev/null || true
 
       - name: Create release tag if missing
         env:
@@ -293,11 +193,9 @@ jobs:
               --title "Open News v${VERSION}"
               --notes "Open News v${VERSION}"
             )
-
             if [ "$PRERELEASE" = "true" ]; then
               args+=(--prerelease)
             fi
-
             gh release create "${args[@]}"
           fi
 
@@ -311,15 +209,32 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --clobber
 
-      - name: Upload dependency bundle
+      - name: Upload dependency-wheels bundle
         if: inputs.include_dependency_wheels
         env:
           GH_TOKEN: ${{ github.token }}
           TAG: ${{ needs.validate.outputs.tag }}
         run: |
-          gh release upload "$TAG" \
-            release-assets/dependencies/dependency-wheels.zip \
-            release-assets/dependencies/manifest.json \
-            release-assets/dependencies/MANIFEST.txt \
-            --repo "$GITHUB_REPOSITORY" \
-            --clobber
+          if [ -f release-assets/dependencies/dependency-wheels.zip ]; then
+            gh release upload "$TAG" \
+              release-assets/dependencies/dependency-wheels.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            echo "::notice::No dependency-wheels.zip was produced (all deps covered by PyPI)."
+          fi
+
+      - name: Upload dependency-wheels-prebuilt bundle
+        if: inputs.include_dependency_wheels
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.validate.outputs.tag }}
+        run: |
+          if [ -f release-assets/prebuilt/dependency-wheels-prebuilt.zip ]; then
+            gh release upload "$TAG" \
+              release-assets/prebuilt/dependency-wheels-prebuilt.zip \
+              --repo "$GITHUB_REPOSITORY" \
+              --clobber
+          else
+            echo "::notice::No dependency-wheels-prebuilt.zip was produced (no external wheels found)."
+          fi
