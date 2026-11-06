@@ -182,7 +182,17 @@ jobs:
         if: matrix.build_type == 'pure_python'
         run: |
           python -m pip install --upgrade pip
-          python -m pip wheel --no-deps --wheel-dir wheelhouse pkgsrc
+
+          # The prepare step should have created pkgsrc in the workspace root.
+          PKGSRC="${{ github.workspace }}/pkgsrc"
+          if [ ! -d "$PKGSRC" ]; then
+            echo "ERROR: $PKGSRC does not exist." >&2
+            echo "Contents of workspace:" >&2
+            ls -la "${{ github.workspace }}" >&2
+            exit 1
+          fi
+
+          python -m pip wheel --no-deps --wheel-dir wheelhouse "$PKGSRC"
 
       - name: Build dependency wheel (cibuildwheel)
         if: matrix.build_type != 'pure_python'
