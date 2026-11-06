@@ -4,12 +4,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
+import html as html_module
 import json
 import os
+import re
 import sys
 import time
 from pathlib import Path
-from urllib.parse import quote
+from urllib.parse import quote, urljoin
 
 try:
     import tomllib
@@ -34,15 +37,92 @@ from packaging.version import Version
 PYTHON_VERSIONS = ("cp311", "cp312", "cp313", "cp314")
 ANDROID_PYTHON_VERSIONS = ("cp313", "cp314")
 
-# Native extensions with no upstream Android support.
-# Extend as observed in CI runs.
-ANDROID_UNSUPPORTED_PACKAGES = {
-    "cryptography",
-    "cffi",
-    "lxml",
-    "primp",
-    "selectolax",
+NATIVE_PACKAGES = {
+    "cryptography", "cffi", "lxml", "primp", "selectolax",
+    "numpy", "pillow", "pyyaml", "ujson", "orjson",
+    "pydantic-core", "regex", "uvloop", "httptools",
+    "watchfiles", "pyzmq", "pandas", "psycopg2", "psycopg2-binary",
 }
+
+ANDROID_UNSUPPORTED_PACKAGES = {
+    "cryptography", "cffi", "lxml", "primp", "selectolax",
+}
+
+
+# ---------------------------------------------------------------------------
+# External wheel indexes
+#
+# Consulted only when PyPI has no compatible wheel for the target.
+# First hit wins. Everything returned here is downloaded during
+# discovery and shipped as a `prebuilt` gap.
+# ---------------------------------------------------------------------------
+
+# ---------------------------------------------------------------------------
+# External wheel indexes
+#
+# Consulted for any target when PyPI has no compatible wheel.
+# `supports` restricts each index to the families / architectures it
+# actually serves, so piwheels is never queried for win_arm64 and
+# win_arm64-wheels is never queried for musllinux.
+#
+# Verify each `url_template` before deploying: some indexes serve
+# PEP 503 under /simple/{package}/, others (Chaquopy) at the root.
+# ---------------------------------------------------------------------------
+
+EXTERNAL_INDEXES = [
+    {
+        "name": "chaquopy",
+        "type": "simple_html",
+        "url_template": "https://chaquo.com/pypi-13.1/{package}/",
+        "supports": {"families": {"android"}},
+    },
+    {
+        "name": "flet",
+        "type": "simple_html",
+        "url_template": "https://pypi.flet.dev/{package}/",
+        "supports": {"families": {"android", "ios"}},
+    },
+    {
+        "name": "anaconda_pyswift",
+        "type": "anaconda_api",
+        "url_template": "https://api.anaconda.org/package/PySwift/{package}",
+        "supports": {"families": {"android"}},
+    },
+    {
+        "name": "exotic_wheels",
+        "type": "simple_html",
+        "url_template": "https://exotic-wheels.github.io/simple/{package}/",
+        "supports": {
+            "families": {"musllinux"},
+            "archs": {"armv7l", "aarch64", "ppc64le", "s390x", "riscv64"},
+        },
+    },
+    {
+        "name": "piwheels",
+        "type": "simple_html",
+        "url_template": "https://www.piwheels.org/simple/{package}/",
+        "supports": {
+            "families": {"manylinux"},
+            "archs": {"armv7l", "armv6l"},
+        },
+    },
+    {
+        "name": "pytorch_cpu",
+        "type": "simple_html",
+        "url_template": "https://download.pytorch.org/whl/cpu/{package}/",
+        "supports": {
+            "families": {"manylinux", "musllinux", "windows", "macos"},
+        },
+    },
+    {
+        "name": "nvidia",
+        "type": "simple_html",
+        "url_template": "https://pypi.nvidia.com/{package}/",
+        "supports": {"families": {"manylinux"}},
+    },
+    # GitHub-releases index (win_arm64-wheels) requires a dedicated
+    # query type; add it when you start targeting win_arm64.
+]
 
 BASE_TARGETS = [
     {
@@ -56,8 +136,7 @@ BASE_TARGETS = [
     {
         "target": "manylinux_aarch64", "family": "manylinux",
         "architecture": "aarch64", "cibw_platform": "linux",
-        "cibw_archs": "aarch64",
-        "runner": "ubuntu-24.04-arm",
+        "cibw_archs": "aarch64", "runner": "ubuntu-24.04-arm",
         "python_versions": PYTHON_VERSIONS, "build_pattern": "manylinux_*",
         "glibc_floor": (2, 28),
         "platform_floor": {"type": "glibc", "major": 2, "minor": 28},
@@ -73,8 +152,7 @@ BASE_TARGETS = [
     {
         "target": "musllinux_aarch64", "family": "musllinux",
         "architecture": "aarch64", "cibw_platform": "linux",
-        "cibw_archs": "aarch64",
-        "runner": "ubuntu-24.04-arm",
+        "cibw_archs": "aarch64", "runner": "ubuntu-24.04-arm",
         "python_versions": PYTHON_VERSIONS, "build_pattern": "musllinux_*",
         "musl_floor": (1, 2),
         "platform_floor": {"type": "musl", "major": 1, "minor": 2},
@@ -111,6 +189,15 @@ def load_toml(path: Path) -> dict:
     with path.open("rb") as file:
         return tomllib.load(file)
 
+def index_supports(index: dict, target: dict) -> bool:
+    supports = index.get("supports", {})
+    families = supports.get("families")
+    archs = supports.get("archs")
+    if families and target["family"] not in families:
+        return False
+    if archs and target["architecture"] not in archs:
+        return False
+    return True
 
 def python_version_from_tag(py_tag: str) -> tuple[int, int]:
     if not py_tag.startswith("cp"):
@@ -333,28 +420,6 @@ def fetch_pypi_release(
     return None
 
 
-def has_pure_python_history(
-    client: httpx.Client, package: str, base_url: str,
-) -> bool:
-    """True if ANY release of `package` on PyPI has a py3-none-any wheel."""
-    try:
-        url = f"{base_url.rstrip('/')}/{quote(package, safe='')}/json"
-        response = client.get(url)
-        response.raise_for_status()
-        data = response.json()
-    except Exception:
-        return False
-
-    for files in data.get("releases", {}).values():
-        for file_info in files:
-            filename = file_info.get("filename", "")
-            if filename.endswith("-py3-none-any.whl") or filename.endswith(
-                "-py2.py3-none-any.whl"
-            ):
-                return True
-    return False
-
-
 def inspect_release(
     package: str, version: str, release: dict | None, supported_tags: list,
 ) -> dict:
@@ -411,12 +476,150 @@ def inspect_release(
                       "were found for this exact release."}
 
 
+# ---------------------------------------------------------------------------
+# External index lookup + download
+# ---------------------------------------------------------------------------
+
+_SIMPLE_ANCHOR_RE = re.compile(
+    r'<a\s+[^>]*href="([^"]+)"[^>]*>([^<]+)</a>', re.IGNORECASE,
+)
+
+
+def query_simple_index(
+    client: httpx.Client, url: str,
+) -> list[dict]:
+    """Return [{'filename','url','sha256'}] from a PEP 503 HTML index."""
+    try:
+        response = client.get(url, follow_redirects=True)
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+    except httpx.HTTPError:
+        return []
+
+    results = []
+    for href, text in _SIMPLE_ANCHOR_RE.findall(response.text):
+        filename = html_module.unescape(text.strip())
+        if not filename.endswith(".whl"):
+            continue
+        absolute = urljoin(url, href)
+        sha = None
+        if "#" in absolute:
+            absolute, frag = absolute.split("#", 1)
+            if frag.startswith("sha256="):
+                sha = frag[len("sha256="):]
+        results.append({"filename": filename, "url": absolute, "sha256": sha})
+    return results
+
+
+def query_anaconda_api(
+    client: httpx.Client, url: str,
+) -> list[dict]:
+    """Return [{'filename','url','sha256'}] from an Anaconda package API."""
+    try:
+        response = client.get(url, follow_redirects=True)
+        if response.status_code == 404:
+            return []
+        response.raise_for_status()
+        data = response.json()
+    except (httpx.HTTPError, json.JSONDecodeError):
+        return []
+
+    results = []
+    for file_info in data.get("files", []):
+        basename = file_info.get("basename", "")
+        if not basename.endswith(".whl"):
+            continue
+        subdir = (file_info.get("attrs") or {}).get("subdir", "")
+        if not subdir.startswith("android_"):
+            continue
+        results.append({
+            "filename": basename,
+            "url": file_info.get("download_url"),
+            "sha256": (file_info.get("attrs") or {}).get("sha256"),
+        })
+    return results
+
+
+def find_external_wheel(
+    client: httpx.Client,
+    package: str,
+    version: str,
+    target: dict,
+    supported_tags: list,
+) -> dict | None:
+    supported = set(supported_tags)
+    for index in EXTERNAL_INDEXES:
+        if not index_supports(index, target):
+            continue
+        url = index["url_template"].format(package=quote(package, safe=""))
+        if index["type"] == "simple_html":
+            candidates = query_simple_index(client, url)
+        elif index["type"] == "anaconda_api":
+            candidates = query_anaconda_api(client, url)
+        else:
+            continue
+
+        for candidate in candidates:
+            try:
+                wname, wver, _, wtags = parse_wheel_filename(candidate["filename"])
+            except Exception:
+                continue
+            if canonicalize_name(str(wname)) != canonicalize_name(package):
+                continue
+            if wver != Version(version):
+                continue
+            if not wtags.intersection(supported):
+                continue
+            return {
+                "index": index["name"],
+                "filename": candidate["filename"],
+                "url": candidate["url"],
+                "sha256": candidate.get("sha256"),
+            }
+    return None
+
+def download_wheel(
+    client: httpx.Client,
+    url: str,
+    dest_dir: Path,
+    expected_sha256: str | None,
+) -> tuple[Path, str]:
+    """Fetch a wheel and verify its hash. Return (path, sha256)."""
+    filename = url.rsplit("/", 1)[-1].split("?")[0].split("#")[0]
+    if not filename.endswith(".whl"):
+        raise ValueError(f"Not a wheel URL: {url}")
+    if "/" in filename or filename.startswith("."):
+        raise ValueError(f"Unsafe wheel filename: {filename!r}")
+
+    response = client.get(url, follow_redirects=True)
+    response.raise_for_status()
+    body = response.content
+
+    digest = hashlib.sha256(body).hexdigest()
+    if expected_sha256 and digest.lower() != expected_sha256.lower():
+        raise ValueError(
+            f"SHA-256 mismatch for {filename}: "
+            f"expected {expected_sha256}, got {digest}"
+        )
+
+    dest = dest_dir / filename
+    dest.write_bytes(body)
+    return dest, digest
+
+
+# ---------------------------------------------------------------------------
+# Main discovery
+# ---------------------------------------------------------------------------
+
 def discover(
     project_path: Path, lock_path: Path, android_api_level: int,
     pypi_base_url: str, timeout: float, retries: int,
+    download_dir: Path | None,
 ) -> tuple[list[dict], dict]:
     project_data = load_toml(project_path)
     lock_data = load_toml(lock_path)
+
     project = project_data.get("project", {})
     if not project:
         raise ValueError(f"No [project] table found in {project_path}")
@@ -438,11 +641,17 @@ def discover(
     lock_warnings: list[dict] = []
 
     release_cache: dict[tuple[str, str], dict | None] = {}
-    pure_cache: dict[str, bool] = {}
+    seen_pure: set[tuple[str, str]] = set()
+    # URL -> (path, sha256); shared across targets so a wheel that
+    # covers cp313-abi3 for both cp313 and cp314 downloads once.
+    downloaded: dict[str, tuple[Path, str, str]] = {}  # url -> (path, sha, index)
+
+    if download_dir is not None:
+        download_dir.mkdir(parents=True, exist_ok=True)
 
     headers = {
-        "User-Agent": "Open-News-Dependency-Wheel-Builder/1.3",
-        "Accept": "application/json",
+        "User-Agent": "Open-News-Dependency-Wheel-Builder/1.5",
+        "Accept": "*/*",
     }
 
     with httpx.Client(timeout=timeout, follow_redirects=True, headers=headers) as client:
@@ -453,8 +662,7 @@ def discover(
                 packages, warnings = resolve_runtime_packages(project, lock_data, environment)
                 for warning in warnings:
                     lock_warnings.append({
-                        "target": target["target"],
-                        "py_tag": py_tag,
+                        "target": target["target"], "py_tag": py_tag,
                         "warning": warning,
                     })
 
@@ -464,25 +672,6 @@ def discover(
                     package = package_info["name"]
                     version = package_info["version"]
                     normalized_name = canonicalize_name(package)
-
-                    # Android exclusion: known native packages with no
-                    # upstream Android support. Emit as source_unavailable
-                    # so plan does not route them to cibuildwheel.
-                    if (
-                        target["family"] == "android"
-                        and normalized_name in ANDROID_UNSUPPORTED_PACKAGES
-                    ):
-                        unbuildable.append({
-                            "package": package, "version": version,
-                            "target": target["target"], "py_tag": py_tag,
-                            "compatibility_profile": target["family"],
-                            "platform_floor": target.get("platform_floor"),
-                            "android_api_level": android_api_level,
-                            "status": "source_unavailable",
-                            "reason": "Known unsupported on Android (native extension "
-                                      "with no upstream Android support).",
-                        })
-                        continue
 
                     cache_key = (normalized_name, version)
                     if cache_key not in release_cache:
@@ -501,33 +690,97 @@ def discover(
                         "compatibility_profile": target["family"],
                         "platform_floor": target.get("platform_floor"),
                     }
-                    if target["family"] == "android":
-                        base_record["android_api_level"] = android_api_level
 
+                    # 1. PyPI compatible wheel
                     if result["status"] == "available":
                         available.append({**base_record, "status": "available",
                                          "source": "pypi",
                                          "compatible_wheels": result["compatible_wheels"]})
                         continue
 
+                    # 2. External index → download during discovery
+                    if download_dir is not None:
+                        candidate = find_external_wheel(
+                            client, package, version, target, supported_tags,
+                        )
+                        if candidate is not None:
+                            url = candidate["url"]
+                            local: Path | None = None
+                            sha: str | None = None
+                            index_name: str | None = None
+                            try:
+                                if url not in downloaded:
+                                    local, sha = download_wheel(
+                                        client, url, download_dir,
+                                        candidate.get("sha256"),
+                                    )
+                                    downloaded[url] = (local, sha, candidate["index"])
+                                    log(f"Downloaded {local.name} from "
+                                        f"{candidate['index']} ({sha[:12]}…)")
+                                local, sha, index_name = downloaded[url]
+                            except Exception as exc:
+                                log(f"External download failed for "
+                                    f"{package}=={version}: {exc}")
+                                candidate = None
+
+                            if (
+                                candidate is not None
+                                and local is not None
+                                and sha is not None
+                                and index_name is not None
+                            ):
+                                gaps.append({
+                                    **base_record,
+                                    "build_type": "prebuilt",
+                                    "cibw_platform": target["cibw_platform"],
+                                    "cibw_archs": target["cibw_archs"],
+                                    "runner": target["runner"],
+                                    "cibw_build_id": "prebuilt",
+                                    "status": "build_required",
+                                    "source": index_name,
+                                    "prebuilt_filename": local.name,
+                                    "prebuilt_sha256": sha,
+                                    "prebuilt_url": url,
+                                    "sdist_filename": None,
+                                    "sdist_url": None,
+                                    "sdist_sha256": None,
+                                })
+                                continue
+
+                    # 3. Known-unsupported on Android
+                    if (
+                        target["family"] == "android"
+                        and normalized_name in ANDROID_UNSUPPORTED_PACKAGES
+                    ):
+                        unbuildable.append({
+                            **base_record,
+                            "status": "source_unavailable",
+                            "reason": "Known unsupported on Android; "
+                                      "no external wheel found.",
+                        })
+                        continue
+
+                    # 4. No sdist either
                     if result["status"] == "source_unavailable":
                         unbuildable.append({**base_record,
                                            "status": "source_unavailable",
                                            "reason": result["reason"]})
                         continue
 
-                    # build_required → decide between pure_python and cibuildwheel
-                    if normalized_name not in pure_cache:
-                        pure_cache[normalized_name] = has_pure_python_history(
-                            client, package, pypi_base_url,
-                        )
-                    is_pure = pure_cache[normalized_name]
-
+                    # 5. Build from sdist
                     sdist = result["sdist"]
+                    is_pure = normalized_name not in NATIVE_PACKAGES
 
                     if is_pure:
+                        if (normalized_name, version) in seen_pure:
+                            continue
+                        seen_pure.add((normalized_name, version))
                         gaps.append({
-                            **base_record,
+                            "package": package, "version": version,
+                            "target": "pure_python",
+                            "py_tag": "py3",
+                            "compatibility_profile": "pure_python",
+                            "platform_floor": {"type": "any"},
                             "build_type": "pure_python",
                             "cibw_platform": "pure",
                             "cibw_archs": "any",
@@ -566,25 +819,25 @@ def discover(
     unbuildable.sort(key=sort_key)
 
     discovery_report = {
-        "schema_version": 4,
+        "schema_version": 6,
         "project": project_name,
         "project_version": project_version,
         "android_api_level": android_api_level,
         "policy": {
             "python_versions": list(PYTHON_VERSIONS),
             "android_python_versions": list(ANDROID_PYTHON_VERSIONS),
-            "glibc_floor": [2, 28],
-            "musl_floor": [1, 2],
+            "glibc_floor": [2, 28], "musl_floor": [1, 2],
             "macos_floor": [14, 0],
             "android_api_floor": android_api_level,
             "android_unsupported_packages": sorted(ANDROID_UNSUPPORTED_PACKAGES),
+            "native_packages": sorted(NATIVE_PACKAGES),
+            "external_indexes": [i["name"] for i in EXTERNAL_INDEXES],
             "macos_x86_64": "excluded",
         },
         "targets": [
             {"target": t["target"], "architecture": t["architecture"],
              "python_versions": list(t["python_versions"]),
-             "runner": t["runner"],
-             "platform_floor": t.get("platform_floor")}
+             "runner": t["runner"], "platform_floor": t.get("platform_floor")}
             for t in targets
         ],
         "summary": {
@@ -594,6 +847,8 @@ def discover(
             "lock_warning_count": len(lock_warnings),
             "pure_python_count": sum(1 for g in gaps if g.get("build_type") == "pure_python"),
             "cibuildwheel_count": sum(1 for g in gaps if g.get("build_type") == "cibuildwheel"),
+            "prebuilt_count": sum(1 for g in gaps if g.get("build_type") == "prebuilt"),
+            "prebuilt_unique_files": len(downloaded),
         },
         "available": available,
         "gaps": gaps,
@@ -604,9 +859,7 @@ def discover(
     return gaps, discovery_report
 
 
-def write_github_outputs(
-    gaps: list[dict], discovery_report: dict, discovery_path: Path,
-) -> None:
+def write_github_outputs(gaps, report, discovery_path):
     output_file = os.environ.get("GITHUB_OUTPUT")
     if not output_file:
         return
@@ -614,8 +867,9 @@ def write_github_outputs(
         "matrix": json.dumps({"include": gaps}, separators=(",", ":")),
         "has_gaps": "true" if gaps else "false",
         "gap_count": str(len(gaps)),
-        "available_count": str(discovery_report["summary"]["upstream_wheel_count"]),
-        "unbuildable_count": str(discovery_report["summary"]["source_unavailable_count"]),
+        "available_count": str(report["summary"]["upstream_wheel_count"]),
+        "unbuildable_count": str(report["summary"]["source_unavailable_count"]),
+        "prebuilt_count": str(report["summary"]["prebuilt_unique_files"]),
         "discovery_file": str(discovery_path),
     }
     with open(output_file, "a", encoding="utf-8") as file:
@@ -633,6 +887,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--pypi-base-url", default="https://pypi.org/pypi")
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--retries", type=int, default=3)
+    parser.add_argument(
+        "--download-dir", type=Path, default=None,
+        help=(
+            "If set, external indexes are queried and matching wheels "
+            "are downloaded here. Without this flag, external indexes "
+            "are not consulted."
+        ),
+    )
     return parser.parse_args()
 
 
@@ -653,6 +915,7 @@ def main() -> int:
             android_api_level=args.android_api_level,
             pypi_base_url=args.pypi_base_url,
             timeout=args.timeout, retries=args.retries,
+            download_dir=args.download_dir,
         )
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.discovery_output.parent.mkdir(parents=True, exist_ok=True)
@@ -666,9 +929,10 @@ def main() -> int:
         log(f"Missing wheel combinations: {s['missing_wheel_count']}")
         log(f"  pure_python: {s['pure_python_count']}")
         log(f"  cibuildwheel: {s['cibuildwheel_count']}")
+        log(f"  prebuilt (external): {s['prebuilt_count']} entries / "
+            f"{s['prebuilt_unique_files']} files")
         log(f"Compatible upstream wheels: {s['upstream_wheel_count']}")
         log(f"Source unavailable: {s['source_unavailable_count']}")
-        log(f"Lock warnings: {s['lock_warning_count']}")
         return 0
     except Exception as exc:
         print(f"ERROR: {exc}", file=sys.stderr)

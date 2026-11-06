@@ -37,10 +37,10 @@ jobs:
       has_builds: ${{ steps.plan.outputs.has_builds }}
       build_count: ${{ steps.plan.outputs.build_count }}
       rejected_count: ${{ steps.plan.outputs.rejected_count }}
+      prebuilt_count: ${{ steps.discover.outputs.prebuilt_count }}
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
@@ -50,13 +50,14 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "httpx>=0.27" "packaging>=25.0"
 
-      - name: Discover missing wheels
+      - name: Discover missing wheels (queries PyPI + external indexes)
         id: discover
         run: |
           python .github/scripts/compute_wheel_gaps.py \
             --output wheel-gaps.json \
             --discovery-output wheel-gaps-discovery.json \
-            --android-api-level "$ANDROID_API_LEVEL"
+            --android-api-level "$ANDROID_API_LEVEL" \
+            --download-dir prebuilt_wheels
 
       - name: Generate build plan
         id: plan
@@ -66,12 +67,23 @@ jobs:
         env:
           BUILD_COUNT: ${{ steps.plan.outputs.build_count }}
           REJECTED_COUNT: ${{ steps.plan.outputs.rejected_count }}
+          PREBUILT_COUNT: ${{ steps.discover.outputs.prebuilt_count }}
         run: |
-          echo "Build batches: ${BUILD_COUNT:-0}"
-          echo "Rejected/deferred entries: ${REJECTED_COUNT:-0}"
+          echo "Build jobs: ${BUILD_COUNT:-0}"
+          echo "Prebuilt (external, downloaded): ${PREBUILT_COUNT:-0}"
+          echo "Rejected/deferred: ${REJECTED_COUNT:-0}"
           if [ -f wheel-build-plan.json ]; then
             python -m json.tool wheel-build-plan.json
           fi
+
+      - name: Upload prebuilt external wheels
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dependency-wheels-prebuilt
+          path: prebuilt_wheels/*.whl
+          if-no-files-found: ignore
+          retention-days: 30
 
       - name: Upload discovery and planning reports
         uses: actions/upload-artifact@v4
@@ -83,7 +95,6 @@ jobs:
             wheel-build-plan.json
           if-no-files-found: error
           retention-days: 30
-
 
   build:
     name: >-
@@ -102,14 +113,10 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # Fallback for aarch64 targets on x86_64 runners. Native
-      # ubuntu-24.04-arm avoids this entirely; this step is a safety net
-      # if the native runner label is unavailable.
       - name: Set up QEMU (aarch64 fallback)
         if: matrix.cibw_platform == 'linux' && matrix.cibw_archs == 'aarch64' && matrix.runner == 'ubuntu-latest'
         uses: docker/setup-qemu-action@v3
@@ -131,7 +138,7 @@ jobs:
           expected_sha256 = os.environ.get("SOURCE_SHA256", "").strip()
           if not source_url:
               api = f"https://pypi.org/pypi/{package}/{version}/json"
-              req = urllib.request.Request(api, headers={"User-Agent": "open-news-wheel-builder/1.3"})
+              req = urllib.request.Request(api, headers={"User-Agent": "open-news-wheel-builder/1.4"})
               with urllib.request.urlopen(req, timeout=60) as response:
                   data = json.load(response)
               sdists = [i for i in data.get("urls", []) if i.get("packagetype") == "sdist"]
@@ -141,7 +148,7 @@ jobs:
               source_url = selected["url"]
               expected_sha256 = expected_sha256 or selected.get("digests", {}).get("sha256", "")
           archive = pathlib.Path("source-archive")
-          req = urllib.request.Request(source_url, headers={"User-Agent": "open-news-wheel-builder/1.3"})
+          req = urllib.request.Request(source_url, headers={"User-Agent": "open-news-wheel-builder/1.4"})
           with urllib.request.urlopen(req, timeout=180) as response:
               archive.write_bytes(response.read())
           digest = hashlib.sha256(archive.read_bytes()).hexdigest()
@@ -171,14 +178,12 @@ jobs:
           print(f"Prepared {package}=={version}")
           PY
 
-      # Pure-Python: one pip-wheel build, arch-independent output.
       - name: Build pure-Python wheel (pip wheel)
         if: matrix.build_type == 'pure_python'
         run: |
           python -m pip install --upgrade pip
           python -m pip wheel --no-deps --wheel-dir wheelhouse pkgsrc
 
-      # Native: cibuildwheel per-target.
       - name: Build dependency wheel (cibuildwheel)
         if: matrix.build_type != 'pure_python'
         uses: pypa/cibuildwheel@v4.3.5
@@ -192,14 +197,15 @@ jobs:
           CIBW_BUILD_FRONTEND: build
           CIBW_BUILD_VERBOSITY: "1"
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
-          CIBW_MANYLINUX_X86_64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'x86_64' && 'manylinux_2_28' || 'off' }}
-          CIBW_MANYLINUX_AARCH64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'manylinux_') && matrix.cibw_archs == 'aarch64' && 'manylinux_2_28' || 'off' }}
-          CIBW_MUSLLINUX_X86_64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'x86_64' && 'musllinux_1_2' || 'off' }}
-          CIBW_MUSLLINUX_AARCH64_IMAGE: >-
-            ${{ startsWith(matrix.target, 'musllinux_') && matrix.cibw_archs == 'aarch64' && 'musllinux_1_2' || 'off' }}
+
+          # Set every Linux image unconditionally. The plan's
+          # platform-specific selector ensures cibuildwheel only builds
+          # one family per job, so the unused image is never touched.
+          CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
+          CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
+          CIBW_MUSLLINUX_X86_64_IMAGE: musllinux_1_2
+          CIBW_MUSLLINUX_AARCH64_IMAGE: musllinux_1_2
+
           MACOSX_DEPLOYMENT_TARGET: >-
             ${{ matrix.cibw_platform == 'macos' && '14.0' || '' }}
 
@@ -221,37 +227,29 @@ jobs:
       needs.plan.outputs.has_builds == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
-
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
-
       - run: python -m pip install "packaging>=25.0"
-
       - uses: actions/download-artifact@v4
         with:
           name: wheel-build-metadata
           path: metadata
-
       - run: mkdir -p all-wheels
-
       - uses: actions/download-artifact@v4
         continue-on-error: true
         with:
           pattern: dependency-wheels-*
           path: all-wheels
           merge-multiple: true
-
       - name: Verify wheels against build plan
         run: |
           python .github/scripts/verify_dependency_wheels.py \
             --wheel-dir all-wheels \
             --plan metadata/wheel-build-plan.json \
             --output wheel-verification.json
-
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -269,25 +267,21 @@ jobs:
       needs.verify.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
-
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v6
         with:
           python-version: ${{ env.PYTHON_VERSION }}
       - run: python -m pip install "packaging>=25.0"
-
       - uses: actions/download-artifact@v4
         with:
           pattern: dependency-wheels-*
           path: all-wheels
           merge-multiple: true
-
       - uses: actions/download-artifact@v4
         with:
           name: wheel-verification-report
           path: verification
-
       - name: Create dependency bundle
         run: |
           python .github/scripts/create_dependency_bundle.py \
@@ -295,7 +289,6 @@ jobs:
             --project-file pyproject.toml \
             --verification-report verification/wheel-verification.json \
             --output dependency-build/open-news-dependencies.zip
-
       - uses: actions/upload-artifact@v4
         with:
           name: open-news-dependency-bundle
@@ -309,7 +302,6 @@ jobs:
     needs: [plan, build, verify, bundle]
     if: always() && inputs.fail_on_deferred == true
     runs-on: ubuntu-latest
-
     steps:
       - name: Enforce strict build policy
         env:
