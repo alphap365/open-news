@@ -521,9 +521,7 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
                 "patches_json": json.dumps(patches, separators=(",", ":")),
                 "cibw_before_all": before_all or "",
                 "cibw_before_all_linux": before_all_linux or "",
-                "cibw_environment_string": " ".join(
-                    f"{k}={v}" for k, v in env.items()
-                ),
+                "cibw_environment_string": "_serialize_env(env)",
                 "repair_command": repair or "",
                 "batch": offset // max_tags + 1,
             })

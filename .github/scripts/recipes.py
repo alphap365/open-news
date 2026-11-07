@@ -851,7 +851,15 @@ def resolve_recipe(
         if version_anchor_ok(recipe.version_anchor, version, max_delta="minor"):
             candidates.append(("recipe_local", local))
 
-    # 2. Chaquopy (Android only)
+    # 2. Termux (Android only — first choice for cross-compiled C-extensions)
+    if target["family"] == "android":
+        termux = fetch_termux_build_sh(client, package)
+        if termux:
+            recipe = from_termux_shell(termux, package, version, target)
+            if version_anchor_ok(recipe.version_anchor, version, max_delta="minor"):
+                candidates.append(("recipe_termux", termux))
+
+    # 3. Chaquopy (Android only)
     if target["family"] == "android":
         chaq = fetch_chaquopy_meta(client, package, version)
         if chaq:
@@ -859,21 +867,13 @@ def resolve_recipe(
             if version_anchor_ok(anchor, version, max_delta="minor"):
                 candidates.append(("recipe_chaquopy", chaq))
 
-    # 3. Flet mobile-forge (Android + iOS)
+    # 4. Flet mobile-forge (Android + iOS)
     if target["family"] in ("android", "ios"):
         flet = fetch_flet_meta(client, package, version)
         if flet:
             anchor = ((flet["meta"].get("package") or {}).get("version") or "").strip() or None
             if version_anchor_ok(anchor, version, max_delta="minor"):
                 candidates.append(("recipe_flet", flet))
-
-    # 4. Termux (Android only, proven for cryptography 50.x)
-    if target["family"] == "android":
-        termux = fetch_termux_build_sh(client, package)
-        if termux:
-            recipe = from_termux_shell(termux, package, version, target)
-            if version_anchor_ok(recipe.version_anchor, version, max_delta="minor"):
-                candidates.append(("recipe_termux", termux))
 
     # 5. Static analysis (always last)
     candidates.append(("static_analysis", None))
