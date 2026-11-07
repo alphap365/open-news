@@ -333,6 +333,8 @@ jobs:
           (matrix.cibw_before_all != '' ||
            matrix.cibw_before_all_linux != '' ||
            matrix.cibw_environment_string != '')
+        env:
+          CIBW_ENVIRONMENT_STRING: ${{ matrix.cibw_environment_string }}
         shell: bash
         run: |
           if [ -n "${{ matrix.cibw_before_all }}" ]; then
@@ -341,8 +343,8 @@ jobs:
           if [ -n "${{ matrix.cibw_before_all_linux }}" ]; then
             printf 'CIBW_BEFORE_ALL_LINUX=%s\n' "${{ matrix.cibw_before_all_linux }}" >> "$GITHUB_ENV"
           fi
-          if [ -n "${{ matrix.cibw_environment_string }}" ]; then
-            printf 'CIBW_ENVIRONMENT=%s\n' "${{ matrix.cibw_environment_string }}" >> "$GITHUB_ENV"
+          if [ -n "$CIBW_ENVIRONMENT_STRING" ]; then
+            printf 'CIBW_ENVIRONMENT=%s\n' "$CIBW_ENVIRONMENT_STRING" >> "$GITHUB_ENV"
           fi
 
       # Matches the last known-good release workflow:

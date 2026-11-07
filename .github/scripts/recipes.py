@@ -488,6 +488,24 @@ def from_conda_yaml(
     )
 
 
+def _cibw_python_glob(pattern: str) -> str:
+    return (
+        "$(python -c 'import glob,sys; "
+        f"print(glob.glob(sys.argv[1])[0])' {pattern})"
+    )
+
+
+def _android_cffi_env() -> dict[str, str]:
+    discover_include = _cibw_python_glob(
+        "/tmp/cibw-run-*/cp*-android_*/python/prefix/include/python*"
+    )
+    return {
+        "CFLAGS_aarch64_linux_android": (
+            f"-D__BIONIC_NO_PAGE_SIZE_MACRO -I{discover_include}"
+        ),
+    }
+
+
 _TERMUX_EXPORT_RE = re.compile(r"^\s*export\s+([A-Z_][A-Z0-9_]*)=(.*)$", re.MULTILINE)
 
 
@@ -500,30 +518,23 @@ def from_termux_shell(
     (.../include/python3.13), because cc-rs only receives the parent
     (.../include) from cibuildwheel. That versioned subdirectory is the
     one that actually contains Python.h. Its exact location is only
-    known at build time, so we emit a shell substitution that discovers
-    it when CIBW_ENVIRONMENT is sourced.
+    known at build time, so discover it through CIBW_ENVIRONMENT.
     """
     script = payload.get("script") or ""
 
     # Discover the versioned include/lib dirs at build time. Both are
-    # unique per cibuildwheel run (random hash in the path), so a shell
-    # glob is the only way to reach them from inside CIBW_ENVIRONMENT.
-    discover_include = (
-        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/include/python* '
-        '2>/dev/null | head -1)'
-    )
-    # Append the versioned include path to the CFLAGS that
-    # cibuildwheel already provides. Do NOT replace CFLAGS — that
-    # would drop -D__BIONIC_NO_PAGE_SIZE_MACRO, -DNDEBUG, etc.
+    # unique per cibuildwheel run (random hash in the path).
+    # cibuildwheel rebuilds generic CFLAGS when it creates its Android
+    # environment, so changes to CFLAGS do not reach the cross-compiler.
+    # cc-rs checks the target-specific variable, which survives that setup.
     env: dict[str, str] = {
         "CARGO_BUILD_TARGET": "aarch64-linux-android",
         "ANDROID_API_LEVEL": "24",
-        "CFLAGS": f"$CFLAGS -I{discover_include}",
+        **_android_cffi_env(),
     }
     # PyO3 needs the directory containing libpython for the target.
-    env["PYO3_CROSS_LIB_DIR"] = (
-        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/lib '
-        '2>/dev/null | head -1)'
+    env["PYO3_CROSS_LIB_DIR"] = _cibw_python_glob(
+        "/tmp/cibw-run-*/cp*-android_*/python/prefix/lib"
     )
 
     # Extract Python version from Termux's script when available, so
@@ -685,6 +696,7 @@ def _analyze_source_tree(source: Path, target: dict) -> dict:
         elif _is_maturin_with_cffi(source):
             info["confidence"] = "low"
             info["reason"] = "maturin + cffi C-ext (Python.h propagation gap on Android)"
+            info["env"].update(_android_cffi_env())
 
     if target["family"] in ("manylinux", "musllinux") and info["native"]:
         text_blob = ""
