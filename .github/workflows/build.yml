@@ -42,12 +42,13 @@ env:
 jobs:
 
   # ------------------------------------------------------------------
-  # Plan: three-tier recipe resolution + matrix generation
+  # Plan: three-tier recipe ladder (local → chaquopy → flet → termux → static)
+  # with preflight gating before any build slot is committed.
   # ------------------------------------------------------------------
   plan:
     name: Discover and plan wheel builds
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     outputs:
       matrix: ${{ steps.plan.outputs.matrix }}
       has_builds: ${{ steps.plan.outputs.has_builds }}
@@ -65,7 +66,9 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install "httpx>=0.27" "packaging>=25.0" "pyyaml>=6.0"
 
-      - name: Discover missing wheels (three-tier recipe resolution)
+      # plan_wheels.py imports from recipes.py (same directory, picked up
+      # automatically because Python adds the script dir to sys.path[0]).
+      - name: Discover missing wheels (recipe ladder + preflight)
         id: plan
         run: |
           python .github/scripts/plan_wheels.py \
@@ -84,8 +87,16 @@ jobs:
           echo "Build jobs: ${BUILD_COUNT:-0}"
           echo "Prebuilt (external, downloaded): ${PREBUILT_COUNT:-0}"
           echo "Rejected/deferred: ${REJECTED_COUNT:-0}"
+          if [ -f wheel-gaps-discovery.json ]; then
+            echo ""
+            echo "Recipe sources:"
+            python -c "import json;d=json.load(open('wheel-gaps-discovery.json'));print(json.dumps(d['summary'].get('recipe_sources',{}),indent=2))"
+            echo ""
+            echo "Preflight failures:"
+            python -c "import json;d=json.load(open('wheel-gaps-discovery.json'));print(d['summary'].get('preflight_failure_count',0))"
+          fi
           if [ -f wheel-build-plan.json ]; then
-            python -m json.tool wheel-build-plan.json
+            python -m json.tool wheel-build-plan.json | head -120
           fi
 
       - name: Upload prebuilt external wheels
@@ -110,7 +121,7 @@ jobs:
 
 
   # ------------------------------------------------------------------
-  # Build: pure Python (pip wheel) or native (cibuildwheel)
+  # Build: pure Python (pip wheel) or native (cibuildwheel) + repair
   # ------------------------------------------------------------------
   build:
     name: >-
@@ -133,11 +144,7 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      # The ubuntu-latest runner image ships with the Android SDK and NDK
-      # pre-installed, and cibuildwheel finds them via ANDROID_HOME (already
-      # exported by the runner). We only verify they exist — no install step,
-      # no override of ANDROID_HOME/ANDROID_NDK_HOME. This matches the older
-      # release workflow that successfully built Android wheels.
+      # Pre-installed SDK/NDK on ubuntu-latest; verify only, do not install.
       - name: Verify Android SDK is available
         if: matrix.cibw_platform == 'android' && matrix.build_type == 'cibuildwheel'
         shell: bash
@@ -220,17 +227,14 @@ jobs:
         run: |
           python - <<'EOF'
           import pathlib, re, sys
-
           p = pathlib.Path("pkgsrc/pyproject.toml")
           if not p.exists():
               print("No pkgsrc/pyproject.toml — nothing to patch.")
               sys.exit(0)
-
           original = p.read_text(encoding="utf-8")
           text, n = re.subn(
               r'(?ms)^\[tool\.cibuildwheel(?:\.[^\]]+)*\][^\n]*\n.*?(?=^\[|\Z)',
-              '',
-              original,
+              '', original,
           )
           if text != original:
               p.write_text(text, encoding="utf-8")
@@ -254,7 +258,7 @@ jobs:
               if not req.get("required"):
                   print(f"skip optional: {req['name']}")
                   continue
-              url = req.get("artifact_url")
+              url = req.get("url") or req.get("artifact_url")
               if not url:
                   continue
               name = req["name"]
@@ -321,9 +325,8 @@ jobs:
           fi
           python -m pip wheel --no-deps --wheel-dir wheelhouse "$PKGSRC"
 
-      # Recipe-driven env vars are only injected into $GITHUB_ENV when
-      # non-empty. Empty strings would be seen by cibuildwheel as "run an
-      # empty script" and can trip it in some versions.
+      # Only inject recipe env vars when non-empty. Empty strings would be
+      # seen by cibuildwheel as "run an empty script".
       - name: Export recipe environment (only when populated)
         if: >-
           matrix.build_type == 'cibuildwheel' &&
@@ -342,12 +345,10 @@ jobs:
             printf 'CIBW_ENVIRONMENT=%s\n' "${{ matrix.cibw_environment_string }}" >> "$GITHUB_ENV"
           fi
 
-      # Matches the older release workflow that successfully built Android
-      # wheels for selectolax, primp, etc.:
-      #   - cibuildwheel v4.2.0 (not v4.3.5)
-      #   - CIBW_ENABLE: cpython-prerelease  (required for cp314)
-      #   - CIBW_SKIP: cp31?t-*              (skip free-threaded builds)
-      #   - No manual ANDROID_HOME / ANDROID_NDK_HOME override
+      # Matches the last known-good release workflow:
+      #   - cibuildwheel v4.2.0
+      #   - CIBW_ENABLE: cpython-prerelease (required for cp314)
+      #   - CIBW_SKIP: cp31?t-*             (skip free-threaded builds)
       - name: Build dependency wheel (cibuildwheel)
         if: matrix.build_type == 'cibuildwheel'
         uses: pypa/cibuildwheel@v4.2.0
@@ -369,6 +370,74 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: >-
             ${{ matrix.cibw_platform == 'macos' && '14.0' || '' }}
 
+      # Runs only when the plan emitted a repair_command. Each .so inside
+      # the wheel is patched with $SO set, then RECORD is recomputed so
+      # verify_wheels.py accepts the wheel.
+      # Contract: matrix.repair_command is a shell snippet expecting $SO
+      # (e.g. `patchelf --add-needed libpython3.13.so "$SO"`).
+      - name: Repair wheels (patchelf and friends)
+        if: matrix.build_type == 'cibuildwheel' && matrix.repair_command != ''
+        shell: bash
+        env:
+          REPAIR: ${{ matrix.repair_command }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf unzip zip >/dev/null
+
+          shopt -s nullglob
+          for whl in wheelhouse/*.whl; do
+            echo "Repairing $(basename "$whl")"
+            tmp=$(mktemp -d)
+            unzip -q "$whl" -d "$tmp"
+
+            patched=0
+            while IFS= read -r so; do
+              echo "  patching ${so#$tmp/}"
+              SO="$so" bash -c "$REPAIR"
+              patched=1
+            done < <(find "$tmp" -name "*.so" -type f)
+
+            if [ "$patched" = "0" ]; then
+              echo "  no .so files — skipping RECORD update"
+              rm -rf "$tmp"
+              continue
+            fi
+
+            python3 - "$tmp" "$whl" <<'PY'
+          import base64, csv, hashlib, io, sys, zipfile
+          from pathlib import Path
+
+          tmp, whl = Path(sys.argv[1]), Path(sys.argv[2])
+          files = {}
+          for f in tmp.rglob("*"):
+              if f.is_file():
+                  files[f.relative_to(tmp).as_posix()] = f.read_bytes()
+
+          record = next(n for n in files if n.endswith(".dist-info/RECORD"))
+          files.pop(record)
+
+          rows = []
+          for name in sorted(files):
+              content = files[name]
+              digest = hashlib.sha256(content).digest()
+              b64 = base64.urlsafe_b64encode(digest).rstrip(b"=").decode()
+              rows.append([name, f"sha256={b64}", str(len(content))])
+          rows.append([record, "", ""])
+
+          buf = io.StringIO()
+          csv.writer(buf).writerows(rows)
+          files[record] = buf.getvalue().encode("utf-8")
+
+          with zipfile.ZipFile(whl, "w", zipfile.ZIP_DEFLATED) as zf:
+              for name, content in files.items():
+                  zf.writestr(name, content)
+          print(f"  rebuilt {whl.name}")
+          PY
+
+            rm -rf "$tmp"
+          done
+
       - name: Upload generated wheels
         if: always()
         uses: actions/upload-artifact@v4
@@ -380,7 +449,7 @@ jobs:
 
 
   # ------------------------------------------------------------------
-  # Verify: reconcile plan with produced/prebuilt wheels
+  # Verify: reconcile plan (with version-drift metadata) against wheels
   # ------------------------------------------------------------------
   verify:
     name: Verify generated dependency wheels
@@ -428,6 +497,25 @@ jobs:
             --plan metadata/wheel-build-plan.json \
             --output wheel-verification.json
 
+      - name: Summary
+        if: always()
+        run: |
+          if [ -f wheel-verification.json ]; then
+            python - <<'PY'
+          import json
+          v = json.load(open("wheel-verification.json"))
+          s = v["summary"]
+          print(f"Verified: {s['verified_combinations']}")
+          print(f"Expected risk: {s['expected_risk_combinations']}")
+          print(f"Missing: {s['missing_combinations']}")
+          print(f"Invalid: {s['invalid_wheels']}")
+          for item in v.get("missing", []):
+              print(f"  MISSING: {item['package']} {item['target']} {item['python']}")
+          for item in v.get("expected_risks", []):
+              print(f"  RISK:    {item['package']} {item['target']} {item['python']} ({item['confidence']})")
+          PY
+          fi
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
@@ -438,7 +526,7 @@ jobs:
 
 
   # ------------------------------------------------------------------
-  # Bundle: reproducible zips with manifest + SHA256
+  # Bundle: reproducible zips with manifest (incl. lockfile_overrides)
   # ------------------------------------------------------------------
   bundle:
     name: Create dependency wheel bundles
