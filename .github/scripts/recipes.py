@@ -494,35 +494,60 @@ _TERMUX_EXPORT_RE = re.compile(r"^\s*export\s+([A-Z_][A-Z0-9_]*)=(.*)$", re.MULT
 def from_termux_shell(
     payload: dict, package: str, version: str, target: dict,
 ) -> BuildRecipe:
-    """Translate Termux build.sh into an Android recipe."""
+    """Translate Termux build.sh into an Android recipe.
+
+    Termux sets CFLAGS_<triple> to the *versioned* Python include path
+    (.../include/python3.13), because cc-rs only receives the parent
+    (.../include) from cibuildwheel. That versioned subdirectory is the
+    one that actually contains Python.h. Its exact location is only
+    known at build time, so we emit a shell substitution that discovers
+    it when CIBW_ENVIRONMENT is sourced.
+    """
     script = payload.get("script") or ""
+
+    # Discover the versioned include/lib dirs at build time. Both are
+    # unique per cibuildwheel run (random hash in the path), so a shell
+    # glob is the only way to reach them from inside CIBW_ENVIRONMENT.
+    discover_include = (
+        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/include/python* '
+        '2>/dev/null | head -1)'
+    )
+    discover_lib = (
+        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/lib '
+        '2>/dev/null | head -1)'
+    )
+
     env: dict[str, str] = {
         "CARGO_BUILD_TARGET": "aarch64-linux-android",
         "ANDROID_API_LEVEL": "24",
+        # Append the versioned include path to the CFLAGS that
+        # cibuildwheel already provides. Do NOT replace CFLAGS — that
+        # would drop -D__BIONIC_NO_PAGE_SIZE_MACRO, -DNDEBUG, etc.
+        "CFLAGS": f"$CFLAGS -I{discover_include}",
+        # PyO3 needs the directory containing libpython for the target.
+        "PYO3_CROSS_LIB_DIR": discover_lib,
     }
-    # Capture the CFLAGS/PYO3 lines Termux uses to fix the Android C compile
-    for m in _TERMUX_EXPORT_RE.finditer(script):
-        key, val = m.group(1), m.group(2).strip().strip('"').strip("'")
-        if key.startswith("PYO3_") or key.startswith("CFLAGS_") or key in (
-            "CARGO_BUILD_TARGET", "ANDROID_API_LEVEL",
-        ):
-            env[key] = val
 
-    # Extract the version Termux builds — used as anchor
+    # Extract Python version from Termux's script when available, so
+    # the patchelf step below matches whatever Termux currently targets.
+    py_ver = "3.13"
+    m = re.search(r'TERMUX_PYTHON_VERSION=["\']?([0-9.]+)', script)
+    if m:
+        py_ver = m.group(1)
+
     anchor = None
     m = re.search(r'TERMUX_PKG_VERSION=["\']?([0-9][^\s"\']*)', script)
     if m:
         anchor = m.group(1)
 
-    m = re.search(r'TERMUX_PYTHON_VERSION=["\']?(\d+\.\d+)', script)
-    py_ver = m.group(1) if m else "3.13"
+    # patchelf the built .so — maturin only links libpython for binary
+    # targets, not cdylib, and the Android linker requires it.
+    repair = f'patchelf --add-needed libpython{py_ver}.so "$SO"'
 
-    # Termux's critical post-build step
-    repair = None
-    if "patchelf" in script:
-        repair = f'patchelf --add-needed libpython{py_ver}.so "$SO"'
-
-    confidence = "high" if anchor and version_delta(Version(anchor), Version(version)) in ("exact", "patch") else "medium"
+    confidence = (
+        "high" if anchor and version_delta(Version(anchor), Version(version))
+        in ("exact", "patch") else "medium"
+    )
 
     return BuildRecipe(
         package=package, version=version, target=target["target"],
@@ -532,7 +557,6 @@ def from_termux_shell(
         version_anchor=anchor,
         reason=f"termux recipe ({anchor or 'unanchored'})",
     )
-
 
 # ─── Static analysis (fallback recipe source) ────────────────────────────
 

@@ -367,6 +367,18 @@ def _dedupe_by_name(items: list[dict]) -> list[dict]:
         out.append(item)
     return out
 
+def _serialize_env(env: dict[str, str]) -> str:
+    """Serialize env dict to CIBW_ENVIRONMENT syntax.
+
+    Values are double-quoted so that $VAR and $(...) expand inside the
+    shell that sources CIBW_ENVIRONMENT. Single quotes would suppress
+    expansion, which is exactly what we need here (dynamic paths).
+    """
+    parts = []
+    for k, v in env.items():
+        escaped = v.replace('"', '\\"')
+        parts.append(f'{k}="{escaped}"')
+    return " ".join(parts)
 
 def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
     plan: list[dict] = []
@@ -397,7 +409,7 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
             "patches_json": "[]",
             "cibw_before_all": "",
             "cibw_before_all_linux": "",
-            "cibw_environment_string": "",
+            "cibw_environment_string": "_serialize_env(env)",
             "repair_command": "",
             "batch": 1,
         })
