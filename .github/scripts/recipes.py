@@ -512,21 +512,19 @@ def from_termux_shell(
         '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/include/python* '
         '2>/dev/null | head -1)'
     )
-    discover_lib = (
-        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/lib '
-        '2>/dev/null | head -1)'
-    )
-
+    # Append the versioned include path to the CFLAGS that
+    # cibuildwheel already provides. Do NOT replace CFLAGS — that
+    # would drop -D__BIONIC_NO_PAGE_SIZE_MACRO, -DNDEBUG, etc.
     env: dict[str, str] = {
         "CARGO_BUILD_TARGET": "aarch64-linux-android",
         "ANDROID_API_LEVEL": "24",
-        # Append the versioned include path to the CFLAGS that
-        # cibuildwheel already provides. Do NOT replace CFLAGS — that
-        # would drop -D__BIONIC_NO_PAGE_SIZE_MACRO, -DNDEBUG, etc.
         "CFLAGS": f"$CFLAGS -I{discover_include}",
-        # PyO3 needs the directory containing libpython for the target.
-        "PYO3_CROSS_LIB_DIR": discover_lib,
     }
+    # PyO3 needs the directory containing libpython for the target.
+    env["PYO3_CROSS_LIB_DIR"] = (
+        '$(ls -d /tmp/cibw-run-*/cp*-android_*/python/prefix/lib '
+        '2>/dev/null | head -1)'
+    )
 
     # Extract Python version from Termux's script when available, so
     # the patchelf step below matches whatever Termux currently targets.
