@@ -66,7 +66,10 @@ def safe_archive_path(name: str) -> bool:
 
 def verify_record(archive: zipfile.ZipFile) -> list[str]:
     errors: list[str] = []
-    names = set(archive.namelist())
+    names = {
+        info.filename for info in archive.infolist()
+        if not info.is_dir()
+    }
     record_files = [n for n in names if n.endswith(".dist-info/RECORD")]
     if len(record_files) != 1:
         return [f"Expected exactly one .dist-info/RECORD; found {len(record_files)}."]
@@ -343,8 +346,13 @@ def wheel_matches_build(
         return False
     if wheel["package"] != canonicalize_name(build["package"]):
         return False
+    expected_version = build["version"]
+    if build.get("build_type") == "prebuilt":
+        expected_version = build.get("shipped_version")
+        if not expected_version or wheel["file"] != build.get("prebuilt_filename"):
+            return False
     try:
-        if Version(wheel["version"]) != Version(str(build["version"])):
+        if Version(wheel["version"]) != Version(str(expected_version)):
             return False
     except InvalidVersion:
         return False
