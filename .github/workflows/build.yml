@@ -38,6 +38,7 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   ANDROID_API_LEVEL: ${{ inputs.android_api_level }}
+  ANDROID_NDK_VERSION: "26.3.11579264"
 
 jobs:
 
@@ -50,7 +51,7 @@ jobs:
       has_builds: ${{ steps.plan.outputs.has_builds }}
       build_count: ${{ steps.plan.outputs.build_count }}
       rejected_count: ${{ steps.plan.outputs.rejected_count }}
-      has_prebuilt: ${{ steps.discover.outputs.prebuilt_count != '0' }}
+      has_prebuilt: ${{ steps.plan.outputs.prebuilt_count != '0' }}
 
     steps:
       - uses: actions/checkout@v4
@@ -60,26 +61,23 @@ jobs:
       - name: Install discovery dependencies
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "httpx>=0.27" "packaging>=25.0"
+          python -m pip install "httpx>=0.27" "packaging>=25.0" "pyyaml>=6.0"
 
-      - name: Discover missing wheels (PyPI + external indexes)
-        id: discover
+      - name: Discover missing wheels (three-tier recipe resolution)
+        id: plan
         run: |
-          python .github/scripts/compute_wheel_gaps.py \
+          python .github/scripts/plan_wheels.py \
             --output wheel-gaps.json \
+            --plan-output wheel-build-plan.json \
             --discovery-output wheel-gaps-discovery.json \
             --android-api-level "$ANDROID_API_LEVEL" \
             --download-dir prebuilt_wheels
-
-      - name: Generate build plan
-        id: plan
-        run: python .github/scripts/plan_wheel_build.py
 
       - name: Display build plan
         env:
           BUILD_COUNT: ${{ steps.plan.outputs.build_count }}
           REJECTED_COUNT: ${{ steps.plan.outputs.rejected_count }}
-          PREBUILT_COUNT: ${{ steps.discover.outputs.prebuilt_count }}
+          PREBUILT_COUNT: ${{ steps.plan.outputs.prebuilt_count }}
         run: |
           echo "Build jobs: ${BUILD_COUNT:-0}"
           echo "Prebuilt (external, downloaded): ${PREBUILT_COUNT:-0}"
@@ -130,11 +128,31 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
+      - name: Set up Android SDK
+        if: matrix.cibw_platform == 'android'
+        uses: android-actions/setup-android@v3
+        with:
+          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
+
+      - name: Export Android environment
+        if: matrix.cibw_platform == 'android'
+        run: |
+          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+
       - name: Set up QEMU (aarch64 fallback)
         if: matrix.cibw_platform == 'linux' && matrix.cibw_archs == 'aarch64' && matrix.runner == 'ubuntu-latest'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
+
+      - name: Cache cibuildwheel artifacts
+        uses: actions/cache@v4
+        with:
+          path: .cibw-cache
+          key: cibw-${{ matrix.cibw_platform }}-${{ matrix.cibw_archs }}-${{ hashFiles('uv.lock') }}
+          restore-keys: |
+            cibw-${{ matrix.cibw_platform }}-${{ matrix.cibw_archs }}-
 
       - name: Download and prepare source distribution
         env:
@@ -191,6 +209,76 @@ jobs:
           print(f"Prepared {package}=={version}")
           PY
 
+      - name: Materialize recipe host artifacts
+        if: matrix.host_requirements_json != '' && matrix.host_requirements_json != '[]'
+        shell: bash
+        env:
+          HOST_REQS: ${{ matrix.host_requirements_json }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, sys, urllib.request
+          reqs = json.loads(os.environ["HOST_REQS"] or "[]")
+          base = "/opt/recipe"
+          os.makedirs(base, exist_ok=True)
+          for req in reqs:
+              if not req.get("required"):
+                  print(f"skip optional: {req['name']}")
+                  continue
+              url = req.get("artifact_url")
+              if not url:
+                  continue
+              name = req["name"]
+              dest = os.path.join(base, name)
+              if os.path.isdir(dest):
+                  print(f"already materialized: {name}")
+                  continue
+              archive = f"/tmp/{name}.tar.gz"
+              print(f"fetching {name} from {url}")
+              try:
+                  urllib.request.urlretrieve(url, archive)
+                  os.makedirs(dest, exist_ok=True)
+                  subprocess.run(
+                      ["tar", "xzf", archive, "-C", dest, "--strip-components=1"],
+                      check=True,
+                  )
+              except Exception as exc:
+                  print(f"WARN: failed to materialize {name}: {exc}", file=sys.stderr)
+          PY
+
+      - name: Apply recipe patches
+        if: matrix.patches_json != '' && matrix.patches_json != '[]'
+        shell: bash
+        env:
+          PATCHES: ${{ matrix.patches_json }}
+        run: |
+          python - <<'PY'
+          import json, os, subprocess, tempfile, urllib.request
+          patches = json.loads(os.environ["PATCHES"] or "[]")
+          for patch in patches:
+              url = patch.get("url")
+              if not url:
+                  continue
+              print(f"trying {patch.get('filename')}")
+              try:
+                  with urllib.request.urlopen(url, timeout=15) as r:
+                      if r.status != 200:
+                          continue
+                      content = r.read()
+              except Exception:
+                  continue
+              with tempfile.NamedTemporaryFile(delete=False, suffix=".patch") as f:
+                  f.write(content)
+                  pfile = f.name
+              result = subprocess.run(
+                  ["patch", "-p1", "-i", pfile, "--forward"],
+                  cwd="pkgsrc", capture_output=True, text=True,
+              )
+              if result.returncode == 0:
+                  print(f"applied {patch['filename']}")
+              else:
+                  print(f"WARN: {patch['filename']} did not apply cleanly")
+          PY
+
       - name: Build pure-Python wheel (pip wheel)
         if: matrix.build_type == 'pure_python'
         run: |
@@ -215,6 +303,10 @@ jobs:
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
           CIBW_BUILD_FRONTEND: build
           CIBW_BUILD_VERBOSITY: "1"
+          CIBW_CACHE_PATH: ${{ github.workspace }}/.cibw-cache
+          CIBW_BEFORE_ALL: ${{ matrix.cibw_before_all }}
+          CIBW_BEFORE_ALL_LINUX: ${{ matrix.cibw_before_all_linux }}
+          CIBW_ENVIRONMENT: ${{ matrix.cibw_environment_string }}
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
@@ -238,8 +330,8 @@ jobs:
     needs: [plan, build]
     if: >-
       always() &&
-      needs.plan.outputs.has_builds == 'true' ||
-      needs.plan.outputs.has_prebuilt == 'true'
+      (needs.plan.outputs.has_builds == 'true' ||
+       needs.plan.outputs.has_prebuilt == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
 
@@ -274,7 +366,7 @@ jobs:
 
       - name: Verify wheels against build plan
         run: |
-          python .github/scripts/verify_dependency_wheels.py \
+          python .github/scripts/verify_wheels.py \
             --wheel-dir all-wheels \
             --plan metadata/wheel-build-plan.json \
             --output wheel-verification.json
@@ -334,7 +426,7 @@ jobs:
       - name: Bundle built wheels (dependency-wheels.zip)
         if: needs.plan.outputs.has_builds == 'true'
         run: |
-          python .github/scripts/create_dependency_bundle.py \
+          python .github/scripts/bundle_wheels.py \
             --wheel-dir built-wheels \
             --project-file pyproject.toml \
             --verification-report verification/wheel-verification.json \
@@ -343,7 +435,7 @@ jobs:
       - name: Bundle prebuilt wheels (dependency-wheels-prebuilt.zip)
         if: needs.plan.outputs.has_prebuilt == 'true'
         run: |
-          python .github/scripts/create_dependency_bundle.py \
+          python .github/scripts/bundle_wheels.py \
             --wheel-dir prebuilt-wheels \
             --project-file pyproject.toml \
             --verification-report verification/wheel-verification.json \

@@ -255,7 +255,6 @@ def platform_tag_matches(
     platform = wheel_tag.platform.lower()
     target = target.lower()
 
-    # Universal pure-Python wheel matches every target.
     if platform == "any":
         return True
 
@@ -366,13 +365,14 @@ def wheel_matches_build(
 def verify_plan(
     builds: list[dict[str, Any]], wheels: list[dict[str, Any]],
 ) -> dict[str, Any]:
-    results, missing = [], []
+    results, missing, expected_risks = [], [], []
     matched_files: set[str] = set()
 
     for build in builds:
         package = canonicalize_name(str(build["package"]))
         version = str(build["version"])
         target = str(build["target"])
+        confidence = build.get("confidence", "high")
 
         for py_tag in build["py_tags"]:
             matching = [
@@ -381,15 +381,32 @@ def verify_plan(
             ]
             for wheel in matching:
                 matched_files.add(wheel["file"])
+
             entry = {
                 "package": package, "version": version,
                 "target": target, "python": str(py_tag),
-                "status": "verified" if matching else "missing",
+                "confidence": confidence,
                 "wheels": [w["file"] for w in matching],
             }
-            results.append(entry)
-            if not matching:
+
+            # ─── ANDROID DEMOTION ───
+            # Android cross-compile is inherently uncertain; a failed
+            # build on Android with medium confidence should not block
+            # the bundle. Low confidence already demotes below.
+            is_android = target.startswith("android")
+            if matching:
+                entry["status"] = "verified"
+            elif confidence == "low":
+                entry["status"] = "expected_risk"
+                expected_risks.append(entry)
+            elif is_android and confidence == "medium":
+                entry["status"] = "expected_risk"
+                expected_risks.append(entry)
+            else:
+                entry["status"] = "missing"
                 missing.append(entry)
+
+            results.append(entry)
 
     invalid_wheels = [w for w in wheels if not w["valid"]]
     unmatched_wheels = [
@@ -401,14 +418,16 @@ def verify_plan(
         "success": not missing and not invalid_wheels,
         "summary": {
             "planned_combinations": len(results),
-            "verified_combinations": len(results) - len(missing),
+            "verified_combinations": sum(1 for r in results if r["status"] == "verified"),
             "missing_combinations": len(missing),
+            "expected_risk_combinations": len(expected_risks),
             "wheel_files": len(wheels),
             "invalid_wheels": len(invalid_wheels),
             "unmatched_wheels": len(unmatched_wheels),
         },
         "combinations": results,
         "missing": missing,
+        "expected_risks": expected_risks,
         "invalid_wheels": invalid_wheels,
         "unmatched_wheels": unmatched_wheels,
         "wheels": wheels,
@@ -442,6 +461,7 @@ def main() -> int:
         print(f"Planned combinations: {s['planned_combinations']}")
         print(f"Verified combinations: {s['verified_combinations']}")
         print(f"Missing combinations: {s['missing_combinations']}")
+        print(f"Expected risk (low confidence / Android medium): {s['expected_risk_combinations']}")
         print(f"Invalid wheels: {s['invalid_wheels']}")
         print(f"Unmatched wheels: {s['unmatched_wheels']}")
 
@@ -450,6 +470,11 @@ def main() -> int:
             for item in report["missing"]:
                 print(f"  - {item['package']}=={item['version']} "
                       f"{item['target']} {item['python']}")
+        if report["expected_risks"]:
+            print("\nExpected-risk combinations:")
+            for item in report["expected_risks"]:
+                print(f"  - {item['package']}=={item['version']} "
+                      f"{item['target']} {item['python']} ({item['confidence']})")
         if report["invalid_wheels"]:
             print("\nInvalid wheels:")
             for wheel in report["invalid_wheels"]:

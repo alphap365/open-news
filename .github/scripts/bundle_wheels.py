@@ -19,7 +19,7 @@ When supplied, the report must indicate success and contain no invalid
 or missing wheel combinations.
 
 Usage:
-    python .github/scripts/create_dependency_bundle.py \
+    python .github/scripts/bundle_wheels.py \
         --wheel-dir dist \
         --output dependency-build/open-news-dependencies.zip \
         --project-file pyproject.toml \
