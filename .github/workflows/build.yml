@@ -38,10 +38,12 @@ concurrency:
 env:
   PYTHON_VERSION: "3.12"
   ANDROID_API_LEVEL: ${{ inputs.android_api_level }}
-  ANDROID_NDK_VERSION: "26.3.11579264"
 
 jobs:
 
+  # ------------------------------------------------------------------
+  # Plan: three-tier recipe resolution + matrix generation
+  # ------------------------------------------------------------------
   plan:
     name: Discover and plan wheel builds
     runs-on: ubuntu-latest
@@ -107,6 +109,9 @@ jobs:
           retention-days: 30
 
 
+  # ------------------------------------------------------------------
+  # Build: pure Python (pip wheel) or native (cibuildwheel)
+  # ------------------------------------------------------------------
   build:
     name: >-
       ${{ matrix.package }} ${{ matrix.version }}
@@ -128,31 +133,32 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Set up Android SDK
-        if: matrix.cibw_platform == 'android'
-        uses: android-actions/setup-android@v3
-        with:
-          ndk-version: ${{ env.ANDROID_NDK_VERSION }}
-
-      - name: Export Android environment
-        if: matrix.cibw_platform == 'android'
+      # The ubuntu-latest runner image ships with the Android SDK and NDK
+      # pre-installed, and cibuildwheel finds them via ANDROID_HOME (already
+      # exported by the runner). We only verify they exist — no install step,
+      # no override of ANDROID_HOME/ANDROID_NDK_HOME. This matches the older
+      # release workflow that successfully built Android wheels.
+      - name: Verify Android SDK is available
+        if: matrix.cibw_platform == 'android' && matrix.build_type == 'cibuildwheel'
+        shell: bash
         run: |
-          echo "ANDROID_HOME=$ANDROID_SDK_ROOT" >> "$GITHUB_ENV"
-          echo "ANDROID_NDK_HOME=$ANDROID_SDK_ROOT/ndk/${ANDROID_NDK_VERSION}" >> "$GITHUB_ENV"
+          if [ -z "${ANDROID_HOME:-}" ]; then
+            echo "::error::ANDROID_HOME is not set on this runner"
+            exit 1
+          fi
+          if [ ! -d "${ANDROID_HOME}/ndk" ]; then
+            echo "::error::No NDK directory at ${ANDROID_HOME}/ndk/"
+            exit 1
+          fi
+          echo "ANDROID_HOME=${ANDROID_HOME}"
+          echo "Available NDK versions:"
+          ls -la "${ANDROID_HOME}/ndk/" || true
 
       - name: Set up QEMU (aarch64 fallback)
         if: matrix.cibw_platform == 'linux' && matrix.cibw_archs == 'aarch64' && matrix.runner == 'ubuntu-latest'
         uses: docker/setup-qemu-action@v3
         with:
           platforms: arm64
-
-      - name: Cache cibuildwheel artifacts
-        uses: actions/cache@v4
-        with:
-          path: .cibw-cache
-          key: cibw-${{ matrix.cibw_platform }}-${{ matrix.cibw_archs }}-${{ hashFiles('uv.lock') }}
-          restore-keys: |
-            cibw-${{ matrix.cibw_platform }}-${{ matrix.cibw_archs }}-
 
       - name: Download and prepare source distribution
         env:
@@ -208,6 +214,30 @@ jobs:
           shutil.copytree(source, pathlib.Path("pkgsrc"), dirs_exist_ok=True)
           print(f"Prepared {package}=={version}")
           PY
+
+      - name: Strip dependency [tool.cibuildwheel] config
+        shell: bash
+        run: |
+          python - <<'EOF'
+          import pathlib, re, sys
+
+          p = pathlib.Path("pkgsrc/pyproject.toml")
+          if not p.exists():
+              print("No pkgsrc/pyproject.toml — nothing to patch.")
+              sys.exit(0)
+
+          original = p.read_text(encoding="utf-8")
+          text, n = re.subn(
+              r'(?ms)^\[tool\.cibuildwheel(?:\.[^\]]+)*\][^\n]*\n.*?(?=^\[|\Z)',
+              '',
+              original,
+          )
+          if text != original:
+              p.write_text(text, encoding="utf-8")
+              print(f"Removed {n} [tool.cibuildwheel*] section(s) from {p}")
+          else:
+              print(f"No [tool.cibuildwheel*] sections found in {p}")
+          EOF
 
       - name: Materialize recipe host artifacts
         if: matrix.host_requirements_json != '' && matrix.host_requirements_json != '[]'
@@ -291,9 +321,36 @@ jobs:
           fi
           python -m pip wheel --no-deps --wheel-dir wheelhouse "$PKGSRC"
 
+      # Recipe-driven env vars are only injected into $GITHUB_ENV when
+      # non-empty. Empty strings would be seen by cibuildwheel as "run an
+      # empty script" and can trip it in some versions.
+      - name: Export recipe environment (only when populated)
+        if: >-
+          matrix.build_type == 'cibuildwheel' &&
+          (matrix.cibw_before_all != '' ||
+           matrix.cibw_before_all_linux != '' ||
+           matrix.cibw_environment_string != '')
+        shell: bash
+        run: |
+          if [ -n "${{ matrix.cibw_before_all }}" ]; then
+            printf 'CIBW_BEFORE_ALL=%s\n' "${{ matrix.cibw_before_all }}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${{ matrix.cibw_before_all_linux }}" ]; then
+            printf 'CIBW_BEFORE_ALL_LINUX=%s\n' "${{ matrix.cibw_before_all_linux }}" >> "$GITHUB_ENV"
+          fi
+          if [ -n "${{ matrix.cibw_environment_string }}" ]; then
+            printf 'CIBW_ENVIRONMENT=%s\n' "${{ matrix.cibw_environment_string }}" >> "$GITHUB_ENV"
+          fi
+
+      # Matches the older release workflow that successfully built Android
+      # wheels for selectolax, primp, etc.:
+      #   - cibuildwheel v4.2.0 (not v4.3.5)
+      #   - CIBW_ENABLE: cpython-prerelease  (required for cp314)
+      #   - CIBW_SKIP: cp31?t-*              (skip free-threaded builds)
+      #   - No manual ANDROID_HOME / ANDROID_NDK_HOME override
       - name: Build dependency wheel (cibuildwheel)
         if: matrix.build_type == 'cibuildwheel'
-        uses: pypa/cibuildwheel@v4.3.5
+        uses: pypa/cibuildwheel@v4.2.0
         with:
           package-dir: pkgsrc
           output-dir: wheelhouse
@@ -301,12 +358,9 @@ jobs:
           CIBW_PLATFORM: ${{ matrix.cibw_platform }}
           CIBW_BUILD: ${{ matrix.cibw_build }}
           CIBW_ARCHS: ${{ matrix.cibw_archs }}
-          CIBW_BUILD_FRONTEND: build
+          CIBW_ENABLE: cpython-prerelease
+          CIBW_SKIP: cp31?t-*
           CIBW_BUILD_VERBOSITY: "1"
-          CIBW_CACHE_PATH: ${{ github.workspace }}/.cibw-cache
-          CIBW_BEFORE_ALL: ${{ matrix.cibw_before_all }}
-          CIBW_BEFORE_ALL_LINUX: ${{ matrix.cibw_before_all_linux }}
-          CIBW_ENVIRONMENT: ${{ matrix.cibw_environment_string }}
           ANDROID_API_LEVEL: ${{ env.ANDROID_API_LEVEL }}
           CIBW_MANYLINUX_X86_64_IMAGE: manylinux_2_28
           CIBW_MANYLINUX_AARCH64_IMAGE: manylinux_2_28
@@ -325,6 +379,9 @@ jobs:
           retention-days: 30
 
 
+  # ------------------------------------------------------------------
+  # Verify: reconcile plan with produced/prebuilt wheels
+  # ------------------------------------------------------------------
   verify:
     name: Verify generated dependency wheels
     needs: [plan, build]
@@ -380,6 +437,9 @@ jobs:
           retention-days: 30
 
 
+  # ------------------------------------------------------------------
+  # Bundle: reproducible zips with manifest + SHA256
+  # ------------------------------------------------------------------
   bundle:
     name: Create dependency wheel bundles
     needs: [plan, verify]
@@ -460,6 +520,9 @@ jobs:
           retention-days: 90
 
 
+  # ------------------------------------------------------------------
+  # Policy: optional strict-mode failure
+  # ------------------------------------------------------------------
   policy:
     name: Deferred build policy
     needs: [plan, build, verify, bundle]
