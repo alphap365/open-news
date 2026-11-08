@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1500" height="620" viewBox="0 0 1500 620" role="img" aria-labelledby="title desc">
-<title id="title">Open News processing pipeline</title><desc id="desc">Six stages: acquire, normalize, filter and deduplicate, rank and cluster, enrich and summarize, export or return.</desc>
+<title id="title">Open News processing pipeline</title><desc id="desc">Six stages: acquire, normalize, filter, merge exact URLs, group stories, enrich, and export or return.</desc>
 <defs>
  <linearGradient id="bg" x2="1" y2="1"><stop stop-color="#111827"/><stop offset="1" stop-color="#26334e"/></linearGradient>
  <linearGradient id="g1"><stop stop-color="#2563eb"/><stop offset="1" stop-color="#4f46e5"/></linearGradient>
@@ -23,11 +23,11 @@
 </g>
 <path class="a" d="M515 285 H545"/>
 <g transform="translate(555 190)">
- <rect width="205" height="190" rx="20" fill="url(#g3)"/><text x="102" y="55" text-anchor="middle" class="h">03 · Filter</text><text x="102" y="100" text-anchor="middle" class="s">Topic and language</text><text x="102" y="130" text-anchor="middle" class="s">Domains · dedupe</text>
+ <rect width="205" height="190" rx="20" fill="url(#g3)"/><text x="102" y="55" text-anchor="middle" class="h">03 · Filter</text><text x="102" y="100" text-anchor="middle" class="s">Topic and language</text><text x="102" y="130" text-anchor="middle" class="s">Domains · URL merge</text>
 </g>
 <path class="a" d="M765 285 H795"/>
 <g transform="translate(805 190)">
- <rect width="205" height="190" rx="20" fill="url(#g4)"/><text x="102" y="55" text-anchor="middle" class="h">04 · Analyze</text><text x="102" y="100" text-anchor="middle" class="s">BM25 / TF-IDF rank</text><text x="102" y="130" text-anchor="middle" class="s">Story clustering</text>
+ <rect width="205" height="190" rx="20" fill="url(#g4)"/><text x="102" y="55" text-anchor="middle" class="h">04 · Stories</text><text x="102" y="100" text-anchor="middle" class="s">Similar coverage kept</text><text x="102" y="130" text-anchor="middle" class="s">Rank story lead</text>
 </g>
 <path class="a" d="M1015 285 H1045"/>
 <g transform="translate(1055 190)">

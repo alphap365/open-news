@@ -23,7 +23,7 @@
 <rect x="545" y="440" width="410" height="160" rx="18" fill="url(#c)"/>
 <text x="750" y="482" text-anchor="middle" class="head">Extraction</text><text x="750" y="520" text-anchor="middle" class="small">Article retrieval · HTML parsing</text><text x="750" y="550" text-anchor="middle" class="small">JSON-LD · Open Graph · optional browser</text>
 <rect x="1020" y="440" width="410" height="160" rx="18" fill="url(#d)"/>
-<text x="1225" y="482" text-anchor="middle" class="head">Processing</text><text x="1225" y="520" text-anchor="middle" class="small">Filter · dedupe · rank · cluster</text><text x="1225" y="550" text-anchor="middle" class="small">Summarize · async enrichment</text>
+<text x="1225" y="482" text-anchor="middle" class="head">Processing</text><text x="1225" y="520" text-anchor="middle" class="small">Filter · exact URL merge · rank</text><text x="1225" y="550" text-anchor="middle" class="small">Story groups · feeds · summaries</text>
 <path class="wire" d="M750 380 V410 H275 V435"/>
 <path class="wire" d="M750 380 V435"/>
 <path class="wire" d="M750 410 H1225 V435"/>
@@ -31,6 +31,6 @@
 <path class="wire" d="M750 600 V650"/>
 <path class="wire" d="M1225 600 V650 H750"/>
 <rect x="500" y="665" width="500" height="105" rx="18" fill="#26364f" stroke="#64748b" stroke-width="2"/>
-<text x="750" y="708" text-anchor="middle" class="head">Output &amp; export</text><text x="750" y="740" text-anchor="middle" class="small">Article records · Markdown · schema-versioned JSON</text>
+<text x="750" y="708" text-anchor="middle" class="head">Output &amp; export</text><text x="750" y="740" text-anchor="middle" class="small">Grouped story articles · Markdown · schema-versioned JSON</text>
 <text x="750" y="815" text-anchor="middle" font-size="16" fill="#94a3b8">Optional dependencies: Playwright browser rendering · BM25 / NLP extras</text>
 </svg>
