@@ -28,10 +28,10 @@ import threading
 
 import pytest
 
-
 # ----------------------------------------------------------------------
 # Marker registration
 # ----------------------------------------------------------------------
+
 
 def pytest_configure(config):
     config.addinivalue_line(
@@ -100,6 +100,7 @@ def _emulate_android(request, monkeypatch):
 # ----------------------------------------------------------------------
 # Loopback article fixture
 # ----------------------------------------------------------------------
+
 
 @pytest.fixture
 def local_article_server():
@@ -191,6 +192,7 @@ def local_article_server():
 # Sample data fixtures
 # ----------------------------------------------------------------------
 
+
 @pytest.fixture
 def sample_article_dict():
     return {
@@ -206,18 +208,24 @@ def sample_article_dict():
 @pytest.fixture
 def sample_articles_list(sample_article_dict):
     return [
-        {**sample_article_dict, "title": "AI takes over the world",
-         "url": "https://a.com/1"},
-        {**sample_article_dict, "title": "AI takes over the world update",
-         "url": "https://b.com/2"},
-        {**sample_article_dict, "title": "Different story",
-         "url": "https://c.com/3"},
+        {
+            **sample_article_dict,
+            "title": "AI takes over the world",
+            "url": "https://a.com/1",
+        },
+        {
+            **sample_article_dict,
+            "title": "AI takes over the world update",
+            "url": "https://b.com/2",
+        },
+        {**sample_article_dict, "title": "Different story", "url": "https://c.com/3"},
     ]
 
 
 # ----------------------------------------------------------------------
 # Native (ddgs) availability probe
 # ----------------------------------------------------------------------
+
 
 def pytest_collection_modifyitems(config, items):
     """Skip tests marked ``native`` when ddgs isn't importable.
@@ -228,10 +236,12 @@ def pytest_collection_modifyitems(config, items):
     """
     try:
         import ddgs  # noqa: F401
+
         has_ddgs = True
     except ImportError:
         try:
             import duckduckgo_search  # noqa: F401
+
             has_ddgs = True
         except ImportError:
             has_ddgs = False

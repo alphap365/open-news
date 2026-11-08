@@ -12,9 +12,15 @@ def _art(title="Story", url="https://example.com/1", **kw):
 def _cluster(label="Story", size=2, **kw):
     members = [_art(label), _art(label, url="https://b.com/2")]
     return {
-        "id": 0, "label": label, "size": size, "sources": ["A"],
-        "score": 1.0, "first_seen": None, "last_seen": None,
-        "representative": members[0], "articles": members,
+        "id": 0,
+        "label": label,
+        "size": size,
+        "sources": ["A"],
+        "score": 1.0,
+        "first_seen": None,
+        "last_seen": None,
+        "representative": members[0],
+        "articles": members,
         **kw,
     }
 
@@ -22,6 +28,7 @@ def _cluster(label="Story", size=2, **kw):
 # ----------------------------------------------------------------------
 # to_markdown
 # ----------------------------------------------------------------------
+
 
 def test_markdown_empty_returns_string():
     out = to_markdown([])
@@ -99,15 +106,19 @@ def test_markdown_custom_title():
     out = to_markdown([_art("X")], title="Custom Title")
     assert "# Custom Title" in out
 
+
 def test_markdown_toc_anchor_preserves_unicode():
     items = [_art("पढ़ें 21 सितम्बर के मुख्य समाचार"), _art("Second")]
     out = to_markdown(items)
     # Devanagari word characters survive the slug
     assert "पढ़ें" in out
     assert "(#1-पढ़ें-21" in out or "(#1-" + "पढ़ें" in out
+
+
 # ----------------------------------------------------------------------
 # to_json
 # ----------------------------------------------------------------------
+
 
 def test_json_empty_envelope():
     parsed = json.loads(to_json([]))

@@ -18,6 +18,7 @@ def _art(title, url, source="Example", published=None, text=""):
 # Empty / trivial inputs
 # ----------------------------------------------------------------------
 
+
 def test_cluster_empty_input_returns_empty_list():
     assert cluster_articles([]) == []
 
@@ -31,6 +32,7 @@ def test_cluster_single_article_returns_one_cluster():
 # ----------------------------------------------------------------------
 # Basic clustering
 # ----------------------------------------------------------------------
+
 
 def test_cluster_identical_titles_grouped():
     articles = [
@@ -66,6 +68,7 @@ def test_cluster_threshold_high_splits_more():
 # ----------------------------------------------------------------------
 # Filtering knobs
 # ----------------------------------------------------------------------
+
 
 def test_cluster_drop_singletons():
     articles = [
@@ -104,6 +107,7 @@ def test_cluster_topic_filter_applied():
 # Shape / output contract
 # ----------------------------------------------------------------------
 
+
 def test_cluster_ids_are_sequential():
     articles = [
         _art("A", "https://a.com/1"),
@@ -120,8 +124,17 @@ def test_cluster_shape_has_required_keys():
     ]
     clusters = cluster_articles(articles, dedupe=False)
     c = clusters[0]
-    for key in ("id", "label", "size", "score", "sources",
-                "first_seen", "last_seen", "representative", "articles"):
+    for key in (
+        "id",
+        "label",
+        "size",
+        "score",
+        "sources",
+        "first_seen",
+        "last_seen",
+        "representative",
+        "articles",
+    ):
         assert key in c, f"missing key {key!r}"
     assert c["size"] == 2
     assert set(c["sources"]) == {"Alpha", "Beta"}
@@ -144,6 +157,7 @@ def test_cluster_representative_is_a_member():
 # Sorting
 # ----------------------------------------------------------------------
 
+
 def test_cluster_sort_by_size_puts_largest_first():
     articles = [
         _art("Big story", "https://a.com/1"),
@@ -159,13 +173,17 @@ def test_cluster_sort_by_size_puts_largest_first():
 # Rank integration
 # ----------------------------------------------------------------------
 
+
 def test_cluster_rank_query_marks_scores():
     articles = [
         _art("OpenAI announces GPT-5", "https://a.com/1"),
         _art("Local weather report", "https://b.com/2"),
     ]
     clusters = cluster_articles(
-        articles, rank_query="OpenAI GPT", rank_method="tfidf", dedupe=False,
+        articles,
+        rank_query="OpenAI GPT",
+        rank_method="tfidf",
+        dedupe=False,
     )
     for c in clusters:
         for a in c["articles"]:

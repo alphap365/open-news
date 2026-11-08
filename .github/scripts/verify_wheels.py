@@ -12,7 +12,6 @@ import json
 import re
 import sys
 import zipfile
-
 from email.parser import Parser
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -47,7 +46,9 @@ def load_plan(path: Path) -> list[dict[str, Any]]:
         required = ("package", "version", "target", "py_tags", "cibw_archs")
         missing = [key for key in required if key not in build]
         if missing:
-            raise ValueError(f"Build entry {index} is missing fields: {', '.join(missing)}")
+            raise ValueError(
+                f"Build entry {index} is missing fields: {', '.join(missing)}"
+            )
         if not isinstance(build["py_tags"], list) or not build["py_tags"]:
             raise ValueError(f"Build entry {index} has an invalid py_tags field.")
     return builds
@@ -66,10 +67,7 @@ def safe_archive_path(name: str) -> bool:
 
 def verify_record(archive: zipfile.ZipFile) -> list[str]:
     errors: list[str] = []
-    names = {
-        info.filename for info in archive.infolist()
-        if not info.is_dir()
-    }
+    names = {info.filename for info in archive.infolist() if not info.is_dir()}
     record_files = [n for n in names if n.endswith(".dist-info/RECORD")]
     if len(record_files) != 1:
         return [f"Expected exactly one .dist-info/RECORD; found {len(record_files)}."]
@@ -98,8 +96,9 @@ def verify_record(archive: zipfile.ZipFile) -> list[str]:
             algorithm, expected_hash = hash_value.split("=", 1)
             digest = hashlib.new(algorithm)
             digest.update(archive.read(filename))
-            actual_encoded = (base64.urlsafe_b64encode(digest.digest())
-                              .rstrip(b"=").decode("ascii"))
+            actual_encoded = (
+                base64.urlsafe_b64encode(digest.digest()).rstrip(b"=").decode("ascii")
+            )
             if actual_encoded != expected_hash:
                 errors.append(f"RECORD hash mismatch: {filename}")
         except (ValueError, KeyError) as exc:
@@ -120,8 +119,12 @@ def verify_record(archive: zipfile.ZipFile) -> list[str]:
 
 def verify_archive(path: Path) -> dict[str, Any]:
     result: dict[str, Any] = {
-        "file": path.name, "valid": False, "errors": [],
-        "package": None, "version": None, "tags": [],
+        "file": path.name,
+        "valid": False,
+        "errors": [],
+        "package": None,
+        "version": None,
+        "tags": [],
     }
     try:
         distribution, version, _build, tags = parse_wheel_filename(path.name)
@@ -147,36 +150,48 @@ def verify_archive(path: Path) -> dict[str, Any]:
             wheel_files = [n for n in names if n.endswith(".dist-info/WHEEL")]
 
             if len(metadata_files) != 1:
-                result["errors"].append("Expected exactly one .dist-info/METADATA file.")
+                result["errors"].append(
+                    "Expected exactly one .dist-info/METADATA file."
+                )
             else:
-                metadata_text = archive.read(metadata_files[0]).decode("utf-8", errors="replace")
+                metadata_text = archive.read(metadata_files[0]).decode(
+                    "utf-8", errors="replace"
+                )
                 metadata = Parser().parsestr(metadata_text)
                 metadata_name = metadata.get("Name")
                 metadata_version = metadata.get("Version")
                 if not metadata_name:
                     result["errors"].append("METADATA has no Name field.")
                 elif canonicalize_name(metadata_name) != result["package"]:
-                    result["errors"].append("METADATA package name does not match filename.")
+                    result["errors"].append(
+                        "METADATA package name does not match filename."
+                    )
                 if not metadata_version:
                     result["errors"].append("METADATA has no Version field.")
                 else:
                     try:
                         if Version(metadata_version) != version:
-                            result["errors"].append("METADATA version does not match filename.")
+                            result["errors"].append(
+                                "METADATA version does not match filename."
+                            )
                     except InvalidVersion:
                         result["errors"].append("METADATA contains an invalid version.")
 
             if len(wheel_files) != 1:
                 result["errors"].append("Expected exactly one .dist-info/WHEEL file.")
             else:
-                wheel_text = archive.read(wheel_files[0]).decode("utf-8", errors="replace")
+                wheel_text = archive.read(wheel_files[0]).decode(
+                    "utf-8", errors="replace"
+                )
                 wm = Parser().parsestr(wheel_text)
                 internal_tags = set(wm.get_all("Tag", []))
                 filename_tags = {str(t) for t in tags}
                 if not internal_tags:
                     result["errors"].append("WHEEL metadata has no Tag fields.")
                 elif internal_tags != filename_tags:
-                    result["errors"].append("WHEEL metadata tags do not match filename tags.")
+                    result["errors"].append(
+                        "WHEEL metadata tags do not match filename tags."
+                    )
 
             result["errors"].extend(verify_record(archive))
     except (OSError, zipfile.BadZipFile, RuntimeError) as exc:
@@ -197,9 +212,11 @@ def python_tag_matches(wheel_tag: Any, requested: str) -> bool:
         return False
     if wheel_tag.interpreter == requested:
         return True
-    if (wheel_tag.interpreter == "py3"
-            and wheel_tag.abi == "none"
-            and wheel_tag.platform == "any"):
+    if (
+        wheel_tag.interpreter == "py3"
+        and wheel_tag.abi == "none"
+        and wheel_tag.platform == "any"
+    ):
         return True
     if wheel_tag.abi == "abi3":
         match = re.fullmatch(r"cp3(\d{2})", wheel_tag.interpreter)
@@ -211,16 +228,24 @@ def python_tag_matches(wheel_tag: Any, requested: str) -> bool:
 def normalize_arch(value: str) -> str:
     value = value.lower().strip()
     aliases = {
-        "aarch64": "arm64", "arm64_v8a": "arm64", "arm64-v8a": "arm64",
-        "x86_64": "x86_64", "amd64": "x86_64", "x64": "x86_64",
-        "i686": "x86", "i386": "x86", "x86": "x86",
+        "aarch64": "arm64",
+        "arm64_v8a": "arm64",
+        "arm64-v8a": "arm64",
+        "x86_64": "x86_64",
+        "amd64": "x86_64",
+        "x64": "x86_64",
+        "i686": "x86",
+        "i386": "x86",
+        "x86": "x86",
     }
     return aliases.get(value, value)
 
 
 _MANYLINUX_RE = re.compile(r"^manylinux_(\d+)_(\d+)_")
 _MANYLINUX_LEGACY = {
-    "manylinux2014": (2, 17), "manylinux2010": (2, 12), "manylinux1": (2, 5),
+    "manylinux2014": (2, 17),
+    "manylinux2010": (2, 12),
+    "manylinux1": (2, 5),
 }
 _MUSLLINUX_RE = re.compile(r"^musllinux_(\d+)_(\d+)_")
 _MACOSX_RE = re.compile(r"^macosx_(\d+)_(\d+)_")
@@ -253,7 +278,10 @@ def parse_android_tag(platform: str) -> int | None:
 
 
 def platform_tag_matches(
-    wheel_tag: Any, target: str, archs: str | list[str], floor: dict | None,
+    wheel_tag: Any,
+    target: str,
+    archs: str | list[str],
+    floor: dict | None,
 ) -> bool:
     platform = wheel_tag.platform.lower()
     target = target.lower()
@@ -262,7 +290,9 @@ def platform_tag_matches(
         return True
 
     if isinstance(archs, str):
-        expected_archs = [i.strip() for i in archs.replace(",", " ").split() if i.strip()]
+        expected_archs = [
+            i.strip() for i in archs.replace(",", " ").split() if i.strip()
+        ]
     else:
         expected_archs = [str(i) for i in archs]
     expected = {normalize_arch(i) for i in expected_archs}
@@ -340,7 +370,9 @@ def platform_tag_matches(
 
 
 def wheel_matches_build(
-    wheel: dict[str, Any], build: dict[str, Any], requested_python: str,
+    wheel: dict[str, Any],
+    build: dict[str, Any],
+    requested_python: str,
 ) -> bool:
     if not wheel["valid"]:
         return False
@@ -371,7 +403,8 @@ def wheel_matches_build(
 
 
 def verify_plan(
-    builds: list[dict[str, Any]], wheels: list[dict[str, Any]],
+    builds: list[dict[str, Any]],
+    wheels: list[dict[str, Any]],
 ) -> dict[str, Any]:
     results, missing, expected_risks = [], [], []
     matched_files: set[str] = set()
@@ -383,16 +416,15 @@ def verify_plan(
         confidence = build.get("confidence", "high")
 
         for py_tag in build["py_tags"]:
-            matching = [
-                w for w in wheels
-                if wheel_matches_build(w, build, str(py_tag))
-            ]
+            matching = [w for w in wheels if wheel_matches_build(w, build, str(py_tag))]
             for wheel in matching:
                 matched_files.add(wheel["file"])
 
             entry = {
-                "package": package, "version": version,
-                "target": target, "python": str(py_tag),
+                "package": package,
+                "version": version,
+                "target": target,
+                "python": str(py_tag),
                 "confidence": confidence,
                 "wheels": [w["file"] for w in matching],
             }
@@ -418,15 +450,16 @@ def verify_plan(
 
     invalid_wheels = [w for w in wheels if not w["valid"]]
     unmatched_wheels = [
-        w["file"] for w in wheels
-        if w["valid"] and w["file"] not in matched_files
+        w["file"] for w in wheels if w["valid"] and w["file"] not in matched_files
     ]
 
     return {
         "success": not missing and not invalid_wheels,
         "summary": {
             "planned_combinations": len(results),
-            "verified_combinations": sum(1 for r in results if r["status"] == "verified"),
+            "verified_combinations": sum(
+                1 for r in results if r["status"] == "verified"
+            ),
             "missing_combinations": len(missing),
             "expected_risk_combinations": len(expected_risks),
             "wheel_files": len(wheels),
@@ -462,27 +495,34 @@ def main() -> int:
             report["success"] = not report["missing"] and not report["invalid_wheels"]
 
         args.output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n",
-                               encoding="utf-8")
+        args.output.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
 
         s = report["summary"]
         print(f"Planned combinations: {s['planned_combinations']}")
         print(f"Verified combinations: {s['verified_combinations']}")
         print(f"Missing combinations: {s['missing_combinations']}")
-        print(f"Expected risk (low confidence / Android medium): {s['expected_risk_combinations']}")
+        print(
+            f"Expected risk (low confidence / Android medium): {s['expected_risk_combinations']}"
+        )
         print(f"Invalid wheels: {s['invalid_wheels']}")
         print(f"Unmatched wheels: {s['unmatched_wheels']}")
 
         if report["missing"]:
             print("\nMissing combinations:")
             for item in report["missing"]:
-                print(f"  - {item['package']}=={item['version']} "
-                      f"{item['target']} {item['python']}")
+                print(
+                    f"  - {item['package']}=={item['version']} "
+                    f"{item['target']} {item['python']}"
+                )
         if report["expected_risks"]:
             print("\nExpected-risk combinations:")
             for item in report["expected_risks"]:
-                print(f"  - {item['package']}=={item['version']} "
-                      f"{item['target']} {item['python']} ({item['confidence']})")
+                print(
+                    f"  - {item['package']}=={item['version']} "
+                    f"{item['target']} {item['python']} ({item['confidence']})"
+                )
         if report["invalid_wheels"]:
             print("\nInvalid wheels:")
             for wheel in report["invalid_wheels"]:

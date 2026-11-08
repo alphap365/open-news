@@ -7,15 +7,14 @@ from typing import Any, Dict
 from urllib.parse import quote_plus
 
 import httpx
-import pytest
 
 from open_news.config import FetchConfig
 from open_news.feeds import yahoonews_engine
 
-
 # ----------------------------------------------------------------------
 # Fake HTTP client
 # ----------------------------------------------------------------------
+
 
 class _FakeResponse:
     def __init__(self, text: str = "", status_code: int = 200):
@@ -25,7 +24,9 @@ class _FakeResponse:
     def raise_for_status(self):
         if self.status_code >= 400:
             raise httpx.HTTPStatusError(
-                f"HTTP {self.status_code}", request=None, response=self,  # type: ignore[arg-type]
+                f"HTTP {self.status_code}",
+                request=None,
+                response=self,  # type: ignore[arg-type]
             )
 
 
@@ -64,8 +65,8 @@ def _patch_http(monkeypatch, text="", status_code=200):
 # Query construction
 # ----------------------------------------------------------------------
 
-class TestQueryBuilding:
 
+class TestQueryBuilding:
     def test_category_only(self):
         q = yahoonews_engine._query_for(FetchConfig(category="tech", max_results=1))
         assert "technology" in q.lower()
@@ -87,15 +88,17 @@ class TestQueryBuilding:
 # URL unwrapping (Yahoo redirect form)
 # ----------------------------------------------------------------------
 
-class TestURLUnwrapping:
 
+class TestURLUnwrapping:
     def test_unwraps_ru_segment(self):
         wrapped = (
             "https://news.search.yahoo.com/redirect"
-            "/RU=" + quote_plus("https://real.example.com/story")
-            + "/RK=2/RS=abc"
+            "/RU=" + quote_plus("https://real.example.com/story") + "/RK=2/RS=abc"
         )
-        assert yahoonews_engine._unwrap_yahoo_url(wrapped) == "https://real.example.com/story"
+        assert (
+            yahoonews_engine._unwrap_yahoo_url(wrapped)
+            == "https://real.example.com/story"
+        )
 
     def test_passthrough_when_not_wrapped(self):
         direct = "https://real.example.com/story"
@@ -107,18 +110,22 @@ class TestURLUnwrapping:
     def test_strips_query_params_after_rk(self):
         wrapped = (
             "https://news.search.yahoo.com/redirect"
-            "/RU=" + quote_plus("https://real.example.com/story")
+            "/RU="
+            + quote_plus("https://real.example.com/story")
             + "/RK=2/RS=abc?utm_source=yahoo"
         )
-        assert yahoonews_engine._unwrap_yahoo_url(wrapped) == "https://real.example.com/story"
+        assert (
+            yahoonews_engine._unwrap_yahoo_url(wrapped)
+            == "https://real.example.com/story"
+        )
 
 
 # ----------------------------------------------------------------------
 # Relative date parsing
 # ----------------------------------------------------------------------
 
-class TestRelativeDate:
 
+class TestRelativeDate:
     def test_hours_ago(self):
         result = yahoonews_engine._parse_relative_date("2 hours ago")
         assert "T" in result
@@ -174,7 +181,6 @@ _YAHOO_HTML_FIXTURE = f"""
 
 
 class TestHTMLParsing:
-
     def test_extracts_title_url_source(self):
         results = yahoonews_engine._parse_yahoo_html(_YAHOO_HTML_FIXTURE, limit=10)
         assert len(results) == 2
@@ -239,8 +245,8 @@ class TestHTMLParsing:
 # fetch_raw
 # ----------------------------------------------------------------------
 
-class TestFetchRaw:
 
+class TestFetchRaw:
     def test_skip_env_returns_empty(self, monkeypatch):
         monkeypatch.setenv("OPEN_NEWS_SKIP_YAHOO_NEWS", "1")
         holder = _patch_http(monkeypatch, text="")

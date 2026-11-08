@@ -13,11 +13,13 @@ MINIMAL_HTML = """
 </html>
 """
 
+
 def test_extract_basic():
     result = extract_article(MINIMAL_HTML, url="http://test.com")
     assert result["title"] == "Headline from H1"  # Should prefer H1 over <title>
     assert len(result["text"]) > 50
     assert "first paragraph" in result["text"]
+
 
 def test_extract_removes_junk():
     html_with_junk = """
@@ -31,6 +33,7 @@ def test_extract_removes_junk():
     assert "Navigation" not in result["text"]
     assert "Footer" not in result["text"]
     assert "Real content" in result["text"]
+
 
 def test_json_ld_parsed_once_per_extraction(monkeypatch):
     """extract_article must not re-parse every JSON-LD script tag for

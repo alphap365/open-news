@@ -35,15 +35,12 @@ from packaging.tags import (
 )
 from packaging.utils import canonicalize_name, parse_wheel_filename
 from packaging.version import Version
-
 from recipes import (
-    BuildRecipe,
     download_wheel,
     find_external_wheel,
     log,
     resolve_recipe,
 )
-
 
 # ─── Configuration ───────────────────────────────────────────────────────
 
@@ -51,36 +48,84 @@ PYTHON_VERSIONS = ("cp311", "cp312", "cp313", "cp314")
 ANDROID_PYTHON_VERSIONS = ("cp313", "cp314")
 
 TARGETS = [
-    {"target": "manylinux_x86_64", "family": "manylinux", "architecture": "x86_64",
-     "cibw_platform": "linux", "cibw_archs": "x86_64", "runner": "ubuntu-latest",
-     "python_versions": PYTHON_VERSIONS, "build_pattern": "manylinux_*",
-     "platform_floor": {"type": "glibc", "major": 2, "minor": 28}},
-    {"target": "manylinux_aarch64", "family": "manylinux", "architecture": "aarch64",
-     "cibw_platform": "linux", "cibw_archs": "aarch64", "runner": "ubuntu-24.04-arm",
-     "python_versions": PYTHON_VERSIONS, "build_pattern": "manylinux_*",
-     "platform_floor": {"type": "glibc", "major": 2, "minor": 28}},
-    {"target": "musllinux_x86_64", "family": "musllinux", "architecture": "x86_64",
-     "cibw_platform": "linux", "cibw_archs": "x86_64", "runner": "ubuntu-latest",
-     "python_versions": PYTHON_VERSIONS, "build_pattern": "musllinux_*",
-     "platform_floor": {"type": "musl", "major": 1, "minor": 2}},
-    {"target": "musllinux_aarch64", "family": "musllinux", "architecture": "aarch64",
-     "cibw_platform": "linux", "cibw_archs": "aarch64", "runner": "ubuntu-24.04-arm",
-     "python_versions": PYTHON_VERSIONS, "build_pattern": "musllinux_*",
-     "platform_floor": {"type": "musl", "major": 1, "minor": 2}},
-    {"target": "macosx_arm64", "family": "macos", "architecture": "arm64",
-     "cibw_platform": "macos", "cibw_archs": "arm64", "runner": "macos-latest",
-     "python_versions": PYTHON_VERSIONS, "macos_floor": (14, 0),
-     "platform_floor": {"type": "macos", "major": 14, "minor": 0}},
-    {"target": "win_amd64", "family": "windows", "architecture": "AMD64",
-     "cibw_platform": "windows", "cibw_archs": "AMD64", "runner": "windows-latest",
-     "python_versions": PYTHON_VERSIONS},
-    {"target": "android_arm64_v8a", "family": "android", "architecture": "arm64_v8a",
-     "cibw_platform": "android", "cibw_archs": "arm64_v8a", "runner": "ubuntu-latest",
-     "python_versions": ANDROID_PYTHON_VERSIONS},
+    {
+        "target": "manylinux_x86_64",
+        "family": "manylinux",
+        "architecture": "x86_64",
+        "cibw_platform": "linux",
+        "cibw_archs": "x86_64",
+        "runner": "ubuntu-latest",
+        "python_versions": PYTHON_VERSIONS,
+        "build_pattern": "manylinux_*",
+        "platform_floor": {"type": "glibc", "major": 2, "minor": 28},
+    },
+    {
+        "target": "manylinux_aarch64",
+        "family": "manylinux",
+        "architecture": "aarch64",
+        "cibw_platform": "linux",
+        "cibw_archs": "aarch64",
+        "runner": "ubuntu-24.04-arm",
+        "python_versions": PYTHON_VERSIONS,
+        "build_pattern": "manylinux_*",
+        "platform_floor": {"type": "glibc", "major": 2, "minor": 28},
+    },
+    {
+        "target": "musllinux_x86_64",
+        "family": "musllinux",
+        "architecture": "x86_64",
+        "cibw_platform": "linux",
+        "cibw_archs": "x86_64",
+        "runner": "ubuntu-latest",
+        "python_versions": PYTHON_VERSIONS,
+        "build_pattern": "musllinux_*",
+        "platform_floor": {"type": "musl", "major": 1, "minor": 2},
+    },
+    {
+        "target": "musllinux_aarch64",
+        "family": "musllinux",
+        "architecture": "aarch64",
+        "cibw_platform": "linux",
+        "cibw_archs": "aarch64",
+        "runner": "ubuntu-24.04-arm",
+        "python_versions": PYTHON_VERSIONS,
+        "build_pattern": "musllinux_*",
+        "platform_floor": {"type": "musl", "major": 1, "minor": 2},
+    },
+    {
+        "target": "macosx_arm64",
+        "family": "macos",
+        "architecture": "arm64",
+        "cibw_platform": "macos",
+        "cibw_archs": "arm64",
+        "runner": "macos-latest",
+        "python_versions": PYTHON_VERSIONS,
+        "macos_floor": (14, 0),
+        "platform_floor": {"type": "macos", "major": 14, "minor": 0},
+    },
+    {
+        "target": "win_amd64",
+        "family": "windows",
+        "architecture": "AMD64",
+        "cibw_platform": "windows",
+        "cibw_archs": "AMD64",
+        "runner": "windows-latest",
+        "python_versions": PYTHON_VERSIONS,
+    },
+    {
+        "target": "android_arm64_v8a",
+        "family": "android",
+        "architecture": "arm64_v8a",
+        "cibw_platform": "android",
+        "cibw_archs": "arm64_v8a",
+        "runner": "ubuntu-latest",
+        "python_versions": ANDROID_PYTHON_VERSIONS,
+    },
 ]
 
 
 # ─── Utilities ───────────────────────────────────────────────────────────
+
 
 def load_toml(path: Path) -> dict:
     if not path.is_file():
@@ -105,6 +150,7 @@ def py_tag_sort_key(tag: str) -> tuple[int, int]:
 
 # ─── Marker environments and tag sets ────────────────────────────────────
 
+
 def marker_matches(marker_text: str | None, environment: dict) -> bool:
     if not marker_text:
         return True
@@ -121,11 +167,26 @@ def make_marker_environment(target: dict, py_tag: str) -> dict:
     arch = target["architecture"]
 
     if family == "windows":
-        sys_platform, platform_system, os_name, machine = "win32", "Windows", "nt", "AMD64"
+        sys_platform, platform_system, os_name, machine = (
+            "win32",
+            "Windows",
+            "nt",
+            "AMD64",
+        )
     elif family == "macos":
-        sys_platform, platform_system, os_name, machine = "darwin", "Darwin", "posix", arch
+        sys_platform, platform_system, os_name, machine = (
+            "darwin",
+            "Darwin",
+            "posix",
+            arch,
+        )
     elif family == "android":
-        sys_platform, platform_system, os_name, machine = "android", "Android", "posix", "aarch64"
+        sys_platform, platform_system, os_name, machine = (
+            "android",
+            "Android",
+            "posix",
+            "aarch64",
+        )
     else:
         sys_platform, platform_system, os_name = "linux", "Linux", "posix"
         machine = "aarch64" if arch == "arm64_v8a" else arch
@@ -167,8 +228,9 @@ def manylinux_platform_tags(target: dict) -> list[str]:
 def musllinux_platform_tags(target: dict) -> list[str]:
     arch = target["architecture"]
     floor = target["platform_floor"]
-    return [f"musllinux_{floor['major']}_{m}_{arch}"
-            for m in range(floor["minor"], 0, -1)]
+    return [
+        f"musllinux_{floor['major']}_{m}_{arch}" for m in range(floor["minor"], 0, -1)
+    ]
 
 
 def get_platform_tags(target: dict, android_api_level: int) -> list[str]:
@@ -191,17 +253,22 @@ def get_supported_tags(target: dict, py_tag: str, android_api_level: int) -> lis
     pv = python_version_from_tag(py_tag)
     platforms = get_platform_tags(target, android_api_level)
     ordered = list(cpython_tags(python_version=pv, abis=[py_tag], platforms=platforms))
-    ordered.extend(compatible_tags(python_version=pv, interpreter=py_tag, platforms=platforms))
+    ordered.extend(
+        compatible_tags(python_version=pv, interpreter=py_tag, platforms=platforms)
+    )
     return list(dict.fromkeys(ordered))
 
 
 # ─── Runtime dependency resolution ───────────────────────────────────────
 
+
 def version_satisfies(version_text: str, specifier_text: str | None) -> bool:
     if not specifier_text:
         return True
     try:
-        return SpecifierSet(specifier_text).contains(Version(version_text), prereleases=True)
+        return SpecifierSet(specifier_text).contains(
+            Version(version_text), prereleases=True
+        )
     except Exception:
         return False
 
@@ -215,7 +282,9 @@ def package_identity(package: dict) -> tuple:
 
 
 def resolve_runtime_packages(
-    project: dict, lock: dict, environment: dict,
+    project: dict,
+    lock: dict,
+    environment: dict,
 ) -> tuple[list[dict], list[str]]:
     lock_packages = lock.get("package", [])
     by_name: dict[str, list[dict]] = {}
@@ -237,8 +306,9 @@ def resolve_runtime_packages(
         if req.marker and not req.marker.evaluate(environment=environment):
             continue
         cands = by_name.get(canonicalize_name(req.name), [])
-        matching = [p for p in cands
-                    if version_satisfies(p["version"], str(req.specifier))]
+        matching = [
+            p for p in cands if version_satisfies(p["version"], str(req.specifier))
+        ]
         if not matching:
             warnings.append(f"No matching uv.lock entry for {req.name}")
             continue
@@ -264,8 +334,9 @@ def resolve_runtime_packages(
             if not dep_name:
                 continue
             cands = by_name.get(canonicalize_name(dep_name), [])
-            matching = [c for c in cands
-                        if version_satisfies(c["version"], dep.get("version"))]
+            matching = [
+                c for c in cands if version_satisfies(c["version"], dep.get("version"))
+            ]
             if not matching:
                 warnings.append(
                     f"Unresolved locked dependency: {dep_name} "
@@ -280,9 +351,13 @@ def resolve_runtime_packages(
 
 # ─── PyPI release inspection ─────────────────────────────────────────────
 
+
 def fetch_pypi_release(
-    client: httpx.Client, package: str, version: str,
-    base_url: str, retries: int,
+    client: httpx.Client,
+    package: str,
+    version: str,
+    base_url: str,
+    retries: int,
 ) -> dict | None:
     url = f"{base_url.rstrip('/')}/{quote(package, safe='')}/{quote(version, safe='')}/json"
     for attempt in range(retries + 1):
@@ -292,23 +367,28 @@ def fetch_pypi_release(
                 return None
             if r.status_code == 429 or r.status_code >= 500:
                 if attempt < retries:
-                    time.sleep(min(2 ** attempt, 10))
+                    time.sleep(min(2**attempt, 10))
                     continue
             r.raise_for_status()
             return r.json()
         except httpx.HTTPError:
             if attempt >= retries:
                 raise
-            time.sleep(min(2 ** attempt, 10))
+            time.sleep(min(2**attempt, 10))
     return None
 
 
 def inspect_release(
-    package: str, version: str, release: dict | None, supported_tags: list,
+    package: str,
+    version: str,
+    release: dict | None,
+    supported_tags: list,
 ) -> dict:
     if release is None:
-        return {"status": "source_unavailable",
-                "reason": "Package release not found on PyPI."}
+        return {
+            "status": "source_unavailable",
+            "reason": "Package release not found on PyPI.",
+        }
 
     supported = set(supported_tags)
     rank = {tag: i for i, tag in enumerate(supported_tags)}
@@ -333,28 +413,39 @@ def inspect_release(
             if not matches:
                 continue
             ordered = sorted(matches, key=lambda t: rank[t])
-            compatible.append({
-                "filename": fname, "url": file_info.get("url"),
-                "sha256": digests.get("sha256"),
-                "best_matching_tag": str(ordered[0]),
-                "matching_tags": [str(t) for t in ordered],
-            })
+            compatible.append(
+                {
+                    "filename": fname,
+                    "url": file_info.get("url"),
+                    "sha256": digests.get("sha256"),
+                    "best_matching_tag": str(ordered[0]),
+                    "matching_tags": [str(t) for t in ordered],
+                }
+            )
         elif ftype == "sdist":
-            sdists.append({
-                "filename": fname, "url": file_info.get("url"),
-                "sha256": digests.get("sha256"),
-            })
+            sdists.append(
+                {
+                    "filename": fname,
+                    "url": file_info.get("url"),
+                    "sha256": digests.get("sha256"),
+                }
+            )
 
     if compatible:
         return {"status": "available", "compatible_wheels": compatible}
     if sdists:
-        sdists.sort(key=lambda i: (not i["filename"].endswith(".tar.gz"), i["filename"]))
+        sdists.sort(
+            key=lambda i: (not i["filename"].endswith(".tar.gz"), i["filename"])
+        )
         return {"status": "build_required", "sdist": sdists[0]}
-    return {"status": "source_unavailable",
-            "reason": "No compatible upstream wheel and no sdist for this release."}
+    return {
+        "status": "source_unavailable",
+        "reason": "No compatible upstream wheel and no sdist for this release.",
+    }
 
 
 # ─── Plan assembly ───────────────────────────────────────────────────────
+
 
 def _dedupe_by_name(items: list[dict]) -> list[dict]:
     seen: set[str] = set()
@@ -366,6 +457,7 @@ def _dedupe_by_name(items: list[dict]) -> list[dict]:
         seen.add(name)
         out.append(item)
     return out
+
 
 def _serialize_env(env: dict[str, str]) -> str:
     """Serialize env dict to CIBW_ENVIRONMENT syntax.
@@ -380,6 +472,7 @@ def _serialize_env(env: dict[str, str]) -> str:
         parts.append(f'{k}="{escaped}"')
     return " ".join(parts)
 
+
 def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
     plan: list[dict] = []
     seen_pure: set[tuple[str, str]] = set()
@@ -391,67 +484,85 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
         if key in seen_pure:
             continue
         seen_pure.add(key)
-        plan.append({
-            "package": gap["package"], "version": gap["version"],
-            "target": "pure_python", "build_type": "pure_python",
-            "cibw_platform": "pure", "cibw_archs": "any",
-            "runner": "ubuntu-latest",
-            "py_tags": ["py3"], "cibw_build": "py3-none-any",
-            "platform_floor": {"type": "any"},
-            "source_url": gap.get("sdist_url"),
-            "source_sha256": gap.get("sdist_sha256"),
-            "confidence": gap.get("confidence", "high"),
-            "reason": gap.get("reason", ""),
-            "recipe_source": gap.get("recipe_source", "static"),
-            "system_deps": gap.get("system_deps", []),
-            "host_requirements_json": "[]",
-            "build_requirements_json": "[]",
-            "patches_json": "[]",
-            "cibw_before_all": "",
-            "cibw_before_all_linux": "",
-            "cibw_environment_string": "",
-            "repair_command": "",
-            "batch": 1,
-        })
+        plan.append(
+            {
+                "package": gap["package"],
+                "version": gap["version"],
+                "target": "pure_python",
+                "build_type": "pure_python",
+                "cibw_platform": "pure",
+                "cibw_archs": "any",
+                "runner": "ubuntu-latest",
+                "py_tags": ["py3"],
+                "cibw_build": "py3-none-any",
+                "platform_floor": {"type": "any"},
+                "source_url": gap.get("sdist_url"),
+                "source_sha256": gap.get("sdist_sha256"),
+                "confidence": gap.get("confidence", "high"),
+                "reason": gap.get("reason", ""),
+                "recipe_source": gap.get("recipe_source", "static"),
+                "system_deps": gap.get("system_deps", []),
+                "host_requirements_json": "[]",
+                "build_requirements_json": "[]",
+                "patches_json": "[]",
+                "cibw_before_all": "",
+                "cibw_before_all_linux": "",
+                "cibw_environment_string": "",
+                "repair_command": "",
+                "batch": 1,
+            }
+        )
 
     for gap in gaps:
         if gap.get("build_type") != "prebuilt":
             continue
-        plan.append({
-            "package": gap["package"], "version": gap["version"],
-            "target": gap["target"], "build_type": "prebuilt",
-            "cibw_platform": gap["cibw_platform"],
-            "cibw_archs": gap["cibw_archs"], "runner": gap["runner"],
-            "py_tags": [gap["py_tag"]], "cibw_build": "prebuilt",
-            "platform_floor": gap.get("platform_floor"),
-            "prebuilt_filename": gap.get("prebuilt_filename"),
-            "prebuilt_sha256": gap.get("prebuilt_sha256"),
-            "prebuilt_url": gap.get("prebuilt_url"),
-            "prebuilt_source": gap.get("source"),
-            "requested_version": gap.get("requested_version"),
-            "shipped_version": gap.get("shipped_version"),
-            "version_delta": gap.get("version_delta"),
-            "runtime_risk": gap.get("runtime_risk"),
-            "confidence": "high",
-            "reason": gap.get("reason", ""),
-            "recipe_source": "external_index",
-            "system_deps": [],
-            "host_requirements_json": "[]",
-            "build_requirements_json": "[]",
-            "patches_json": "[]",
-            "cibw_before_all": "",
-            "cibw_before_all_linux": "",
-            "cibw_environment_string": "",
-            "repair_command": "",
-            "batch": 1,
-        })
+        plan.append(
+            {
+                "package": gap["package"],
+                "version": gap["version"],
+                "target": gap["target"],
+                "build_type": "prebuilt",
+                "cibw_platform": gap["cibw_platform"],
+                "cibw_archs": gap["cibw_archs"],
+                "runner": gap["runner"],
+                "py_tags": [gap["py_tag"]],
+                "cibw_build": "prebuilt",
+                "platform_floor": gap.get("platform_floor"),
+                "prebuilt_filename": gap.get("prebuilt_filename"),
+                "prebuilt_sha256": gap.get("prebuilt_sha256"),
+                "prebuilt_url": gap.get("prebuilt_url"),
+                "prebuilt_source": gap.get("source"),
+                "requested_version": gap.get("requested_version"),
+                "shipped_version": gap.get("shipped_version"),
+                "version_delta": gap.get("version_delta"),
+                "runtime_risk": gap.get("runtime_risk"),
+                "confidence": "high",
+                "reason": gap.get("reason", ""),
+                "recipe_source": "external_index",
+                "system_deps": [],
+                "host_requirements_json": "[]",
+                "build_requirements_json": "[]",
+                "patches_json": "[]",
+                "cibw_before_all": "",
+                "cibw_before_all_linux": "",
+                "cibw_environment_string": "",
+                "repair_command": "",
+                "batch": 1,
+            }
+        )
 
     groups: dict[tuple, dict[str, dict]] = defaultdict(dict)
     for gap in gaps:
         if gap.get("build_type") != "cibuildwheel":
             continue
-        key = (gap["package"], gap["version"], gap["target"],
-               gap["cibw_platform"], gap["cibw_archs"], gap["runner"])
+        key = (
+            gap["package"],
+            gap["version"],
+            gap["target"],
+            gap["cibw_platform"],
+            gap["cibw_archs"],
+            gap["runner"],
+        )
         groups[key].setdefault(gap["py_tag"], gap)
 
     for key in sorted(groups):
@@ -460,13 +571,15 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
         tags = sorted(entries, key=py_tag_sort_key)
 
         for offset in range(0, len(tags), max_tags):
-            batch = tags[offset:offset + max_tags]
+            batch = tags[offset : offset + max_tags]
             selected = [entries[t] for t in batch]
 
             urls = {s.get("sdist_url") for s in selected if s.get("sdist_url")}
             hashes = {s.get("sdist_sha256") for s in selected if s.get("sdist_sha256")}
             if len(urls) > 1 or len(hashes) > 1:
-                raise ValueError(f"Inconsistent sdist for {package}=={version}/{target}")
+                raise ValueError(
+                    f"Inconsistent sdist for {package}=={version}/{target}"
+                )
 
             if platform == "linux" and target.startswith(("manylinux", "musllinux")):
                 prefix = "manylinux" if target.startswith("manylinux") else "musllinux"
@@ -478,7 +591,9 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
             for s in selected:
                 all_deps.update(s.get("system_deps") or [])
             confidences = [s.get("confidence", "high") for s in selected]
-            worst = min(confidences, key=lambda c: {"low": 0, "medium": 1, "high": 2}.get(c, 2))
+            worst = min(
+                confidences, key=lambda c: {"low": 0, "medium": 1, "high": 2}.get(c, 2)
+            )
 
             host_reqs = _dedupe_by_name(
                 [r for s in selected for r in (s.get("host_requirements") or [])]
@@ -491,11 +606,19 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
             )
 
             before_all = next(
-                (s.get("cibw_before_all") for s in selected if s.get("cibw_before_all")),
+                (
+                    s.get("cibw_before_all")
+                    for s in selected
+                    if s.get("cibw_before_all")
+                ),
                 "",
             )
             before_all_linux = next(
-                (s.get("cibw_before_all_linux") for s in selected if s.get("cibw_before_all_linux")),
+                (
+                    s.get("cibw_before_all_linux")
+                    for s in selected
+                    if s.get("cibw_before_all_linux")
+                ),
                 "",
             )
             repair = next(
@@ -504,32 +627,44 @@ def build_plan_from_gaps(gaps: list[dict], max_tags: int) -> list[dict]:
             )
             env = selected[0].get("env") or {}
 
-            plan.append({
-                "package": package, "version": version, "target": target,
-                "build_type": "cibuildwheel",
-                "cibw_platform": platform, "cibw_archs": arch, "runner": runner,
-                "py_tags": batch, "cibw_build": selector,
-                "platform_floor": selected[0].get("platform_floor"),
-                "source_url": next(iter(urls), None),
-                "source_sha256": next(iter(hashes), None),
-                "confidence": worst,
-                "reason": selected[0].get("reason", ""),
-                "recipe_source": selected[0].get("recipe_source", "static"),
-                "system_deps": sorted(all_deps),
-                "host_requirements_json": json.dumps(host_reqs, separators=(",", ":")),
-                "build_requirements_json": json.dumps(build_reqs, separators=(",", ":")),
-                "patches_json": json.dumps(patches, separators=(",", ":")),
-                "cibw_before_all": before_all or "",
-                "cibw_before_all_linux": before_all_linux or "",
-                "cibw_environment_string": _serialize_env(env),
-                "repair_command": repair or "",
-                "batch": offset // max_tags + 1,
-            })
+            plan.append(
+                {
+                    "package": package,
+                    "version": version,
+                    "target": target,
+                    "build_type": "cibuildwheel",
+                    "cibw_platform": platform,
+                    "cibw_archs": arch,
+                    "runner": runner,
+                    "py_tags": batch,
+                    "cibw_build": selector,
+                    "platform_floor": selected[0].get("platform_floor"),
+                    "source_url": next(iter(urls), None),
+                    "source_sha256": next(iter(hashes), None),
+                    "confidence": worst,
+                    "reason": selected[0].get("reason", ""),
+                    "recipe_source": selected[0].get("recipe_source", "static"),
+                    "system_deps": sorted(all_deps),
+                    "host_requirements_json": json.dumps(
+                        host_reqs, separators=(",", ":")
+                    ),
+                    "build_requirements_json": json.dumps(
+                        build_reqs, separators=(",", ":")
+                    ),
+                    "patches_json": json.dumps(patches, separators=(",", ":")),
+                    "cibw_before_all": before_all or "",
+                    "cibw_before_all_linux": before_all_linux or "",
+                    "cibw_environment_string": _serialize_env(env),
+                    "repair_command": repair or "",
+                    "batch": offset // max_tags + 1,
+                }
+            )
 
     return plan
 
 
 # ─── Main discovery ──────────────────────────────────────────────────────
+
 
 def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
     project_data = load_toml(args.project)
@@ -538,7 +673,9 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
     if not project:
         raise ValueError(f"No [project] table in {args.project}")
     if "dependencies" in (project.get("dynamic") or []):
-        log("WARNING: [project] declares dependencies as dynamic; resolution may be incomplete")
+        log(
+            "WARNING: [project] declares dependencies as dynamic; resolution may be incomplete"
+        )
 
     if args.download_dir is not None:
         args.download_dir.mkdir(parents=True, exist_ok=True)
@@ -548,7 +685,10 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
         t = dict(base)
         if t["family"] == "android":
             t["android_api_level"] = args.android_api_level
-            t["platform_floor"] = {"type": "android", "api_level": args.android_api_level}
+            t["platform_floor"] = {
+                "type": "android",
+                "api_level": args.android_api_level,
+            }
         targets.append(t)
 
     gaps: list[dict] = []
@@ -562,7 +702,9 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
 
     headers = {"User-Agent": "Open-News-plan-wheels/4.0", "Accept": "*/*"}
 
-    with httpx.Client(timeout=args.timeout, follow_redirects=True, headers=headers) as client:
+    with httpx.Client(
+        timeout=args.timeout, follow_redirects=True, headers=headers
+    ) as client:
         for target in targets:
             log(f"Target: {target['target']}")
             for py_tag in target["python_versions"]:
@@ -587,29 +729,45 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
                     if cache_key not in release_cache:
                         log(f"PyPI: {package}=={version}")
                         release_cache[cache_key] = fetch_pypi_release(
-                            client, package, version, args.pypi_base_url, args.retries,
+                            client,
+                            package,
+                            version,
+                            args.pypi_base_url,
+                            args.retries,
                         )
 
-                    result = inspect_release(package, version, release_cache[cache_key], supported)
+                    result = inspect_release(
+                        package, version, release_cache[cache_key], supported
+                    )
                     base = {
-                        "package": package, "version": version,
-                        "target": target["target"], "py_tag": py_tag,
+                        "package": package,
+                        "version": version,
+                        "target": target["target"],
+                        "py_tag": py_tag,
                         "compatibility_profile": target["family"],
                         "platform_floor": target.get("platform_floor"),
                     }
 
                     # 1. PyPI exact wheel
                     if result["status"] == "available":
-                        available.append({
-                            **base, "status": "available", "source": "pypi",
-                            "compatible_wheels": result["compatible_wheels"],
-                        })
+                        available.append(
+                            {
+                                **base,
+                                "status": "available",
+                                "source": "pypi",
+                                "compatible_wheels": result["compatible_wheels"],
+                            }
+                        )
                         continue
 
                     # 2. External index (exact → patch → minor)
                     if args.download_dir is not None:
                         cand = find_external_wheel(
-                            client, package, version, target, supported,
+                            client,
+                            package,
+                            version,
+                            target,
+                            supported,
                             allow_deltas=("patch", "minor"),
                         )
                         if cand is not None and cand.get("runtime_risk") != "high":
@@ -617,7 +775,10 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
                                 url = cand["url"]
                                 if url not in prebuilt_files:
                                     local, sha = download_wheel(
-                                        client, url, args.download_dir, cand.get("sha256"),
+                                        client,
+                                        url,
+                                        args.download_dir,
+                                        cand.get("sha256"),
                                     )
                                     prebuilt_files[url] = (local, sha, cand["index"])
                                     log(
@@ -626,103 +787,125 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
                                     )
                                 local, sha, idx = prebuilt_files[url]
                             except Exception as exc:
-                                log(f"External download failed for {package}=={version}: {exc}")
+                                log(
+                                    f"External download failed for {package}=={version}: {exc}"
+                                )
                             else:
-                                gaps.append({
-                                    **base,
-                                    "build_type": "prebuilt",
-                                    "cibw_platform": target["cibw_platform"],
-                                    "cibw_archs": target["cibw_archs"],
-                                    "runner": target["runner"],
-                                    "cibw_build_id": "prebuilt",
-                                    "status": "build_required",
-                                    "source": idx,
-                                    "prebuilt_filename": local.name,
-                                    "prebuilt_sha256": sha,
-                                    "prebuilt_url": url,
-                                    "requested_version": cand["requested_version"],
-                                    "shipped_version": cand["shipped_version"],
-                                    "version_delta": cand["version_delta"],
-                                    "runtime_risk": cand["runtime_risk"],
-                                    "sdist_filename": None, "sdist_url": None, "sdist_sha256": None,
-                                    "confidence": "high",
-                                    "reason": f"prebuilt from {idx} ({cand['version_delta']} drift)",
-                                })
+                                gaps.append(
+                                    {
+                                        **base,
+                                        "build_type": "prebuilt",
+                                        "cibw_platform": target["cibw_platform"],
+                                        "cibw_archs": target["cibw_archs"],
+                                        "runner": target["runner"],
+                                        "cibw_build_id": "prebuilt",
+                                        "status": "build_required",
+                                        "source": idx,
+                                        "prebuilt_filename": local.name,
+                                        "prebuilt_sha256": sha,
+                                        "prebuilt_url": url,
+                                        "requested_version": cand["requested_version"],
+                                        "shipped_version": cand["shipped_version"],
+                                        "version_delta": cand["version_delta"],
+                                        "runtime_risk": cand["runtime_risk"],
+                                        "sdist_filename": None,
+                                        "sdist_url": None,
+                                        "sdist_sha256": None,
+                                        "confidence": "high",
+                                        "reason": f"prebuilt from {idx} ({cand['version_delta']} drift)",
+                                    }
+                                )
                                 continue
 
                     # 3. No sdist → unbuildable
                     if result["status"] == "source_unavailable":
-                        unbuildable.append({
-                            **base, "status": "source_unavailable",
-                            "reason": result["reason"],
-                        })
+                        unbuildable.append(
+                            {
+                                **base,
+                                "status": "source_unavailable",
+                                "reason": result["reason"],
+                            }
+                        )
                         continue
 
                     # 4. Recipe ladder
                     sdist = result["sdist"]
                     recipe, kind, rejects = resolve_recipe(
-                        client, package, version, target,
-                        sdist["url"], sdist.get("sha256"),
+                        client,
+                        package,
+                        version,
+                        target,
+                        sdist["url"],
+                        sdist.get("sha256"),
                         do_probe=not args.no_probe,
                     )
 
                     if recipe.build_type == "pure_python":
-                        gaps.append({
-                            "package": package, "version": version,
-                            "target": "pure_python", "py_tag": "py3",
-                            "compatibility_profile": "pure_python",
-                            "platform_floor": {"type": "any"},
-                            "build_type": "pure_python",
-                            "cibw_platform": "pure", "cibw_archs": "any",
-                            "runner": "ubuntu-latest",
-                            "cibw_build_id": "pure",
-                            "status": "build_required",
-                            "source": "pypi_sdist",
-                            "sdist_filename": sdist["filename"],
-                            "sdist_url": sdist["url"],
-                            "sdist_sha256": sdist.get("sha256"),
-                            "confidence": recipe.confidence,
-                            "reason": recipe.reason,
-                            "recipe_source": recipe.source,
-                            "system_deps": recipe.system_deps,
-                            "host_requirements": recipe.host_artifacts,
-                            "build_requirements": [],
-                            "patches": recipe.patches,
-                            "cibw_before_all": recipe.before_all,
-                            "cibw_before_all_linux": recipe.before_all_linux,
-                            "repair_command": recipe.repair_command,
-                            "env": recipe.env,
-                            "preflight_rejects": rejects,
-                        })
+                        gaps.append(
+                            {
+                                "package": package,
+                                "version": version,
+                                "target": "pure_python",
+                                "py_tag": "py3",
+                                "compatibility_profile": "pure_python",
+                                "platform_floor": {"type": "any"},
+                                "build_type": "pure_python",
+                                "cibw_platform": "pure",
+                                "cibw_archs": "any",
+                                "runner": "ubuntu-latest",
+                                "cibw_build_id": "pure",
+                                "status": "build_required",
+                                "source": "pypi_sdist",
+                                "sdist_filename": sdist["filename"],
+                                "sdist_url": sdist["url"],
+                                "sdist_sha256": sdist.get("sha256"),
+                                "confidence": recipe.confidence,
+                                "reason": recipe.reason,
+                                "recipe_source": recipe.source,
+                                "system_deps": recipe.system_deps,
+                                "host_requirements": recipe.host_artifacts,
+                                "build_requirements": [],
+                                "patches": recipe.patches,
+                                "cibw_before_all": recipe.before_all,
+                                "cibw_before_all_linux": recipe.before_all_linux,
+                                "repair_command": recipe.repair_command,
+                                "env": recipe.env,
+                                "preflight_rejects": rejects,
+                            }
+                        )
                     else:
-                        cibw_id = (f"{py_tag}-{target['build_pattern']}"
-                                   if target["family"] in ("manylinux", "musllinux")
-                                   else f"{py_tag}-*")
-                        gaps.append({
-                            **base,
-                            "build_type": "cibuildwheel",
-                            "cibw_platform": target["cibw_platform"],
-                            "cibw_archs": target["cibw_archs"],
-                            "cibw_build_id": cibw_id,
-                            "runner": target["runner"],
-                            "status": "build_required",
-                            "source": "pypi_sdist",
-                            "sdist_filename": sdist["filename"],
-                            "sdist_url": sdist["url"],
-                            "sdist_sha256": sdist.get("sha256"),
-                            "confidence": recipe.confidence,
-                            "reason": recipe.reason,
-                            "recipe_source": recipe.source,
-                            "system_deps": recipe.system_deps,
-                            "host_requirements": recipe.host_artifacts,
-                            "build_requirements": [],
-                            "patches": recipe.patches,
-                            "cibw_before_all": recipe.before_all,
-                            "cibw_before_all_linux": recipe.before_all_linux,
-                            "repair_command": recipe.repair_command,
-                            "env": recipe.env,
-                            "preflight_rejects": rejects,
-                        })
+                        cibw_id = (
+                            f"{py_tag}-{target['build_pattern']}"
+                            if target["family"] in ("manylinux", "musllinux")
+                            else f"{py_tag}-*"
+                        )
+                        gaps.append(
+                            {
+                                **base,
+                                "build_type": "cibuildwheel",
+                                "cibw_platform": target["cibw_platform"],
+                                "cibw_archs": target["cibw_archs"],
+                                "cibw_build_id": cibw_id,
+                                "runner": target["runner"],
+                                "status": "build_required",
+                                "source": "pypi_sdist",
+                                "sdist_filename": sdist["filename"],
+                                "sdist_url": sdist["url"],
+                                "sdist_sha256": sdist.get("sha256"),
+                                "confidence": recipe.confidence,
+                                "reason": recipe.reason,
+                                "recipe_source": recipe.source,
+                                "system_deps": recipe.system_deps,
+                                "host_requirements": recipe.host_artifacts,
+                                "build_requirements": [],
+                                "patches": recipe.patches,
+                                "cibw_before_all": recipe.before_all,
+                                "cibw_before_all_linux": recipe.before_all_linux,
+                                "repair_command": recipe.repair_command,
+                                "env": recipe.env,
+                                "preflight_rejects": rejects,
+                            }
+                        )
 
     for gap in unbuildable:
         rejected.append(f"{gap['package']}=={gap['version']}: {gap.get('reason', '')}")
@@ -739,17 +922,19 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
     project_name = project.get("name", "unknown")
     project_version = project.get("version", "unknown")
 
-    prebuilt_unique = len({g["prebuilt_filename"] for g in gaps
-                           if g.get("build_type") == "prebuilt" and g.get("prebuilt_filename")})
+    prebuilt_unique = len(
+        {
+            g["prebuilt_filename"]
+            for g in gaps
+            if g.get("build_type") == "prebuilt" and g.get("prebuilt_filename")
+        }
+    )
 
     recipe_sources: dict[str, int] = defaultdict(int)
     for g in gaps:
         recipe_sources[g.get("recipe_source", "static")] += 1
 
-    preflight_failures = sum(
-        1 for g in gaps
-        if g.get("preflight_rejects")
-    )
+    preflight_failures = sum(1 for g in gaps if g.get("preflight_rejects"))
 
     report = {
         "schema_version": 9,
@@ -764,9 +949,13 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
             "hardcoded_packages": False,
         },
         "targets": [
-            {"target": t["target"], "architecture": t["architecture"],
-             "python_versions": list(t["python_versions"]),
-             "runner": t["runner"], "platform_floor": t.get("platform_floor")}
+            {
+                "target": t["target"],
+                "architecture": t["architecture"],
+                "python_versions": list(t["python_versions"]),
+                "runner": t["runner"],
+                "platform_floor": t.get("platform_floor"),
+            }
             for t in targets
         ],
         "summary": {
@@ -775,11 +964,17 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
             "source_unavailable_count": len(unbuildable),
             "lock_warning_count": len(lock_warnings),
             "rejected_count": len(rejected),
-            "pure_python_count": sum(1 for g in gaps if g.get("build_type") == "pure_python"),
-            "cibuildwheel_count": sum(1 for g in gaps if g.get("build_type") == "cibuildwheel"),
+            "pure_python_count": sum(
+                1 for g in gaps if g.get("build_type") == "pure_python"
+            ),
+            "cibuildwheel_count": sum(
+                1 for g in gaps if g.get("build_type") == "cibuildwheel"
+            ),
             "prebuilt_count": sum(1 for g in gaps if g.get("build_type") == "prebuilt"),
             "prebuilt_unique_files": prebuilt_unique,
-            "low_confidence_count": sum(1 for g in gaps if g.get("confidence") == "low"),
+            "low_confidence_count": sum(
+                1 for g in gaps if g.get("confidence") == "low"
+            ),
             "preflight_failure_count": preflight_failures,
             "recipe_sources": dict(recipe_sources),
         },
@@ -794,7 +989,10 @@ def run_plan(args: argparse.Namespace) -> tuple[list[dict], dict, list[dict]]:
 
 # ─── Output writing ──────────────────────────────────────────────────────
 
-def write_github_outputs(args: argparse.Namespace, plan: list[dict], report: dict) -> None:
+
+def write_github_outputs(
+    args: argparse.Namespace, plan: list[dict], report: dict
+) -> None:
     output_file = os.environ.get("GITHUB_OUTPUT")
     if not output_file:
         return
@@ -814,6 +1012,7 @@ def write_github_outputs(args: argparse.Namespace, plan: list[dict], report: dic
 
 # ─── CLI ─────────────────────────────────────────────────────────────────
 
+
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(
         description="Plan dependency-wheel builds (recipe ladder + preflight).",
@@ -828,10 +1027,15 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--timeout", type=float, default=30.0)
     p.add_argument("--retries", type=int, default=3)
     p.add_argument("--max-python-tags-per-job", type=int, default=5)
-    p.add_argument("--download-dir", type=Path, default=None,
-                   help="Enables external-index wheel lookups and prebuilt downloads.")
-    p.add_argument("--no-probe", action="store_true",
-                   help="Skip the pure-Python build probe.")
+    p.add_argument(
+        "--download-dir",
+        type=Path,
+        default=None,
+        help="Enables external-index wheel lookups and prebuilt downloads.",
+    )
+    p.add_argument(
+        "--no-probe", action="store_true", help="Skip the pure-Python build probe."
+    )
     p.add_argument("--only", type=str, default=None)
     return p.parse_args()
 
@@ -845,16 +1049,24 @@ def main() -> int:
         print("ERROR: --retries cannot be negative.", file=sys.stderr)
         return 2
     if args.discovery_output is None:
-        args.discovery_output = args.output.with_name(f"{args.output.stem}-discovery.json")
+        args.discovery_output = args.output.with_name(
+            f"{args.output.stem}-discovery.json"
+        )
 
     try:
         plan, report, gaps = run_plan(args)
         args.output.parent.mkdir(parents=True, exist_ok=True)
         args.plan_output.parent.mkdir(parents=True, exist_ok=True)
         args.discovery_output.parent.mkdir(parents=True, exist_ok=True)
-        args.output.write_text(json.dumps(gaps, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        args.plan_output.write_text(json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-        args.discovery_output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+        args.output.write_text(
+            json.dumps(gaps, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        args.plan_output.write_text(
+            json.dumps(plan, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
+        args.discovery_output.write_text(
+            json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+        )
         write_github_outputs(args, plan, report)
 
         s = report["summary"]

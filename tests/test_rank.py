@@ -1,7 +1,5 @@
 """Tests for open_news.processing.rank.rank_articles."""
 
-import pytest
-
 from open_news.processing import rank as rank_mod
 from open_news.processing.rank import (
     _score_basic,
@@ -9,10 +7,10 @@ from open_news.processing.rank import (
     rank_articles,
 )
 
-
 # ----------------------------------------------------------------------
 # Trivial inputs
 # ----------------------------------------------------------------------
+
 
 def test_rank_empty_list_returns_empty():
     assert rank_articles([]) == []
@@ -36,6 +34,7 @@ def test_rank_blank_query_preserves_order():
 # Basic scoring
 # ----------------------------------------------------------------------
 
+
 def test_rank_basic_more_matches_first():
     articles = [
         {"title": "AI AI AI news", "description": ""},
@@ -58,18 +57,22 @@ def test_rank_score_is_numeric():
 # TF-IDF scoring
 # ----------------------------------------------------------------------
 
+
 def test_rank_tfidf_prefers_document_with_matching_term():
     articles = [
         {"title": "climate change news"},
         {"title": "climate politics today"},
     ]
-    result = rank_articles(articles, query="change", method="tfidf", search_in=["title"])
+    result = rank_articles(
+        articles, query="change", method="tfidf", search_in=["title"]
+    )
     assert result[0]["title"] == "climate change news"
 
 
 # ----------------------------------------------------------------------
 # Method selection / fallback
 # ----------------------------------------------------------------------
+
 
 def test_rank_unknown_method_falls_back_to_auto(monkeypatch):
     monkeypatch.setattr(rank_mod, "_score_bm25", lambda t, q: None)
@@ -101,15 +104,20 @@ def test_rank_explicit_bm25_falls_back_when_unavailable(monkeypatch):
 # search_in / top_k
 # ----------------------------------------------------------------------
 
+
 def test_rank_search_in_narrows_fields():
     articles = [
         {"title": "unrelated title", "text": "needle here"},
         {"title": "needle in title", "text": ""},
     ]
-    only_text = rank_articles(articles, query="needle", method="basic", search_in=["text"])
+    only_text = rank_articles(
+        articles, query="needle", method="basic", search_in=["text"]
+    )
     assert only_text[0]["title"] == "unrelated title"
 
-    only_title = rank_articles(articles, query="needle", method="basic", search_in=["title"])
+    only_title = rank_articles(
+        articles, query="needle", method="basic", search_in=["title"]
+    )
     assert only_title[0]["title"] == "needle in title"
 
 
@@ -122,6 +130,7 @@ def test_rank_top_k_limits_results():
 # ----------------------------------------------------------------------
 # Internal scorer unit tests
 # ----------------------------------------------------------------------
+
 
 def test_score_basic_empty_query_tokens():
     assert _score_basic(["a b c"], []) == [0.0]

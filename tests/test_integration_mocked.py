@@ -1,5 +1,4 @@
 """Pipeline integration tests using mock enrichment (no network)."""
-import pytest
 
 from open_news.processing import pipeline
 from open_news.processing.pipeline import run_pipeline
@@ -7,12 +6,24 @@ from open_news.processing.pipeline import run_pipeline
 
 def test_run_pipeline_full_flow(mocker):
     raw_articles = [
-        {"title": "Tech news", "url": "https://tech.com/1",
-         "published": "2026-01-02", "description": "AI"},
-        {"title": "Sports news", "url": "https://sports.com/1",
-         "published": "2026-01-01", "description": "Football"},
-        {"title": "Tech news duplicate", "url": "https://tech.com/2",
-         "published": "2026-01-02", "description": "AI again"},
+        {
+            "title": "Tech news",
+            "url": "https://tech.com/1",
+            "published": "2026-01-02",
+            "description": "AI",
+        },
+        {
+            "title": "Sports news",
+            "url": "https://sports.com/1",
+            "published": "2026-01-01",
+            "description": "Football",
+        },
+        {
+            "title": "Tech news duplicate",
+            "url": "https://tech.com/2",
+            "published": "2026-01-02",
+            "description": "AI again",
+        },
     ]
     mocker.patch(
         "open_news.processing.pipeline._enrich_full_content",
@@ -37,8 +48,10 @@ def _patch_enrich(mocker):
     run_pipeline_async dispatches through _enrich_full_content_async;
     run_pipeline (sync, legacy) uses _enrich_full_content."""
     if hasattr(pipeline, "_enrich_full_content_async"):
+
         async def fake_enrich(articles, js=False):
             return articles
+
         return mocker.patch(
             "open_news.processing.pipeline._enrich_full_content_async",
             side_effect=fake_enrich,

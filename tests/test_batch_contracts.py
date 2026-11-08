@@ -5,10 +5,9 @@ These exist because a real bug (batch.search_and_summarize forwarding
 every prior test. The fix is trivial; the value is in making sure it
 can't come back.
 """
+
 from contextlib import nullcontext
 from unittest.mock import AsyncMock, patch
-
-import pytest
 
 from open_news.processing import batch
 

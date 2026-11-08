@@ -44,10 +44,15 @@ open-news = "open_news.cli:main"
 include-package-data = true
 
 [tool.setuptools.packages.find]
+where = ["src"]
 include = ["open_news*"]
 
 [tool.setuptools.package-data]
 open_news = ["py.typed"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
 
 [dependency-groups]
 dev = [
@@ -100,6 +105,7 @@ dev = [
 
 [tool.mypy]
 python_version = "3.10"
+mypy_path = "src"
 warn_unused_ignores = true
 exclude = ["tests"]
 disable_error_code = [

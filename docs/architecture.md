@@ -9,43 +9,26 @@ Open News is organized into acquisition, extraction, processing, and output laye
 ## Package map
 
 ```text
-open_news/
-├── __init__.py              Public exports and package version
-├── api.py                   Sync/async public API and orchestration
-├── cli.py                   Command-line interface
-├── config.py                Validated configuration objects
-├── core/
-│   ├── extractor.py         Extraction strategy coordinator
-│   ├── renderer.py          Optional browser rendering
-│   ├── source_resolver.py   Publisher/source attribution
-│   └── strategies.py        Structured-data and HTML extraction
-├── feeds/
-│   ├── duckduckgo_engine.py Multi-tier fetch orchestration
-│   ├── googlenews_engine.py Google News acquisition
-│   ├── bingnews_engine.py   Bing News acquisition
-│   ├── yahoonews_engine.py  Yahoo News acquisition
-│   ├── rss_discovery.py     RSS discovery
-│   └── sources.py           Feed/source normalization
-├── fetch/
-│   ├── article.py           Sync/async article retrieval
-│   ├── crawler.py           Website crawling
-│   └── url_resolver.py      Redirect and URL classification
-├── processing/
-│   ├── pipeline.py          Sync/async processing pipelines
-│   ├── batch.py             Batch and search summarization
-│   ├── cluster.py           Similar-story clustering
-│   ├── rank.py              Relevance ranking
-│   ├── ranker.py            Ranking helpers
-│   ├── token_filter.py      Query/topic filtering
-│   ├── domain_filter.py     Domain allow/deny filters
-│   ├── language_guard.py    Language checks
-│   ├── dedupe.py            Duplicate removal
-│   └── summarizer.py        Extractive summarization
-├── export/
-│   ├── markdown.py          Markdown serialization
-│   ├── json.py              JSON serialization
-│   └── _shape.py            Shared output normalization
-└── utils/                   Date, text, HTTP, and user-agent helpers
+.
+├── src/
+│   └── open_news/
+│       ├── __init__.py      Public exports and package version
+│       ├── api.py           Sync/async public API and orchestration
+│       ├── cli.py           Command-line interface
+│       ├── config.py        Validated configuration objects
+│       ├── core/            Extraction, rendering, and source resolution
+│       ├── feeds/           News and RSS provider integrations
+│       ├── fetch/           Article retrieval and website crawling
+│       ├── processing/      Filtering, ranking, clustering, and summaries
+│       ├── export/          Markdown and JSON serialization
+│       ├── utils/           Date, text, HTTP, and user-agent helpers
+│       └── py.typed         PEP 561 typing marker
+├── tests/                   Unit, contract, and integration tests
+├── docs/                    User, API, and architecture documentation
+├── examples/                Runnable examples and notebooks
+├── .github/                 CI, release, and wheel build workflows
+├── pyproject.toml           Build, package, and tool configuration
+└── MANIFEST.in              Source distribution contents
 ```
 
 ## Request lifecycle

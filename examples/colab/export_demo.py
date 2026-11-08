@@ -1,4 +1,4 @@
-from open_news import fetch, rank_articles, cluster_articles, export
+from open_news import cluster_articles, export, fetch, rank_articles
 
 
 def main():

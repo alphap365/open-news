@@ -4,18 +4,17 @@ No live network: HTTP is mocked via a fake make_client, and the parsers
 are fed fixture HTML / XML directly.
 """
 
-from typing import Any, Dict, Optional
+from typing import Any, Dict
 
 import httpx
-import pytest
 
 from open_news.config import FetchConfig
 from open_news.feeds import bingnews_engine
 
-
 # ----------------------------------------------------------------------
 # Fake HTTP client
 # ----------------------------------------------------------------------
+
 
 class _FakeResponse:
     def __init__(self, text: str = "", status_code: int = 200):
@@ -74,12 +73,15 @@ def _patch_http(monkeypatch, text="", status_code=200):
 # Query construction
 # ----------------------------------------------------------------------
 
-class TestQueryBuilding:
 
+class TestQueryBuilding:
     def test_category_only(self):
-        assert "technology" in bingnews_engine._query_for(
-            FetchConfig(category="tech", max_results=1),
-        ).lower()
+        assert (
+            "technology"
+            in bingnews_engine._query_for(
+                FetchConfig(category="tech", max_results=1),
+            ).lower()
+        )
 
     def test_category_and_location(self):
         q = bingnews_engine._query_for(
@@ -132,7 +134,6 @@ _BING_HTML_FIXTURE = """
 
 
 class TestHTMLParsing:
-
     def test_extracts_title_url_author(self):
         results = bingnews_engine._parse_html_results(_BING_HTML_FIXTURE, limit=10)
         assert len(results) == 2
@@ -220,7 +221,6 @@ _BING_RSS_FIXTURE = """<?xml version="1.0"?>
 
 
 class TestRSSParsing:
-
     def test_extracts_items(self):
         results = bingnews_engine._parse_rss_results(_BING_RSS_FIXTURE, limit=10)
         assert len(results) == 2
@@ -230,7 +230,9 @@ class TestRSSParsing:
     def test_dates_normalized_to_iso_utc(self):
         results = bingnews_engine._parse_rss_results(_BING_RSS_FIXTURE, limit=10)
         assert results[0]["published"].startswith("2026-09-19T12:00:00")
-        assert "+00:00" in results[0]["published"] or results[0]["published"].endswith("Z")
+        assert "+00:00" in results[0]["published"] or results[0]["published"].endswith(
+            "Z"
+        )
 
     def test_description_html_stripped(self):
         results = bingnews_engine._parse_rss_results(_BING_RSS_FIXTURE, limit=10)
@@ -256,33 +258,54 @@ class TestRSSParsing:
 # fetch_raw orchestration
 # ----------------------------------------------------------------------
 
-class TestFetchOrchestration:
 
+class TestFetchOrchestration:
     def test_html_tier_wins_when_it_has_results(self, monkeypatch):
         monkeypatch.setattr(
-            bingnews_engine, "_fetch_via_html",
-            lambda c: [{"title": "html", "url": "https://h.example/1",
-                        "source": "h", "published": "", "description": ""}],
+            bingnews_engine,
+            "_fetch_via_html",
+            lambda c: [
+                {
+                    "title": "html",
+                    "url": "https://h.example/1",
+                    "source": "h",
+                    "published": "",
+                    "description": "",
+                }
+            ],
         )
         called = {"rss": 0}
 
         def fake_rss(config):
             called["rss"] += 1
             return []
+
         monkeypatch.setattr(bingnews_engine, "_fetch_via_rss", fake_rss)
 
-        result = bingnews_engine.fetch_raw(FetchConfig(category="general", max_results=5))
+        result = bingnews_engine.fetch_raw(
+            FetchConfig(category="general", max_results=5)
+        )
         assert result[0]["title"] == "html"
         assert called["rss"] == 0
 
     def test_rss_tier_runs_when_html_empty(self, monkeypatch):
         monkeypatch.setattr(bingnews_engine, "_fetch_via_html", lambda c: [])
         monkeypatch.setattr(
-            bingnews_engine, "_fetch_via_rss",
-            lambda c: [{"title": "rss", "url": "https://r.example/1",
-                        "source": "r", "published": "", "description": ""}],
+            bingnews_engine,
+            "_fetch_via_rss",
+            lambda c: [
+                {
+                    "title": "rss",
+                    "url": "https://r.example/1",
+                    "source": "r",
+                    "published": "",
+                    "description": "",
+                }
+            ],
         )
-        result = bingnews_engine.fetch_raw(FetchConfig(category="general", max_results=5))
+        result = bingnews_engine.fetch_raw(
+            FetchConfig(category="general", max_results=5)
+        )
         assert result[0]["title"] == "rss"
 
     def test_skip_env_returns_empty(self, monkeypatch):
@@ -290,10 +313,14 @@ class TestFetchOrchestration:
 
         def fail(config):
             raise AssertionError("Bing tier must not run when skipped")
+
         monkeypatch.setattr(bingnews_engine, "_fetch_via_html", fail)
         monkeypatch.setattr(bingnews_engine, "_fetch_via_rss", fail)
 
-        assert bingnews_engine.fetch_raw(FetchConfig(category="general", max_results=5)) == []
+        assert (
+            bingnews_engine.fetch_raw(FetchConfig(category="general", max_results=5))
+            == []
+        )
 
     def test_html_failure_falls_through_to_rss(self, monkeypatch):
         # Simulate an HTTP 500 in the HTML tier.
@@ -301,9 +328,19 @@ class TestFetchOrchestration:
 
         # Now patch RSS tier to succeed.
         monkeypatch.setattr(
-            bingnews_engine, "_fetch_via_rss",
-            lambda c: [{"title": "recovered", "url": "https://r.example/1",
-                        "source": "r", "published": "", "description": ""}],
+            bingnews_engine,
+            "_fetch_via_rss",
+            lambda c: [
+                {
+                    "title": "recovered",
+                    "url": "https://r.example/1",
+                    "source": "r",
+                    "published": "",
+                    "description": "",
+                }
+            ],
         )
-        result = bingnews_engine.fetch_raw(FetchConfig(category="general", max_results=5))
+        result = bingnews_engine.fetch_raw(
+            FetchConfig(category="general", max_results=5)
+        )
         assert result[0]["title"] == "recovered"

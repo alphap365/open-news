@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 """
 Create a reproducible Open News dependency-wheel bundle.
@@ -35,8 +34,6 @@ import os
 import sys
 import tomllib
 import zipfile
-
-from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -78,9 +75,7 @@ def read_project_metadata(path: Path) -> dict[str, str]:
     project = data.get("project")
 
     if not isinstance(project, dict):
-        raise ValueError(
-            f"{path} does not contain a [project] section."
-        )
+        raise ValueError(f"{path} does not contain a [project] section.")
 
     name = project.get("name")
     version = project.get("version")
@@ -89,9 +84,7 @@ def read_project_metadata(path: Path) -> dict[str, str]:
         raise ValueError("pyproject.toml has no valid project.name.")
 
     if not isinstance(version, str) or not version.strip():
-        raise ValueError(
-            "pyproject.toml has no static project.version."
-        )
+        raise ValueError("pyproject.toml has no static project.version.")
 
     return {
         "name": name,
@@ -102,44 +95,33 @@ def read_project_metadata(path: Path) -> dict[str, str]:
 
 def load_verification_report(path: Path) -> dict[str, Any]:
     if not path.is_file():
-        raise ValueError(
-            f"Verification report does not exist: {path}"
-        )
+        raise ValueError(f"Verification report does not exist: {path}")
 
     try:
         report = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
-        raise ValueError(
-            f"Cannot read verification report: {exc}"
-        ) from exc
+        raise ValueError(f"Cannot read verification report: {exc}") from exc
 
     if not isinstance(report, dict):
         raise ValueError("Verification report must be a JSON object.")
 
     if report.get("success") is not True:
         raise ValueError(
-            "Wheel verification did not pass. "
-            "Refusing to create the dependency bundle."
+            "Wheel verification did not pass. Refusing to create the dependency bundle."
         )
 
     if report.get("missing"):
-        raise ValueError(
-            "Verification report contains missing combinations."
-        )
+        raise ValueError("Verification report contains missing combinations.")
 
     if report.get("invalid_wheels"):
-        raise ValueError(
-            "Verification report contains invalid wheels."
-        )
+        raise ValueError("Verification report contains invalid wheels.")
 
     return report
 
 
 def discover_wheels(wheel_dir: Path) -> list[Path]:
     if not wheel_dir.is_dir():
-        raise ValueError(
-            f"Wheel directory does not exist: {wheel_dir}"
-        )
+        raise ValueError(f"Wheel directory does not exist: {wheel_dir}")
 
     wheels = sorted(
         path
@@ -148,17 +130,13 @@ def discover_wheels(wheel_dir: Path) -> list[Path]:
     )
 
     if not wheels:
-        raise ValueError(
-            f"No wheel files found in {wheel_dir}"
-        )
+        raise ValueError(f"No wheel files found in {wheel_dir}")
 
     filenames: set[str] = set()
 
     for wheel in wheels:
         if wheel.name in filenames:
-            raise ValueError(
-                f"Duplicate wheel filename found: {wheel.name}"
-            )
+            raise ValueError(f"Duplicate wheel filename found: {wheel.name}")
 
         filenames.add(wheel.name)
 
@@ -167,22 +145,16 @@ def discover_wheels(wheel_dir: Path) -> list[Path]:
 
 def inspect_wheel(path: Path) -> dict[str, Any]:
     try:
-        distribution, version, build, tags = parse_wheel_filename(
-            path.name
-        )
+        distribution, version, build, tags = parse_wheel_filename(path.name)
     except Exception as exc:
-        raise ValueError(
-            f"Invalid wheel filename {path.name}: {exc}"
-        ) from exc
+        raise ValueError(f"Invalid wheel filename {path.name}: {exc}") from exc
 
     try:
         with zipfile.ZipFile(path) as archive:
             bad_member = archive.testzip()
 
             if bad_member:
-                raise ValueError(
-                    f"Corrupt ZIP member in {path.name}: {bad_member}"
-                )
+                raise ValueError(f"Corrupt ZIP member in {path.name}: {bad_member}")
 
             metadata_files = [
                 name
@@ -191,15 +163,13 @@ def inspect_wheel(path: Path) -> dict[str, Any]:
             ]
 
             if len(metadata_files) != 1:
-                raise ValueError(
-                    f"{path.name}: expected exactly one METADATA file."
-                )
+                raise ValueError(f"{path.name}: expected exactly one METADATA file.")
 
             from email.parser import Parser
 
-            metadata_text = archive.read(
-                metadata_files[0]
-            ).decode("utf-8", errors="replace")
+            metadata_text = archive.read(metadata_files[0]).decode(
+                "utf-8", errors="replace"
+            )
 
             metadata = Parser().parsestr(metadata_text)
 
@@ -207,16 +177,10 @@ def inspect_wheel(path: Path) -> dict[str, Any]:
             metadata_version = metadata.get("Version")
 
             if not metadata_name or not metadata_version:
-                raise ValueError(
-                    f"{path.name}: METADATA is missing Name or Version."
-                )
+                raise ValueError(f"{path.name}: METADATA is missing Name or Version.")
 
-            if canonicalize_name(metadata_name) != canonicalize_name(
-                distribution
-            ):
-                raise ValueError(
-                    f"{path.name}: METADATA name does not match filename."
-                )
+            if canonicalize_name(metadata_name) != canonicalize_name(distribution):
+                raise ValueError(f"{path.name}: METADATA name does not match filename.")
 
             if metadata_version != str(version):
                 # Version normalization can make equivalent spellings differ.
@@ -228,9 +192,7 @@ def inspect_wheel(path: Path) -> dict[str, Any]:
                     )
 
     except (OSError, zipfile.BadZipFile, UnicodeDecodeError) as exc:
-        raise ValueError(
-            f"Cannot inspect wheel {path.name}: {exc}"
-        ) from exc
+        raise ValueError(f"Cannot inspect wheel {path.name}: {exc}") from exc
 
     return {
         "filename": path.name,
@@ -256,9 +218,7 @@ def validate_verification_coverage(
     report_wheels = report.get("wheels")
 
     if not isinstance(report_wheels, list):
-        raise ValueError(
-            "Verification report has no valid 'wheels' list."
-        )
+        raise ValueError("Verification report has no valid 'wheels' list.")
 
     valid_names = {
         item.get("file")
@@ -345,13 +305,10 @@ def create_bundle(
     ).encode("utf-8")
 
     checksum_lines = [
-        f"{record['sha256']}  wheels/{record['filename']}"
-        for record in records
+        f"{record['sha256']}  wheels/{record['filename']}" for record in records
     ]
 
-    checksum_bytes = (
-        "\n".join(checksum_lines) + "\n"
-    ).encode("utf-8")
+    checksum_bytes = ("\n".join(checksum_lines) + "\n").encode("utf-8")
 
     output.parent.mkdir(parents=True, exist_ok=True)
 
@@ -388,9 +345,7 @@ def create_bundle(
             bad_member = archive.testzip()
 
             if bad_member:
-                raise ValueError(
-                    f"Generated bundle is corrupt: {bad_member}"
-                )
+                raise ValueError(f"Generated bundle is corrupt: {bad_member}")
 
             required_files = {
                 "manifest.json",
@@ -401,8 +356,7 @@ def create_bundle(
 
             if missing:
                 raise ValueError(
-                    "Generated bundle is missing: "
-                    + ", ".join(sorted(missing))
+                    "Generated bundle is missing: " + ", ".join(sorted(missing))
                 )
 
         os.replace(temporary_output, output)
@@ -469,9 +423,7 @@ def main() -> int:
         verification_report = None
 
         if args.verification_report:
-            verification_report = load_verification_report(
-                args.verification_report
-            )
+            verification_report = load_verification_report(args.verification_report)
 
         wheels = discover_wheels(args.wheel_dir)
 

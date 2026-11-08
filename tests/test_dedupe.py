@@ -1,4 +1,4 @@
-from open_news.processing.dedupe import normalize_url, dedupe_articles
+from open_news.processing.dedupe import dedupe_articles, normalize_url
 
 
 def test_normalize_url_strips_tracking():
@@ -64,6 +64,7 @@ def test_dedupe_fuzzy_title():
     ]
     result = dedupe_articles(articles, fuzzy=True)
     assert len(result) == 2
+
 
 def test_dedupe_resolves_google_url_once_per_entry(mocker):
     """dedupe_articles must resolve each Google News URL exactly once.

@@ -4,10 +4,10 @@ from open_news.processing.token_filter import (
     matches_topic,
 )
 
-
 # ----------------------------------------------------------------------
 # Query matching (existing)
 # ----------------------------------------------------------------------
+
 
 def test_matches_query_word_boundary():
     article = {"title": "AI advances in 2026", "description": "Lots of data"}
@@ -18,25 +18,38 @@ def test_matches_query_word_boundary():
 def test_filter_articles_exact_phrase():
     articles = [{"title": "The quick brown fox", "description": ""}]
     filtered = filter_articles(
-        articles, query="quick brown", query_mode="exact_phrase", search_in=["title"],
+        articles,
+        query="quick brown",
+        query_mode="exact_phrase",
+        search_in=["title"],
     )
     assert len(filtered) == 1
 
     filtered = filter_articles(
-        articles, query="quick red", query_mode="exact_phrase", search_in=["title"],
+        articles,
+        query="quick red",
+        query_mode="exact_phrase",
+        search_in=["title"],
     )
     assert len(filtered) == 0
 
 
 def test_filter_articles_exclude_terms():
     articles = [{"title": "Apple releases new iPhone", "description": ""}]
-    assert len(filter_articles(articles, exclude_terms=["Samsung"], search_in=["title"])) == 1
-    assert len(filter_articles(articles, exclude_terms=["iPhone"], search_in=["title"])) == 0
+    assert (
+        len(filter_articles(articles, exclude_terms=["Samsung"], search_in=["title"]))
+        == 1
+    )
+    assert (
+        len(filter_articles(articles, exclude_terms=["iPhone"], search_in=["title"]))
+        == 0
+    )
 
 
 # ----------------------------------------------------------------------
 # Topic matching (v1.0.5)
 # ----------------------------------------------------------------------
+
 
 def test_matches_topic_across_all_fields():
     a = {

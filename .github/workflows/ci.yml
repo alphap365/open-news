@@ -36,7 +36,7 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} pytest -q
 
       - name: Compile package
-        run: uv run --python ${{ matrix.python-version }} python -m compileall -q open_news
+        run: uv run --python ${{ matrix.python-version }} python -m compileall -q src/open_news
 
   build-check:
     name: Build sanity check

@@ -5,17 +5,13 @@ the URL construction is verified by capturing the argument to
 ``feedparser.parse``.
 """
 
-from typing import Any, Dict, List
-
-import pytest
-
 from open_news.config import FetchConfig, SearchConfig
 from open_news.feeds import googlenews_engine
-
 
 # ----------------------------------------------------------------------
 # Helpers
 # ----------------------------------------------------------------------
+
 
 class _FakeFeed:
     def __init__(self, entries):
@@ -60,9 +56,11 @@ def _install_fake_feed(monkeypatch, entries):
                 url = url.decode("utf-8", "replace")
             calls["url"] = url
             return _FakeFeed(entries)
+
         monkeypatch.setattr(googlenews_engine.feedparser, "parse", fake_parse)
 
     return calls
+
 
 def _entry(
     title: str = "Test Story",
@@ -84,8 +82,8 @@ def _entry(
 # search_raw — query building
 # ----------------------------------------------------------------------
 
-class TestSearchRawQuery:
 
+class TestSearchRawQuery:
     def test_query_mode_any_uses_explicit_or(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
@@ -106,7 +104,9 @@ class TestSearchRawQuery:
     def test_query_mode_exact_phrase_quotes(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
-            SearchConfig(query="climate change", query_mode="exact_phrase", max_results=1),
+            SearchConfig(
+                query="climate change", query_mode="exact_phrase", max_results=1
+            ),
         )
         # quote_plus turns `"` into %22
         assert "%22climate+change%22" in calls["url"]
@@ -115,7 +115,9 @@ class TestSearchRawQuery:
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
             SearchConfig(
-                query="tech", exclude_terms=["crypto", "nft"], max_results=1,
+                query="tech",
+                exclude_terms=["crypto", "nft"],
+                max_results=1,
             ),
         )
         assert "-crypto" in calls["url"]
@@ -135,8 +137,10 @@ class TestSearchRawQuery:
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
             SearchConfig(
-                query="tech", time_limit="d",
-                start_date="2026-01-01", end_date="2026-06-30",
+                query="tech",
+                time_limit="d",
+                start_date="2026-01-01",
+                end_date="2026-06-30",
                 max_results=1,
             ),
         )
@@ -151,7 +155,8 @@ class TestSearchRawQuery:
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.search_raw(
             SearchConfig(query="tech", max_results=1),
-            country="IN", language="hi",
+            country="IN",
+            language="hi",
         )
         assert "hl=hi-IN" in calls["url"]
         assert "gl=IN" in calls["url"]
@@ -170,12 +175,15 @@ class TestSearchRawQuery:
 # search_raw — normalization
 # ----------------------------------------------------------------------
 
-class TestSearchRawNormalization:
 
+class TestSearchRawNormalization:
     def test_entries_normalize_to_canonical_shape(self, monkeypatch):
-        _install_fake_feed(monkeypatch, [
-            _entry(title="Story A", link="https://example.com/a"),
-        ])
+        _install_fake_feed(
+            monkeypatch,
+            [
+                _entry(title="Story A", link="https://example.com/a"),
+            ],
+        )
         results = googlenews_engine.search_raw(
             SearchConfig(query="x", max_results=5),
         )
@@ -189,36 +197,45 @@ class TestSearchRawNormalization:
         assert a["_tier"] == "google"
 
     def test_source_falls_back_to_title_suffix(self, monkeypatch):
-        _install_fake_feed(monkeypatch, [
-            _entry(
-                title="Headline - Some Outlet",
-                link="https://example.com/a",
-                source_title="",
-            ),
-        ])
+        _install_fake_feed(
+            monkeypatch,
+            [
+                _entry(
+                    title="Headline - Some Outlet",
+                    link="https://example.com/a",
+                    source_title="",
+                ),
+            ],
+        )
         results = googlenews_engine.search_raw(
             SearchConfig(query="x", max_results=5),
         )
         assert results[0]["source"] == "Some Outlet"
 
     def test_source_falls_back_to_domain(self, monkeypatch):
-        _install_fake_feed(monkeypatch, [
-            _entry(
-                title="Headline",
-                link="https://www.example.com/a",
-                source_title="",
-            ),
-        ])
+        _install_fake_feed(
+            monkeypatch,
+            [
+                _entry(
+                    title="Headline",
+                    link="https://www.example.com/a",
+                    source_title="",
+                ),
+            ],
+        )
         results = googlenews_engine.search_raw(
             SearchConfig(query="x", max_results=5),
         )
         assert results[0]["source"] == "Example"
 
     def test_entries_without_link_are_dropped(self, monkeypatch):
-        _install_fake_feed(monkeypatch, [
-            _entry(title="Has link", link="https://example.com/a"),
-            _entry(title="No link", link=""),
-        ])
+        _install_fake_feed(
+            monkeypatch,
+            [
+                _entry(title="Has link", link="https://example.com/a"),
+                _entry(title="No link", link=""),
+            ],
+        )
         results = googlenews_engine.search_raw(
             SearchConfig(query="x", max_results=5),
         )
@@ -233,11 +250,15 @@ class TestSearchRawNormalization:
         assert results == []
 
     def test_google_news_links_get_resolved(self, monkeypatch):
-        _install_fake_feed(monkeypatch, [
-            _entry(link="https://news.google.com/rss/articles/redirect"),
-        ])
+        _install_fake_feed(
+            monkeypatch,
+            [
+                _entry(link="https://news.google.com/rss/articles/redirect"),
+            ],
+        )
         monkeypatch.setattr(
-            googlenews_engine, "resolve_url",
+            googlenews_engine,
+            "resolve_url",
             lambda u: "https://real.example.com/story",
         )
         results = googlenews_engine.search_raw(
@@ -250,8 +271,8 @@ class TestSearchRawNormalization:
 # fetch_raw — URL shape selection
 # ----------------------------------------------------------------------
 
-class TestFetchRawURLShape:
 
+class TestFetchRawURLShape:
     def test_category_only_uses_topic_feed(self, monkeypatch):
         calls = _install_fake_feed(monkeypatch, [])
         googlenews_engine.fetch_raw(
@@ -317,8 +338,8 @@ class TestFetchRawURLShape:
 # Pure-Python RSS fallback
 # ----------------------------------------------------------------------
 
-class TestPureFallback:
 
+class TestPureFallback:
     def test_opt_in_required(self, monkeypatch):
         monkeypatch.delenv("OPEN_NEWS_GNEWS_PURE_FALLBACK", raising=False)
         assert googlenews_engine._pure_fallback_enabled() is False
@@ -354,18 +375,22 @@ class TestPureFallback:
     def test_parse_rss_returns_empty_on_garbage(self):
         assert googlenews_engine._parse_rss("not xml at all", max_items=5) == []
 
+
 def test_source_as_plain_string_not_dict(monkeypatch):
     """Some Atom feeds produce a plain-string <source>, not a dict.
     entry["source"].get("title") raises AttributeError on str."""
-    _install_fake_feed(monkeypatch, [
-        {
-            "title": "Headline",
-            "link": "https://example.com/a",
-            "published": "2026-01-01T00:00:00+00:00",
-            "summary": "s",
-            "source": "String Outlet",   # ← plain str, not {"title": ...}
-        },
-    ])
+    _install_fake_feed(
+        monkeypatch,
+        [
+            {
+                "title": "Headline",
+                "link": "https://example.com/a",
+                "published": "2026-01-01T00:00:00+00:00",
+                "summary": "s",
+                "source": "String Outlet",  # ← plain str, not {"title": ...}
+            },
+        ],
+    )
     results = googlenews_engine.search_raw(
         SearchConfig(query="x", max_results=5),
     )
@@ -374,15 +399,18 @@ def test_source_as_plain_string_not_dict(monkeypatch):
 
 
 def test_source_as_none(monkeypatch):
-    _install_fake_feed(monkeypatch, [
-        {
-            "title": "Headline - Fallback Outlet",
-            "link": "https://example.com/a",
-            "published": "",
-            "summary": "",
-            "source": None,
-        },
-    ])
+    _install_fake_feed(
+        monkeypatch,
+        [
+            {
+                "title": "Headline - Fallback Outlet",
+                "link": "https://example.com/a",
+                "published": "",
+                "summary": "",
+                "source": None,
+            },
+        ],
+    )
     results = googlenews_engine.search_raw(
         SearchConfig(query="x", max_results=5),
     )
@@ -390,15 +418,18 @@ def test_source_as_none(monkeypatch):
 
 
 def test_source_missing_entirely(monkeypatch):
-    _install_fake_feed(monkeypatch, [
-        {
-            "title": "Headline",
-            "link": "https://example.com/a",
-            "published": "",
-            "summary": "",
-            # no "source" key at all
-        },
-    ])
+    _install_fake_feed(
+        monkeypatch,
+        [
+            {
+                "title": "Headline",
+                "link": "https://example.com/a",
+                "published": "",
+                "summary": "",
+                # no "source" key at all
+            },
+        ],
+    )
     results = googlenews_engine.search_raw(
         SearchConfig(query="x", max_results=5),
     )
