@@ -4,24 +4,56 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
-> Note: the package metadata in this checkout reports version `1.0.5`, while the latest Git tag is `v1.0.5a1`. The changelog below records both the tagged pre-release and the current release-version baseline that is intended to be finalized as `v1.0.5`.
+# [1.0.6a2] — 2026-11-08
+
+This upcoming alpha release records the changes since `v1.0.6a1`.
+
+## ✨ Added
+
+- Added a conventional `src/open_news` package layout and updated package discovery, tests, type checking, CI, and source distributions for it.
+- Added default story-grouped results to discovery APIs. Results now include a representative article, source names, related article records, and cluster metadata.
+- Added a `FeedCache` protocol so applications can connect their own cache backend to personalized feeds.
+
+## 🔄 Changed
+
+- Replaced title-based article deletion with story clustering. Similar articles at distinct URLs are kept together; exact normalized URL duplicates are merged while retaining source names.
+- Moved the feed engine implementation from `open_news.feeds` to `open_news.processing` and exposed it through the package-level API. The old import path remains available for compatibility.
+- Updated CLI output and Markdown exports to show grouped sources and related article links. Removed fuzzy-deduplication controls from the discovery CLI.
+- Expanded wheel planning and verification for prebuilt dependency wheels, platform compatibility, and build-environment handling.
+- Standardized Python formatting and import organization across the package, tests, and build scripts.
+
+## 🧪 Validation
+
+- Verified the source and wheel distributions build with the `src/` layout and package typing marker.
+- Full test suite passes; type checks and Ruff checks pass.
+
+---
+
+# [1.0.6a1] — 2026-11-06
+
+This alpha release introduced the dependency-wheel planning and verification workflow.
+
+## ✨ Added
+
+- Added scripts to plan dependency-wheel builds, discover existing wheels, and verify wheel metadata and platform compatibility.
+- Added GitHub Actions support for building and validating dependency wheels, including handling prebuilt wheels and external package indexes.
+
+## 🔄 Changed
+
+- Updated the build workflow for platform-specific wheel compatibility and improved failure reporting.
+- Refactored wheel verification and build configuration to support the new release workflow.
 
 ---
 
 # [1.0.5] — 2026-11-06
 
-This section reflects the current package version (`1.0.5`) that is being prepared for the final release tag. It is intentionally kept separate from the tag-based alpha release entry below because the repository metadata and Git tag history are not yet fully aligned.
+This stable release finalized the `1.0.5` package version.
 
-## ✨ Release preparation
+## 🔄 Changed
 
-- Final package version aligned to `1.0.5` in `pyproject.toml` and `open_news.__init__`.
-- Release flow is being prepared for a final tagged release after the `v1.0.5a1` pre-release checkpoint.
-- CI and release automation are being finalized to match the intended production release workflow.
-
-## 🐛 Maintenance
-
-- Release automation cleaned up so the workflow does not depend on a separate test job before packaging.
-- Python 3.14 is included in the CI matrix to keep the release path future-proof.
+- Finalized package metadata at version `1.0.5` following the `v1.0.5a1` pre-release.
+- Updated release automation to package without depending on a separate test job.
+- Added Python 3.14 to the CI matrix.
 
 ---
 
@@ -40,7 +72,7 @@ This pre-release focused on release automation and CI readiness rather than new 
 
 ## ℹ️ Version note
 
-This tag is the newest Git milestone, while the package metadata in the project working tree reports `1.0.5` for the final release version.
+This pre-release preceded the stable `v1.0.5` release.
 
 ---
 
