@@ -57,27 +57,17 @@ def _stub_fetch():
 
 
 def test_search_and_summarize_calls_search_exactly_once():
-    """search_and_summarize must not re-fetch search results to dedupe.
-
-    The historical bug called search() a second time when dedupe=True
-    (once for results, once "to dedupe" — which did nothing). This test
-    pins the correct behaviour: exactly one network round-trip, and
-    deduplication runs on the list already in memory.
-    """
+    """search_and_summarize reuses the already grouped story results."""
     call_count = {"n": 0}
 
     def fake_search(query, **kwargs):
         call_count["n"] += 1
-        return [
-            {"title": "Same", "url": "https://a.com/1"},
-            {"title": "Same", "url": "https://a.com/1?utm_source=x"},
-        ]
+        return [{"title": "Same", "url": "https://a.com/1"}]
 
     with patch("open_news.api.search", side_effect=fake_search), _stub_fetch():
-        batch.search_and_summarize("query", limit=2, dedupe=True)
+        batch.search_and_summarize("query", limit=2)
 
     assert call_count["n"] == 1, (
         f"search() called {call_count['n']} times; must be exactly 1. "
-        f"The dedupe branch re-fetches results instead of deduping the "
-        f"list already in memory."
+        f"Search should be called once and its story representatives reused."
     )

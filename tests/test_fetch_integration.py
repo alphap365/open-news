@@ -187,78 +187,45 @@ class TestDateSanity:
 
 
 # ----------------------------------------------------------------------
-# Dedupe behaviour
+# Default story grouping
 # ----------------------------------------------------------------------
 
 
-class TestDedupe:
-    def test_dedupe_off_keeps_at_least_as_many(self):
-        """Dedupe can only remove items, never add them.
-
-        Acquire raw once, then run the pipeline twice over that same
-        input. Comparing two independent fetch() calls would test feed
-        stability rather than the pipeline's contract — different
-        acquisition rounds return different raw sets, so the count can
-        move in either direction.
-        """
-        from open_news.processing.pipeline import run_pipeline
-
-        raw = fetch_raw(FetchConfig(category="general", location="in", max_results=10))
-        if not raw:
-            pytest.skip("feed returned no raw items for this hour")
-
-        with_dedupe = run_pipeline(
-            raw,
-            max_results=10,
-            language=None,
-            whitelist=None,
-            blacklist=None,
-            sort_by="date",
-            full_content=False,
-            dedupe=True,
-            dedupe_fuzzy=True,
-        )
-        without_dedupe = run_pipeline(
-            raw,
-            max_results=10,
-            language=None,
-            whitelist=None,
-            blacklist=None,
-            sort_by="date",
-            full_content=False,
-            dedupe=False,
-        )
-
-        assert len(without_dedupe) >= len(with_dedupe), (
-            f"dedupe reduced count below no-dedupe path over the same raw "
-            f"list: with={len(with_dedupe)} without={len(without_dedupe)}"
-        )
-
-    def test_dedupe_collapses_same_story_from_two_sources(self):
-        """Deterministic contract test: two URLs that normalize to the
-        same identity collapse into one article, non-duplicates survive."""
+class TestStoryGrouping:
+    def test_similar_articles_are_grouped_without_losing_source_links(self):
         from open_news.processing.pipeline import run_pipeline
 
         raw = [
-            {"title": "Story A", "url": "https://a.com/x", "source": "A"},
-            {"title": "Story A", "url": "https://a.com/x?utm_source=fb", "source": "B"},
-            {"title": "Different", "url": "https://b.com/y", "source": "C"},
+            {
+                "title": "City approves new clean energy plan",
+                "url": "https://one.example/news/energy-plan",
+                "source": "One News",
+                "published": "2025-01-03T00:00:00Z",
+            },
+            {
+                "title": "City approves clean energy plan",
+                "url": "https://two.example/story/clean-energy",
+                "source": "Two News",
+                "published": "2025-01-02T00:00:00Z",
+            },
+            {
+                "title": "Local sports result",
+                "url": "https://sports.example/story",
+                "source": "Sports News",
+            },
         ]
-        out = run_pipeline(
-            raw,
-            max_results=10,
-            language=None,
-            whitelist=None,
-            blacklist=None,
-            sort_by="date",
-            full_content=False,
-            dedupe=True,
-            dedupe_fuzzy=True,
+
+        stories = run_pipeline(raw, max_results=10)
+
+        assert len(stories) == 2
+        energy_story = next(story for story in stories if "energy" in story["title"])
+        assert energy_story["cluster_size"] == 2
+        assert energy_story["sources"] == ["One News", "Two News"]
+        assert len(energy_story["similar_articles"]) == 1
+        assert (
+            energy_story["similar_articles"][0]["url"]
+            == "https://two.example/story/clean-energy"
         )
-        assert len(out) == 2
-        titles = {a["title"] for a in out}
-        assert "Story A" in titles
-        assert "Different" in titles
 
 
 # ----------------------------------------------------------------------

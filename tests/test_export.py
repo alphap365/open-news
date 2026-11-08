@@ -74,6 +74,26 @@ def test_markdown_includes_url_link():
     assert "[Read original](https://example.com/a)" in out
 
 
+def test_markdown_includes_grouped_sources_and_similar_article_links():
+    article = _art(
+        "Main report",
+        sources=["Main News", "Other News"],
+        similar_articles=[
+            {
+                "title": "Related report",
+                "url": "https://other.example/report",
+                "source": "Other News",
+            }
+        ],
+    )
+
+    out = to_markdown([article])
+
+    assert "**Sources:** Main News, Other News" in out
+    assert "[Related report](https://other.example/report)" in out
+    assert "_Other News_" in out
+
+
 def test_markdown_truncates_long_text():
     items = [_art("Story", text="x" * 10000)]
     out = to_markdown(items, max_text_chars=100)

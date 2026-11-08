@@ -24,7 +24,7 @@ def test_cluster_empty_input_returns_empty_list():
 
 
 def test_cluster_single_article_returns_one_cluster():
-    result = cluster_articles([_art("Only story", "https://a.com/1")], dedupe=False)
+    result = cluster_articles([_art("Only story", "https://a.com/1")])
     assert len(result) == 1
     assert result[0]["size"] == 1
 
@@ -40,7 +40,7 @@ def test_cluster_identical_titles_grouped():
         _art("Earthquake hits Japan", "https://b.com/2"),
         _art("Sports update: football", "https://c.com/3"),
     ]
-    clusters = cluster_articles(articles, dedupe=False)
+    clusters = cluster_articles(articles)
     assert len(clusters) == 2
     assert sorted(c["size"] for c in clusters) == [1, 2]
 
@@ -51,7 +51,7 @@ def test_cluster_similar_titles_grouped():
         _art("AI takes over world", "https://b.com/2"),
         _art("Unrelated politics story", "https://c.com/3"),
     ]
-    clusters = cluster_articles(articles, threshold=0.75, dedupe=False)
+    clusters = cluster_articles(articles, threshold=0.75)
     assert len(clusters) == 2
 
 
@@ -60,8 +60,8 @@ def test_cluster_threshold_high_splits_more():
         _art("Alpha story", "https://a.com/1"),
         _art("Alpha story something else", "https://b.com/2"),
     ]
-    strict = cluster_articles(articles, threshold=0.95, dedupe=False)
-    loose = cluster_articles(articles, threshold=0.5, dedupe=False)
+    strict = cluster_articles(articles, threshold=0.95)
+    loose = cluster_articles(articles, threshold=0.5)
     assert len(strict) >= len(loose)
 
 
@@ -76,7 +76,7 @@ def test_cluster_drop_singletons():
         _art("Same story", "https://b.com/2"),
         _art("Lonely story", "https://c.com/3"),
     ]
-    clusters = cluster_articles(articles, drop_singletons=True, dedupe=False)
+    clusters = cluster_articles(articles, drop_singletons=True)
     assert len(clusters) == 1
     assert clusters[0]["size"] == 2
 
@@ -87,7 +87,7 @@ def test_cluster_min_cluster_size():
         _art("Same story", "https://b.com/2"),
         _art("Lonely story", "https://c.com/3"),
     ]
-    clusters = cluster_articles(articles, min_cluster_size=2, dedupe=False)
+    clusters = cluster_articles(articles, min_cluster_size=2)
     assert len(clusters) == 1
     assert clusters[0]["size"] == 2
 
@@ -98,7 +98,7 @@ def test_cluster_topic_filter_applied():
         _art("Sports update", "https://b.com/2", source="B"),
         _art("AI in physics", "https://c.com/3", source="C"),
     ]
-    clusters = cluster_articles(articles, topic="AI", dedupe=False)
+    clusters = cluster_articles(articles, topic="AI")
     titles = {c["label"] for c in clusters}
     assert "Sports update" not in titles
 
@@ -113,7 +113,7 @@ def test_cluster_ids_are_sequential():
         _art("A", "https://a.com/1"),
         _art("B", "https://b.com/2"),
     ]
-    clusters = cluster_articles(articles, dedupe=False)
+    clusters = cluster_articles(articles)
     assert [c["id"] for c in clusters] == list(range(len(clusters)))
 
 
@@ -122,7 +122,7 @@ def test_cluster_shape_has_required_keys():
         _art("Same", "https://a.com/1", source="Alpha", published="2026-01-02"),
         _art("Same", "https://b.com/2", source="Beta", published="2026-01-01"),
     ]
-    clusters = cluster_articles(articles, dedupe=False)
+    clusters = cluster_articles(articles)
     c = clusters[0]
     for key in (
         "id",
@@ -148,7 +148,7 @@ def test_cluster_representative_is_a_member():
         _art("Same", "https://a.com/1"),
         _art("Same", "https://b.com/2"),
     ]
-    clusters = cluster_articles(articles, dedupe=False)
+    clusters = cluster_articles(articles)
     rep = clusters[0]["representative"]
     assert rep in clusters[0]["articles"]
 
@@ -165,7 +165,7 @@ def test_cluster_sort_by_size_puts_largest_first():
         _art("Big story", "https://c.com/3"),
         _art("Small story", "https://d.com/4"),
     ]
-    clusters = cluster_articles(articles, sort_by="size", dedupe=False)
+    clusters = cluster_articles(articles, sort_by="size")
     assert clusters[0]["size"] == 3
 
 
@@ -183,7 +183,6 @@ def test_cluster_rank_query_marks_scores():
         articles,
         rank_query="OpenAI GPT",
         rank_method="tfidf",
-        dedupe=False,
     )
     for c in clusters:
         for a in c["articles"]:

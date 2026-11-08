@@ -31,9 +31,36 @@ def test_cli_fetch_parse(mocker, capsys):
         js=False,
         whitelist=None,
         blacklist=None,
-        dedupe=True,
     )
     assert "Tech Story" in captured.out
+
+
+def test_cli_pretty_output_shows_grouped_sources(mocker, capsys):
+    mocker.patch("sys.argv", ["open-news", "fetch"])
+    mocker.patch(
+        "open_news.cli.fetch",
+        return_value=[
+            {
+                "title": "Energy policy changes",
+                "url": "https://one.example/story",
+                "sources": ["One News", "Two News"],
+                "similar_articles": [
+                    {
+                        "title": "Related energy report",
+                        "url": "https://two.example/report",
+                        "source": "Two News",
+                    }
+                ],
+            }
+        ],
+    )
+
+    main()
+
+    output = capsys.readouterr().out
+    assert "One News, Two News" in output
+    assert "Two News: Related energy report" in output
+    assert "https://two.example/report" in output
 
 
 def test_cli_extract(mocker, capsys):
