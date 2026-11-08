@@ -83,7 +83,7 @@ Retrieves and extracts one article. Options include `--js` and `--timeout SECOND
 open-news discover https://example.com --limit 10
 ```
 
-Discovers articles from a website. Options include `--limit`, `--max-pages`, `--max-depth`, `--js`, `--no-rss`, `--full-content`, and `--no-dedupe`.
+Discovers and groups stories from a website. Options include `--limit`, `--max-pages`, `--max-depth`, `--js`, `--no-rss`, and `--full-content`. Same-URL records are merged; similar articles remain attached to their story.
 
 ## `search-site`
 
@@ -99,7 +99,7 @@ Searches within one domain. Options include `--limit`, `--mode`, `--language`, `
 open-news cluster --query "AI regulation" --limit 40 --drop-singletons
 ```
 
-Acquires source articles and groups related stories. Options include query or category acquisition, location, result limit, similarity threshold, minimum cluster size, singleton handling, cluster sorting, language/time settings, topic filters, ranking options, and domain filters.
+Acquires source articles and groups related stories. Options include query or category acquisition, location, result limit, similarity threshold, minimum cluster size, singleton handling, cluster sorting, language/time settings, topic filters, ranking options, and domain filters. Story grouping is always enabled.
 
 ## `summarize`
 

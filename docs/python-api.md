@@ -42,6 +42,28 @@ from open_news import (
 )
 ```
 
+`fetch()`, `search()`, `search_site()`, and `discover_and_get()` return one
+representative article per story. Each result includes `sources`, a list of
+source names, `similar_articles`, a list of other source article records, and
+`cluster_size`/`cluster_score` metadata. Exact normalized URL duplicates are
+merged into one article; similar headlines at different URLs are preserved
+inside the story rather than discarded.
+
+`dedupe_articles()` is limited to merging exact normalized URLs. It does not
+remove articles based on title similarity.
+
+The feed engine is also available through the package-level API:
+
+```python
+from open_news import FeedEngine
+
+feed = FeedEngine().build(articles)
+```
+
+Pass an already configured cache when constructing a personalized feed. The
+`FeedCache` protocol defines the minimal `get`/`set` adapter contract for
+application-owned persistence backends; `EncryptedCache` implements it.
+
 ### Export
 
 ```python
@@ -65,7 +87,7 @@ articles = fetch(
 )
 ```
 
-Common arguments include category, location, time window, maximum results, language, domain allow/deny lists, sorting, full-content enrichment, JavaScript rendering, and deduplication. Consult `open_news.api.fetch` for the exact signature in the installed release.
+Common arguments include category, location, time window, maximum results, language, domain allow/deny lists, sorting, full-content enrichment, and JavaScript rendering. Similar-story grouping is always enabled; exact normalized URL duplicates are merged. Consult `open_news.api.fetch` for the exact signature in the installed release.
 
 ### Async equivalent
 
@@ -182,7 +204,7 @@ clusters = cluster_articles(
 
 Ranking methods include `auto`, `bm25`, `tfidf`, and `basic`. The BM25 backend requires the optional NLP extra; `auto` can fall back to TF-IDF.
 
-Clustering groups similar article titles and returns cluster dictionaries containing cluster metadata and member articles.
+Clustering groups similar article titles and returns cluster dictionaries containing cluster metadata and member articles. The discovery APIs use the same grouping by default and return the representative article enriched with related source coverage.
 
 ## Summarization
 

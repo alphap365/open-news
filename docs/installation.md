@@ -41,39 +41,74 @@ The `nlp` extra installs optional BM25 and summarization components. Ranking wit
 
 ## Install with uv
 
+Install Open News into the current project's environment:
+
 ```bash
 uv add open-news-api
 ```
 
-For a CLI-only isolated installation:
+Add optional features when your application needs them:
+
+```bash
+uv add "open-news-api[js]"
+uv add "open-news-api[nlp]"
+# Or both extras together:
+uv add "open-news-api[js,nlp]"
+```
+
+Run the CLI without adding it to the current project:
+
+```bash
+uvx --from open-news-api open-news --help
+uvx --from open-news-api open-news search "artificial intelligence" --limit 10
+```
+
+For repeated CLI use, install it as an isolated tool:
 
 ```bash
 uv tool install open-news-api
+open-news --help
 ```
 
+To use JavaScript rendering from an application, install the `js` extra and Chromium:
+
+```bash
+uv add "open-news-api[js]"
+uv run playwright install chromium
+```
+
+The `nlp` extra provides optional BM25 ranking and summarization components. Without `bm25s`, `method="auto"` can fall back to TF-IDF.
+
 ## Install from source
+
+Clone the repository and sync its development dependencies:
 
 ```bash
 git clone https://github.com/alphap365/open-news.git
 cd open-news
-
-python -m venv .venv
-
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
-python -m pip install -e ".[dev]"
-pytest -q
-```
-
-With uv:
-
-```bash
 uv sync --group dev
 uv run pytest -q
+```
+
+Run the CLI, type checks, and package build in the managed environment:
+
+```bash
+uv run open-news --help
+uv run mypy src/open_news
+uv build
+```
+
+For source development with optional JavaScript support, sync the `js` group too:
+
+```bash
+uv sync --group dev --group js
+uv run playwright install chromium
+```
+
+`uv sync` creates and maintains the project's virtual environment; commands run through `uv run` do not require manual environment activation. A pip-based editable install is also available:
+
+```bash
+python -m pip install -e ".[dev]"
 ```
 
 ## Common installation issues

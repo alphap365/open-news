@@ -19,7 +19,7 @@ Open News is organized into acquisition, extraction, processing, and output laye
 │       ├── core/            Extraction, rendering, and source resolution
 │       ├── feeds/           News and RSS provider integrations
 │       ├── fetch/           Article retrieval and website crawling
-│       ├── processing/      Filtering, ranking, clustering, and summaries
+│       ├── processing/      Filtering, ranking, story grouping, feed generation, and summaries
 │       ├── export/          Markdown and JSON serialization
 │       ├── utils/           Date, text, HTTP, and user-agent helpers
 │       └── py.typed         PEP 561 typing marker
@@ -39,9 +39,9 @@ Open News is organized into acquisition, extraction, processing, and output laye
 
 1. **Acquire:** `fetch()` or `search()` asks the feed layer for candidate records. Fetch acquisition uses a fallback-oriented chain rather than requiring every provider to succeed.
 2. **Normalize:** provider-specific records are normalized into article dictionaries.
-3. **Process:** configured language, topic/token, and domain filters run alongside deduplication and ranking.
-4. **Enrich:** optional full-content extraction runs after the result set has been narrowed. The async pipeline provides async enrichment behavior.
-5. **Present:** results are returned to Python callers or formatted by the CLI.
+3. **Process:** configured language, topic/token, and domain filters run before exact URL normalization and story grouping.
+4. **Enrich:** optional full-content extraction runs for each selected story representative. The async pipeline provides async enrichment behavior.
+5. **Present:** each result is a representative article with `sources`, `similar_articles`, and cluster metadata; callers can still inspect each source URL.
 6. **Export:** Markdown and JSON exporters serialize article or cluster-shaped data.
 
 ## Sync and async execution
@@ -66,9 +66,9 @@ The optional browser renderer is intended for pages whose useful content is not 
 
 - **Filtering:** query and topic matching can narrow results.
 - **Domain filtering:** whitelists keep allowed publishers; blacklists remove matching domains.
-- **Deduplication:** URL/title-oriented logic reduces repeated stories.
+- **Exact URL merging:** normalized copies of the same article URL are merged, retaining source names and preferring the strongest article record.
 - **Ranking:** relevance ranking can use BM25, TF-IDF, or a basic method.
-- **Clustering:** similar headlines are grouped and accompanied by cluster metadata.
+- **Story grouping:** similar headlines are grouped by default; the best representative is returned together with similar source articles.
 - **Summarization:** extractive summaries are produced locally from available article text.
 
 ## Output contracts
