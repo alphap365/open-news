@@ -105,7 +105,6 @@ async def search_and_summarize_async(
     include_images_videos: bool = False,
     max_concurrency: int = 5,
     js: bool = False,
-    dedupe: bool = True,
 ) -> List[Dict]:
     from ..api import search  # deferred: avoid circular import
 
@@ -113,11 +112,6 @@ async def search_and_summarize_async(
     if not articles:
         logger.warning("No articles found for %r", query)
         return []
-
-    # BUG FIX: the previous code ran search() a second time here and never
-    # deduped. We now dedupe the list we already have.
-    if dedupe:
-        articles = dedupe_articles(articles, fuzzy=True)
 
     urls = [art["url"] for art in articles]
     batch_results = await batch_summarize_async(
@@ -127,7 +121,6 @@ async def search_and_summarize_async(
         include_images_videos=include_images_videos,
         max_concurrency=max_concurrency,
         js=js,
-        dedupe=False,  # already deduped above
     )
 
     url_to_search = {art["url"]: art for art in articles}
@@ -142,7 +135,6 @@ def search_and_summarize(
     include_images_videos: bool = False,
     max_workers: int = 5,
     js: bool = False,
-    dedupe: bool = True,
 ) -> List[Dict]:
     return asyncio.run(
         search_and_summarize_async(
@@ -153,7 +145,6 @@ def search_and_summarize(
             include_images_videos=include_images_videos,
             max_concurrency=max_workers,
             js=js,
-            dedupe=dedupe,
         )
     )
 

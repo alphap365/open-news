@@ -3,10 +3,10 @@ import logging
 from typing import Dict, List, Optional
 
 from ..fetch.url_resolver import is_hub_url
+from .cluster import cluster_articles, cluster_to_article
 from .dedupe import dedupe_articles
 from .domain_filter import filter_by_domain
 from .language_guard import filter_by_language
-from .ranker import sort_articles
 from .token_filter import filter_articles
 
 logger = logging.getLogger(__name__)
@@ -99,8 +99,6 @@ def run_pipeline(
     blacklist: Optional[List[str]] = None,
     sort_by: str = "date",
     full_content: bool = False,
-    dedupe: bool = True,
-    dedupe_fuzzy: bool = True,
     js: bool = False,
 ) -> List[Dict]:
     """Sync pipeline (unchanged public API)."""
@@ -117,8 +115,6 @@ def run_pipeline(
             blacklist=blacklist,
             sort_by=sort_by,
             full_content=full_content,
-            dedupe=dedupe,
-            dedupe_fuzzy=dedupe_fuzzy,
             js=js,
         )
     )
@@ -136,8 +132,6 @@ async def run_pipeline_async(
     blacklist: Optional[List[str]] = None,
     sort_by: str = "date",
     full_content: bool = False,
-    dedupe: bool = True,
-    dedupe_fuzzy: bool = True,
     js: bool = False,
 ) -> List[Dict]:
     before = len(articles)
@@ -155,10 +149,7 @@ async def run_pipeline_async(
             search_in=search_in,
         )
 
-    if dedupe:
-        articles = dedupe_articles(articles, fuzzy=dedupe_fuzzy)
-
-    articles = sort_articles(articles, sort_by=sort_by)
+    articles = dedupe_articles(articles)
 
     if needs_body:
         pool = await _enrich_full_content_async(articles[: max_results * 3], js=js)
@@ -170,10 +161,21 @@ async def run_pipeline_async(
             search_in=search_in,
         )
 
-    articles = articles[:max_results]
+    cluster_sort = {
+        "date": "date",
+        "popularity": "size",
+        "relevance": "score",
+    }.get(sort_by, "score")
+    clusters = cluster_articles(
+        articles,
+        rank_query=query,
+        search_in=search_in,
+        sort_by=cluster_sort,
+    )
+    stories = [cluster_to_article(cluster) for cluster in clusters[:max_results]]
 
     if full_content:
-        articles = await _enrich_full_content_async(articles, js=js)
+        stories = await _enrich_full_content_async(stories, js=js)
 
-    logger.info("Pipeline: %d raw -> %d final", before, len(articles))
-    return articles
+    logger.info("Pipeline: %d raw -> %d stories", before, len(stories))
+    return stories

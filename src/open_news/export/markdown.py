@@ -59,8 +59,11 @@ def _article_block(
 
     if include_metadata:
         bits = []
+        sources = article.get("sources") or []
         source = article.get("source") or article.get("meta", {}).get("site_name")
-        if source:
+        if sources:
+            bits.append(f"**Sources:** {', '.join(sources)}")
+        elif source:
             bits.append(f"**Source:** {source}")
         date = article.get("publish_date") or article.get("published")
         if date:
@@ -87,6 +90,19 @@ def _article_block(
     url = article.get("url") or ""
     if url:
         lines.extend([f"[Read original]({url})", ""])
+
+    similar_articles = article.get("similar_articles") or []
+    if similar_articles:
+        lines.extend(["**Similar coverage:**", ""])
+        for related in similar_articles:
+            related_title = related.get("title") or "Untitled"
+            related_url = related.get("url") or ""
+            related_source = related.get("source") or "Unknown source"
+            if related_url:
+                lines.append(f"- [{related_title}]({related_url}) — _{related_source}_")
+            else:
+                lines.append(f"- {related_title} — _{related_source}_")
+        lines.append("")
 
     return "\n".join(lines)
 

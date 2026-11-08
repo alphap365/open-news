@@ -1,10 +1,8 @@
 import logging
-from difflib import SequenceMatcher
-from typing import Dict, List, Optional
+from typing import Dict, List
 from urllib.parse import parse_qsl, urlencode, urlparse, urlunparse
 
 from ..fetch.url_resolver import is_aggregator_source, is_google_news_url, resolve_url
-from ..utils.textutil import normalize_title as _normalize_title
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +22,6 @@ TRACKING_PARAMS = {
     "smid",
 }
 
-FUZZY_TITLE_THRESHOLD = 0.85
-FUZZY_MAX_ARTICLES = 300  # guard against O(n^2) blowup on large batches
-
 
 def normalize_url(url: str) -> str:
     """
@@ -44,8 +39,14 @@ def normalize_url(url: str) -> str:
     except Exception:
         return url
 
-    netloc = parsed.netloc.lower().replace("www.", "")
-    path = parsed.path.rstrip("/")
+    netloc = parsed.netloc.lower()
+    if netloc.startswith("www."):
+        netloc = netloc[4:]
+    if netloc.endswith(":80") and parsed.scheme.lower() == "http":
+        netloc = netloc[:-3]
+    elif netloc.endswith(":443") and parsed.scheme.lower() == "https":
+        netloc = netloc[:-4]
+    path = parsed.path.rstrip("/") or "/"
 
     kept_params = [
         (k, v) for k, v in parse_qsl(parsed.query) if k.lower() not in TRACKING_PARAMS
@@ -54,22 +55,6 @@ def normalize_url(url: str) -> str:
 
     normalized = urlunparse(("", netloc, path, "", query, ""))
     return normalized.lstrip("/")
-
-
-def _find_similar(
-    title: str, kept_titles: List[str], threshold: float
-) -> Optional[int]:
-    """Index of the first kept title at least `threshold` similar, else None.
-    The two cheap upper bounds skip most O(n) full comparisons."""
-    for idx, existing in enumerate(kept_titles):
-        if not existing:
-            continue
-        sm = SequenceMatcher(None, title, existing)
-        if sm.real_quick_ratio() < threshold or sm.quick_ratio() < threshold:
-            continue
-        if sm.ratio() >= threshold:
-            return idx
-    return None
 
 
 def _is_aggregator(article: Dict) -> bool:
@@ -93,67 +78,84 @@ def _is_aggregator(article: Dict) -> bool:
     return "google news" in source.lower()
 
 
+def _source_names(article: Dict) -> List[str]:
+    names = []
+    meta = article.get("meta")
+    site_name = meta.get("site_name") if isinstance(meta, dict) else None
+    for value in (
+        article.get("source"),
+        site_name,
+        article.get("sources", []),
+    ):
+        candidates = value if isinstance(value, (list, tuple, set)) else [value]
+        names.extend(
+            name.strip()
+            for name in candidates
+            if isinstance(name, str) and name.strip()
+        )
+    return list(dict.fromkeys(names))
+
+
+def _article_priority(article: Dict) -> tuple:
+    text = article.get("text") or article.get("description") or ""
+    populated_fields = sum(
+        value not in (None, "", [], {}) for value in article.values()
+    )
+    return (not _is_aggregator(article), len(text), populated_fields)
+
+
+def _merge_same_url(existing: Dict, incoming: Dict) -> Dict:
+    primary, secondary = (
+        (incoming, existing)
+        if _article_priority(incoming) > _article_priority(existing)
+        else (existing, incoming)
+    )
+    merged = dict(secondary)
+    for key, value in primary.items():
+        if value not in (None, "", [], {}):
+            merged[key] = value
+    sources = list(dict.fromkeys(_source_names(existing) + _source_names(incoming)))
+    if sources:
+        merged["sources"] = sources
+    return merged
+
+
 def dedupe_articles(
     articles: List[Dict],
-    fuzzy: bool = False,
     url_key: str = "url",
-    title_key: str = "title",
 ) -> List[Dict]:
-    """... (docstring unchanged) ..."""
-    seen: Dict[str, Dict] = {}
-    order: List[str] = []
+    """Merge records for the same normalized URL without dropping similar stories.
+
+    The preferred non-aggregator/fullest record supplies the article fields;
+    source names from every matching record are retained in ``sources``.
+    Articles without URLs are kept because they cannot be safely identified.
+    """
+    articles_by_url: Dict[str, int] = {}
+    merged_articles: List[Dict] = []
 
     for art in articles:
-        url = art.get(url_key, "")
+        item = dict(art)
+        url = item.get(url_key, "")
         if not url:
+            merged_articles.append(item)
             continue
 
-        # Resolve gnews redirects ONCE. normalize_url() would otherwise call
-        # resolve_url() internally, and the explicit resolve below would call
-        # it a second time — two network round-trips per URL.
         if is_google_news_url(url):
             url = resolve_url(url)
-            art[url_key] = url
+            item[url_key] = url
 
         key = normalize_url(url)
-
-        if key not in seen:
-            seen[key] = art
-            order.append(key)
+        if key not in articles_by_url:
+            articles_by_url[key] = len(merged_articles)
+            merged_articles.append(item)
             continue
 
-        existing = seen[key]
-        if _is_aggregator(existing) and not _is_aggregator(art):
-            seen[key] = art
+        index = articles_by_url[key]
+        merged_articles[index] = _merge_same_url(merged_articles[index], item)
 
-    stage1 = [seen[k] for k in order]
-    logger.info("Dedupe stage 1 (exact URL): %d -> %d", len(articles), len(stage1))
-
-    if not fuzzy:
-        return stage1
-
-    if len(stage1) > FUZZY_MAX_ARTICLES:
-        logger.warning(
-            "Skipping fuzzy dedupe: %d articles exceeds FUZZY_MAX_ARTICLES=%d",
-            len(stage1),
-            FUZZY_MAX_ARTICLES,
-        )
-        return stage1
-
-    kept: List[Dict] = []
-    kept_titles: List[str] = []
-
-    for art in stage1:
-        title = _normalize_title(art.get(title_key, ""))
-        art.setdefault("_cluster_size", 1)
-        match = (
-            _find_similar(title, kept_titles, FUZZY_TITLE_THRESHOLD) if title else None
-        )
-        if match is None:
-            kept.append(art)
-            kept_titles.append(title)
-        else:
-            kept[match]["_cluster_size"] += art["_cluster_size"]
-
-    logger.info("Dedupe stage 2 (fuzzy title): %d -> %d", len(stage1), len(kept))
-    return kept
+    logger.info(
+        "Merged exact-URL duplicates: %d records -> %d articles",
+        len(articles),
+        len(merged_articles),
+    )
+    return merged_articles

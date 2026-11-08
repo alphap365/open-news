@@ -1,14 +1,4 @@
-"""Story clustering by title similarity.
-
-Composes the existing pieces:
-  * dedupe_articles()  — URL-level exact dedupe runs first
-  * filter_articles()  — optional topic narrowing (feature 2)
-  * rank_articles()    — optional per-article scoring (feature 3)
-
-Unlike dedupe (which drops duplicates), clustering keeps every article
-and labels which story it belongs to, so downstream code can show
-"N sources reporting this" or rank by cluster size.
-"""
+"""Group related coverage into stories while preserving every source article."""
 
 from __future__ import annotations
 
@@ -19,7 +9,7 @@ from difflib import SequenceMatcher
 from typing import Dict, List, Optional, Union
 
 from ..utils.textutil import normalize_title as _normalize_title
-from .dedupe import dedupe_articles
+from .dedupe import _source_names, dedupe_articles
 from .ranker import _parse_date
 from .token_filter import filter_articles
 
@@ -97,6 +87,60 @@ def _pick_representative(members: List[Dict]) -> Dict:
     return min(members, key=key)
 
 
+def cluster_to_article(cluster: Dict) -> Dict:
+    """Return a representative article enriched with its related coverage."""
+    representative = cluster["representative"]
+    article = dict(representative)
+    article.update(
+        {
+            "sources": list(cluster["sources"]),
+            "similar_articles": [
+                dict(member)
+                for member in cluster["articles"]
+                if member is not representative
+            ],
+            "cluster_id": cluster["id"],
+            "cluster_size": cluster["size"],
+            "cluster_score": cluster["score"],
+            "first_seen": cluster["first_seen"],
+            "last_seen": cluster["last_seen"],
+        }
+    )
+    return article
+
+
+def _expand_story_articles(articles: List[Dict]) -> List[Dict]:
+    expanded = []
+    story_fields = {
+        "similar_articles",
+        "cluster_id",
+        "cluster_size",
+        "cluster_score",
+        "first_seen",
+        "last_seen",
+    }
+    for article in articles:
+        cluster_members = article.get("articles")
+        cluster_representative = article.get("representative")
+        if isinstance(cluster_members, list) and isinstance(
+            cluster_representative, dict
+        ):
+            expanded.extend(
+                dict(member) for member in cluster_members if isinstance(member, dict)
+            )
+            continue
+        representative = {
+            key: value for key, value in article.items() if key not in story_fields
+        }
+        expanded.append(representative)
+        related = article.get("similar_articles")
+        if isinstance(related, list):
+            expanded.extend(
+                dict(member) for member in related if isinstance(member, dict)
+            )
+    return expanded
+
+
 def cluster_articles(
     articles: List[Dict],
     threshold: float = DEFAULT_THRESHOLD,
@@ -104,7 +148,6 @@ def cluster_articles(
     topic: Optional[Union[str, List[str]]] = None,
     topic_mode: str = "any",
     search_in: Optional[List[str]] = None,
-    dedupe: bool = True,
     rank_query: Optional[str] = None,
     rank_method: str = "auto",
     sort_by: str = "score",
@@ -116,7 +159,6 @@ def cluster_articles(
         threshold: 0..1 title-similarity cutoff. Higher = tighter.
         min_cluster_size: Drop clusters smaller than this.
         topic / topic_mode / search_in: Optional narrowing via feature 2.
-        dedupe: Run exact URL-level dedupe first (default True).
         rank_query / rank_method: If `rank_query` given, run rank_articles()
             internally so representatives are chosen by relevance, not just
             earliest date.
@@ -130,9 +172,7 @@ def cluster_articles(
     if not articles:
         return []
 
-    working = list(articles)
-    if dedupe:
-        working = dedupe_articles(working)
+    working = dedupe_articles(_expand_story_articles(list(articles)))
     if topic:
         working = filter_articles(
             working, topic=topic, topic_mode=topic_mode, search_in=search_in
@@ -174,13 +214,7 @@ def cluster_articles(
         ]
         first_seen = min(dates).isoformat() if dates else None
         last_seen = max(dates).isoformat() if dates else None
-        sources = sorted(
-            {
-                (m.get("source") or m.get("meta", {}).get("site_name") or "")
-                for m in members
-            }
-            - {""}
-        )
+        sources = sorted({name for member in members for name in _source_names(member)})
         clusters.append(
             {
                 "id": 0,

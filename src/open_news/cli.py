@@ -112,7 +112,11 @@ def _print_articles_pretty(articles: List[Dict]) -> None:
         return
     for i, a in enumerate(articles, 1):
         title = a.get("title") or "Untitled"
-        source = a.get("source") or a.get("meta", {}).get("site_name") or ""
+        sources = a.get("sources") or []
+        if not sources:
+            source = a.get("source") or a.get("meta", {}).get("site_name") or ""
+            sources = [source] if source else []
+        source = ", ".join(sources)
         date = a.get("published") or a.get("publish_date") or ""
         url = a.get("url") or ""
         print(f"{C.bold(f'[{i}]')} {C.cyan(title)}")
@@ -120,6 +124,20 @@ def _print_articles_pretty(articles: List[Dict]) -> None:
         if meta_bits:
             print(f"    {C.dim(' | '.join(meta_bits))}")
         print(f"    {url}")
+        similar_articles = a.get("similar_articles") or []
+        if similar_articles:
+            print(f"    {C.dim('Similar coverage:')}")
+            for related in similar_articles[:5]:
+                related_source = (
+                    related.get("source")
+                    or related.get("meta", {}).get("site_name")
+                    or "Unknown source"
+                )
+                related_title = related.get("title") or "Untitled"
+                related_url = related.get("url") or ""
+                print(f"      {related_source}: {related_title} {related_url}".rstrip())
+            if len(similar_articles) > 5:
+                print(f"      {C.dim(f'+{len(similar_articles) - 5} more reports')}")
     print(C.dim(f"\n{len(articles)} article(s)."))
 
 
@@ -296,19 +314,6 @@ def _add_filter_args(p: argparse.ArgumentParser) -> None:
     )
     p.add_argument(
         "--blacklist", metavar="DOMAINS", help="Comma-separated domains to drop."
-    )
-    p.add_argument(
-        "--dedupe",
-        dest="dedupe",
-        action="store_true",
-        default=True,
-        help="Dedupe results (default: on).",
-    )
-    p.add_argument(
-        "--no-dedupe",
-        dest="dedupe",
-        action="store_false",
-        help="Disable deduplication.",
     )
     p.add_argument(
         "--topic",
@@ -513,9 +518,6 @@ def build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Enrich RSS-path results with full text.",
     )
-    discover_p.add_argument(
-        "--no-dedupe", dest="dedupe", action="store_false", default=True
-    )
     _add_output_args(discover_p)
 
     # --- search-site ---
@@ -539,8 +541,8 @@ def build_parser() -> argparse.ArgumentParser:
         help="Group related articles into story clusters (title similarity).",
         description=(
             "Source articles from a keyword search or a category feed, then "
-            "cluster them by title similarity. Dedupe, topic filtering, and "
-            "relevance ranking are composed internally."
+            "group similar coverage by title. Exact URL duplicates are merged "
+            "while distinct source articles remain available in each story."
         ),
     )
     cluster_p.add_argument("--query", help="Keyword search to source articles.")
@@ -590,9 +592,6 @@ def build_parser() -> argparse.ArgumentParser:
     )
     cluster_p.add_argument("--whitelist", metavar="DOMAINS")
     cluster_p.add_argument("--blacklist", metavar="DOMAINS")
-    cluster_p.add_argument(
-        "--no-dedupe", dest="dedupe", action="store_false", default=True
-    )
     _add_output_args(cluster_p)
 
     # --- summarize ---
@@ -658,7 +657,6 @@ def _run(args: argparse.Namespace) -> None:
                 js=args.js,
                 whitelist=_csv_list(args.whitelist),
                 blacklist=_csv_list(args.blacklist),
-                dedupe=args.dedupe,
             ),
         )
         results = _apply_post_processing(results, args)
@@ -679,7 +677,6 @@ def _run(args: argparse.Namespace) -> None:
                 js=args.js,
                 whitelist=_csv_list(args.whitelist),
                 blacklist=_csv_list(args.blacklist),
-                dedupe=args.dedupe,
             )
             print(
                 C.dim(
@@ -712,7 +709,6 @@ def _run(args: argparse.Namespace) -> None:
                 js=args.js,
                 whitelist=_csv_list(args.whitelist),
                 blacklist=_csv_list(args.blacklist),
-                dedupe=args.dedupe,
             ),
         )
         results = _apply_post_processing(results, args)
@@ -731,7 +727,6 @@ def _run(args: argparse.Namespace) -> None:
             js=args.js,
             prefer_rss=not args.no_rss,
             full_content=args.full_content,
-            dedupe=args.dedupe,
         )
         _emit(articles, args, "articles")
 
@@ -759,7 +754,6 @@ def _run(args: argparse.Namespace) -> None:
                     time_limit=args.time_limit,
                     whitelist=_csv_list(args.whitelist),
                     blacklist=_csv_list(args.blacklist),
-                    dedupe=args.dedupe,
                 ),
             )
         elif args.category:
@@ -773,7 +767,6 @@ def _run(args: argparse.Namespace) -> None:
                     time_limit=args.time_limit,
                     whitelist=_csv_list(args.whitelist),
                     blacklist=_csv_list(args.blacklist),
-                    dedupe=args.dedupe,
                 ),
             )
         else:
@@ -787,7 +780,6 @@ def _run(args: argparse.Namespace) -> None:
             min_cluster_size=args.min_cluster_size,
             topic=args.topic,
             topic_mode=args.topic_mode,
-            dedupe=args.dedupe,
             rank_query=args.rank_query,
             rank_method=args.rank_method,
             sort_by=args.sort_clusters,

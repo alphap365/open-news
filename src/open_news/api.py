@@ -12,15 +12,13 @@ from .feeds.sources import search_site as _search_site
 from .fetch.article import get_article as _get_article
 from .fetch.crawler import crawl_site
 from .processing.cluster import cluster_articles as cluster_articles
-from .processing.dedupe import dedupe_articles
+from .processing.dedupe import normalize_url
 from .processing.pipeline import run_pipeline, run_pipeline_async
 from .processing.rank import rank_articles as rank_articles
 from .processing.token_filter import (
-    filter_articles as _token_filter,
-)
-from .processing.token_filter import (
     filter_articles as filter_articles,
 )
+from .utils.textutil import normalize_title
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +39,6 @@ async def fetch_async(
     full_content: bool = False,
     search_in: Optional[List[str]] = None,
     js: bool = False,
-    dedupe: bool = True,
 ) -> List[Dict]:
     """Async variant of fetch(). Streaming is sync-only; use sync fetch for it."""
     config = FetchConfig(
@@ -69,7 +66,6 @@ async def fetch_async(
         sort_by=config.sort_by,
         full_content=config.full_content,
         search_in=config.search_in,
-        dedupe=dedupe,
         js=js,
     )
 
@@ -90,9 +86,8 @@ async def search_async(
     full_content: bool = False,
     search_in: Optional[List[str]] = None,
     js: bool = False,
-    dedupe: bool = True,
 ) -> List[Dict]:
-    """Async variant of search()."""
+    """Async keyword search returning one representative article per story."""
     config = SearchConfig(
         query=query,
         query_mode=query_mode,
@@ -121,7 +116,6 @@ async def search_async(
         blacklist=config.blacklist,
         sort_by=config.sort_by,
         full_content=config.full_content,
-        dedupe=dedupe,
         js=js,
     )
 
@@ -144,7 +138,6 @@ def fetch(
     search_in: Optional[List[str]] = None,
     refresh_interval: Optional[int] = None,
     js: bool = False,
-    dedupe: bool = True,
 ) -> Union[List[Dict], Iterator[List[Dict]]]:
     """
     Live category/location news via the DuckDuckGo News engine. Always
@@ -155,7 +148,7 @@ def fetch(
         category: 'general'|'business'|'tech'|'sports'|'health'|'science'|'entertainment'
         location: country/region code, e.g. 'in', 'us' — takes precedence over category
         time_limit: 'd'|'w'|'m' recency window
-        max_results: hard cap on returned articles
+        max_results: hard cap on returned story groups
         language: ISO 639-1 code, enforced via pre-download language guard
         whitelist / blacklist: domain allow/deny list
         sort_by: 'date'|'relevance'|'popularity'
@@ -165,7 +158,6 @@ def fetch(
         refresh_interval: if set (seconds, >= 5), returns a generator that
             polls on this cadence and yields only newly-seen articles
         js: use the persistent-browser crawler backend for full_content fetches
-        dedupe: dedupe results (exact + fuzzy)
     """
     config = FetchConfig(
         category=category,
@@ -182,7 +174,7 @@ def fetch(
     )
 
     if refresh_interval:
-        return _fetch_stream(config, js=js, dedupe=dedupe)
+        return _fetch_stream(config, js=js)
 
     return asyncio.run(
         fetch_async(
@@ -197,12 +189,11 @@ def fetch(
             full_content=full_content,
             search_in=search_in,
             js=js,
-            dedupe=dedupe,
         )
     )
 
 
-def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[Dict]]:
+def _fetch_stream(config: FetchConfig, js: bool) -> Iterator[List[Dict]]:
     """Generator backing fetch(refresh_interval=...): re-queries on a
     cadence, yielding only articles not seen in a previous cycle."""
     import time
@@ -220,7 +211,6 @@ def _fetch_stream(config: FetchConfig, js: bool, dedupe: bool) -> Iterator[List[
             sort_by=config.sort_by,
             full_content=config.full_content,
             search_in=config.search_in,
-            dedupe=dedupe,
             js=js,
         )
         new_articles = _only_unseen(processed, seen_urls, seen_titles)
@@ -248,7 +238,6 @@ def search(
     search_in: Optional[List[str]] = None,
     refresh_interval: Optional[int] = None,
     js: bool = False,
-    dedupe: bool = True,
 ) -> Union[List[Dict], Iterator[List[Dict]]]:
     """
     Direct keyword search via Google News RSS.
@@ -295,7 +284,7 @@ def search(
     )
 
     if refresh_interval:
-        return _search_stream(config, country=country, js=js, dedupe=dedupe)
+        return _search_stream(config, country=country, js=js)
 
     return asyncio.run(
         search_async(
@@ -314,13 +303,12 @@ def search(
             full_content=full_content,
             search_in=search_in,
             js=js,
-            dedupe=dedupe,
         )
     )
 
 
 def _search_stream(
-    config: SearchConfig, country: Optional[str], js: bool, dedupe: bool
+    config: SearchConfig, country: Optional[str], js: bool
 ) -> Iterator[List[Dict]]:
     """Generator backing search(refresh_interval=...) / stream_search():
     re-queries the same keyword search on a cadence, yielding only articles
@@ -343,7 +331,6 @@ def _search_stream(
             blacklist=config.blacklist,
             sort_by=config.sort_by,
             full_content=config.full_content,
-            dedupe=dedupe,
             js=js,
         )
         new_articles = _only_unseen(processed, seen_urls, seen_titles)
@@ -355,18 +342,24 @@ def _search_stream(
 
 
 def _only_unseen(articles, seen_urls, seen_titles):
-    from .processing.dedupe import _normalize_title, normalize_url
-
     fresh = []
-    for a in articles:
-        u = normalize_url(a.get("url", ""))
-        t = _normalize_title(a.get("title", ""))
-        if u in seen_urls or (t and t in seen_titles):
+    for story in articles:
+        members = [story, *story.get("similar_articles", [])]
+        urls = {
+            normalize_url(article.get("url", ""))
+            for article in members
+            if article.get("url")
+        }
+        unseen_urls = urls - seen_urls
+        title_key = normalize_title(story.get("title", ""))
+        if urls and not unseen_urls:
             continue
-        seen_urls.add(u)
-        if t:
-            seen_titles.add(t)
-        fresh.append(a)
+        if not urls and (not title_key or title_key in seen_titles):
+            continue
+        seen_urls.update(urls)
+        if title_key:
+            seen_titles.add(title_key)
+        fresh.append(story)
     return fresh
 
 
@@ -383,7 +376,6 @@ def stream_search(
     sort_by: str = "date",
     full_content: bool = False,
     js: bool = False,
-    dedupe: bool = True,
 ) -> Iterator[List[Dict]]:
     """
     Live/streaming keyword search (v1.0.2) — the search() equivalent of
@@ -416,7 +408,6 @@ def stream_search(
             full_content=full_content,
             refresh_interval=max(5, refresh_interval),
             js=js,
-            dedupe=dedupe,
         ),
     )
 
@@ -434,7 +425,6 @@ def stream_fetch(
     full_content: bool = False,
     search_in: Optional[List[str]] = None,
     js: bool = False,
-    dedupe: bool = True,
 ) -> Iterator[List[Dict]]:
     """
     Live/streaming category feed — the fetch() equivalent of
@@ -465,7 +455,6 @@ def stream_fetch(
             search_in=search_in,
             refresh_interval=max(5, refresh_interval),
             js=js,
-            dedupe=dedupe,
         ),
     )
 
@@ -482,22 +471,20 @@ def search_site(
     """Search a single news domain, scoped via Google News RSS + site:,
     sharing the same filtering pipeline as search()."""
     raw = _search_site(keyword, domain, limit=limit * 2)  # over-fetch for filtering
-    filtered = _token_filter(raw, query=keyword, query_mode=query_mode)
-    from .processing.language_guard import filter_by_language
-
-    filtered = filter_by_language(filtered, language)
-    filtered = filtered[:limit]
-    if full_content:
-        from .processing.pipeline import _enrich_full_content
-
-        filtered = _enrich_full_content(filtered, js=js)
-    return filtered
+    return run_pipeline(
+        raw,
+        max_results=limit,
+        language=language,
+        query=keyword,
+        query_mode=query_mode,
+        full_content=full_content,
+        js=js,
+    )
 
 
 def discover_and_get(
     website_url: str,
     limit: int = 10,
-    dedupe: bool = True,
     js: bool = False,
     max_pages: Optional[int] = None,
     max_depth: Optional[int] = None,
@@ -513,8 +500,7 @@ def discover_and_get(
     Args:
         website_url: Any URL on the provider's site (not necessarily the
             homepage — a section/category page works and narrows the crawl).
-        limit: Max articles to return.
-        dedupe: Normalize + dedupe results by URL.
+        limit: Max story groups to return.
         js: Use the JS-rendering crawler backend (headless browser, one
             persistent instance reused across pages) instead of the default
             fast async HTTP backend. Use for sites whose article links or
@@ -541,15 +527,14 @@ def discover_and_get(
     if prefer_rss:
         rss_url = discover_rss_feed(website_url)
         if rss_url:
-            articles = from_rss(rss_url, limit)
-            if dedupe:
-                articles = dedupe_articles(articles)
+            articles = from_rss(rss_url, limit * 3)
             if articles:
-                if full_content:
-                    from .processing.pipeline import _enrich_full_content
-
-                    articles = _enrich_full_content(articles, js=js)
-                return articles
+                return run_pipeline(
+                    articles,
+                    max_results=limit,
+                    full_content=full_content,
+                    js=js,
+                )
             logger.info(f"RSS feed at {rss_url} yielded nothing, falling back to crawl")
 
     articles = crawl_site(
@@ -558,9 +543,7 @@ def discover_and_get(
         max_depth=max_depth,
         js=js,
     )
-    if dedupe:
-        articles = dedupe_articles(articles, fuzzy=True)
-    return articles[:limit]
+    return run_pipeline(articles, max_results=limit)
 
 
 # Legacy aliases (backward compatibility) — both names are fully supported

@@ -28,18 +28,6 @@ from .cache import (
     store_user_profile as store_user_profile,
 )
 from .export import to_json, to_markdown
-from .feeds import (
-    FeedConfig as FeedConfig,
-)
-from .feeds import (
-    FeedEngine as FeedEngine,
-)
-from .feeds import (
-    FeedError as FeedError,
-)
-from .feeds import (
-    FeedProfileRequiredError as FeedProfileRequiredError,
-)
 from .fetch.article import get_article_async
 from .processing.batch import (
     batch_summarize,
@@ -48,9 +36,16 @@ from .processing.batch import (
     search_and_summarize_async,
 )
 from .processing.dedupe import dedupe_articles
+from .processing.feed_engine import (
+    FeedCache,
+    FeedConfig,
+    FeedEngine,
+    FeedError,
+    FeedProfileRequiredError,
+)
 from .processing.summarizer import summarize_text, summarize_with_keywords
 
-__version__ = "1.0.6a1"
+__version__ = "1.0.6a2"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -69,6 +64,11 @@ __all__ = [
     "summarize_with_keywords",
     "dedupe_articles",
     "cluster_articles",
+    "FeedConfig",
+    "FeedCache",
+    "FeedEngine",
+    "FeedError",
+    "FeedProfileRequiredError",
     "rank_articles",
     "filter_articles",
     "export",
