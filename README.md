@@ -10,15 +10,14 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/open-news-api.svg?label=PyPI)](https://pypi.org/project/open-news-api/)
-[![Socket](https://socket.dev/api/badge/pypi/package/open-news-api/1.0.5)](https://socket.dev/pypi/package/open-news-api/overview/1.0.5)
 [![License](https://img.shields.io/badge/License-MIT-6C5CE7)](LICENSE)
-[![Tests](https://img.shields.io/badge/Tests-202%20passing-brightgreen)](https://github.com/alphap365/open-news/actions)
-[![Version](https://img.shields.io/badge/Version-1.0.6a1-blue)](https://github.com/alphap365/open-news/releases)
+[![CI](https://github.com/alphap365/open-news/actions/workflows/ci.yml/badge.svg)](https://github.com/alphap365/open-news/actions/workflows/ci.yml)
+[![Version](https://img.shields.io/badge/Version-1.0.6a2-blue)](https://github.com/alphap365/open-news/releases)
 [![Async API](https://img.shields.io/badge/API-Async%20%2B%20sync-4B75C9)](docs/python-api.md)
 [![Docs](https://img.shields.io/badge/Docs-Reference-8A63D2)](docs/README.md)
 [![Open in Colab](https://img.shields.io/badge/Open%20in-Colab-FF6F00?logo=googlecolab&logoColor=white)](https://colab.research.google.com/github/alphap365/open-news/blob/main/examples/colab/open_news_colab_demo.ipynb)
 
-**Fetch → Extract → Filter → Rank → Summarize → Export**
+**Fetch → Extract → Filter → Group → Rank → Summarize → Export**
 
 [Quick start](#-quick-start) · [Features](#-features) · [Architecture](#-architecture) · [Docs](#-documentation) · [Colab examples](#-colab-examples)
 
@@ -40,8 +39,8 @@ It is not a hosted reader or a single website scraper. You can use it as a Pytho
 | Source resilience | Tries multiple acquisition paths so one broken source does not kill the whole request |
 | Article extraction | Pulls text, metadata, authors, dates, images, and source details |
 | Website discovery | Finds articles through RSS discovery and fallback crawling |
-| Processing | Filters by language, topic, domains, and deduplicates duplicate URLs/titles |
-| Story clustering | Groups similar headlines and exposes cluster metadata |
+| Processing | Filters by language, topic, and domains; merges exact normalized URL copies |
+| Story grouping | Groups similar headlines while keeping distinct articles and their source names |
 | Async workflows | Supports async fetch/search/article retrieval and batch summarization |
 | Summarization | Produces lightweight summaries with optional NLP helpers |
 | Export | Writes Markdown and clean JSON output |
@@ -74,7 +73,7 @@ It is not a hosted reader or a single website scraper. You can use it as a Pytho
 
 - Topic and token filtering
 - Domain allowlists and denylists
-- URL/title deduplication
+- Exact URL merging and similar-story grouping
 - Relevance ranking with BM25, TF-IDF, or a simple fallback
 - Similar-story clustering
 - Batch and keyword-driven summarization
@@ -107,31 +106,58 @@ playwright install chromium
 python -m pip install "open-news-api[nlp]"
 ```
 
+### Install and run with `uv`
+
+Install the CLI as a standalone tool:
+
+```bash
+uv tool install open-news-api
+open-news --help
+```
+
+Or run it without installing:
+
+```bash
+uvx --from open-news-api open-news search "artificial intelligence" --country in --limit 10
+```
+
+For use as a dependency in an application:
+
+```bash
+uv add open-news-api
+# Choose optional features as needed:
+uv add "open-news-api[js]"
+# Or install both extras together:
+uv add "open-news-api[js,nlp]"
+```
+
+After adding the `js` extra, install its browser runtime:
+
+```bash
+uv run playwright install chromium
+```
+
 Install from a local checkout:
 
 ```bash
 git clone https://github.com/alphap365/open-news.git
 cd open-news
-python -m venv .venv
-
-# Linux / macOS
-source .venv/bin/activate
-
-# Windows PowerShell
-# .venv\Scripts\Activate.ps1
-
-python -m pip install -e ".[dev]"
+uv sync --group dev
 ```
+
+`uv sync` creates and manages the project environment. Run project commands with `uv run`; there is no need to activate the environment manually.
 
 ## 🧪 Colab examples
 
-For notebook-friendly testing and quick experiments, see the demo folder at [examples/colab](examples/colab/README.md).
+For notebook-friendly testing and quick experiments, see the [Colab examples](examples/colab/README.md). For runnable API demos covering story grouping, filters and ranking, async search, website discovery, and streaming, see the [examples index](examples/README.md).
 
-It includes:
+The Colab folder includes:
 
 - a ready-to-open Google Colab notebook
 - a few small project-specific scripts for fetch/search/export flows
 - a simple getting-started path for developers who want to test the library in a notebook environment
+
+The project-level examples can be run with `uv run python examples/<script>.py` after `uv sync --group dev`.
 
 The folder contains:
 
@@ -139,6 +165,12 @@ The folder contains:
 - `examples/colab/fetch_demo.py`
 - `examples/colab/search_demo.py`
 - `examples/colab/export_demo.py`
+
+After running `uv sync --group dev` from the repository root, run an example with:
+
+```bash
+uv run python examples/colab/fetch_demo.py
+```
 
 ## 🚀 Quick start
 
@@ -149,7 +181,9 @@ from open_news import fetch
 
 articles = fetch(category="tech", max_results=5)
 for article in articles:
-    print(article["title"], article["url"])
+    print(article["title"], article["url"], article.get("sources", []))
+    for related in article.get("similar_articles", []):
+        print("  -", related["title"], related["url"])
 ```
 
 ### Search with a region and date range
@@ -194,17 +228,23 @@ print(article["text"])
 ```python
 from open_news import fetch, rank_articles, cluster_articles
 
+# fetch() groups similar stories by default. Each result includes a
+# representative article, sources, and similar_articles.
 articles = fetch(category="tech", max_results=40)
-ranked = rank_articles(articles, query="artificial intelligence", method="auto")
 
-clusters = cluster_articles(
-    ranked,
-    threshold=0.72,
-    drop_singletons=True,
+ranked_stories = rank_articles(
+    articles,
+    query="artificial intelligence",
+    method="auto",
 )
 
-for cluster in clusters:
-    print(cluster["size"], cluster["label"])
+for story in ranked_stories:
+    print(story["title"], story.get("sources", []))
+    for related in story.get("similar_articles", []):
+        print("  -", related["title"], related["url"])
+
+# Use cluster_articles() when you need explicit cluster metadata and members.
+clusters = cluster_articles(ranked_stories, threshold=0.72, drop_singletons=True)
 ```
 
 ### Export results
@@ -257,10 +297,20 @@ open-news cluster --query "AI regulation" --limit 30
 open-news export input.json --md output.md --json clean.json
 ```
 
+Run the same CLI from a project managed by `uv` with `uv run`:
+
+```bash
+uv run open-news --help
+uv run open-news fetch --category tech --limit 5 --format json
+uv run open-news cluster --query "AI regulation" --limit 30
+```
+
 For scripts, request JSON and pipe it into your preferred tools:
 
 ```bash
 open-news search "AI" --format json | jq '.[].title'
+# Or, without separately installing the CLI:
+uvx --from open-news-api open-news search "AI" --format json | jq '.[].title'
 ```
 
 For release history and version notes, see the [changelog](docs/changelog.md).
@@ -278,12 +328,22 @@ For release history and version notes, see the [changelog](docs/changelog.md).
 
 ## 🧪 Development and tests
 
+The project uses `uv` and declares development tools in the `dev` dependency group:
+
 ```bash
-python -m pip install -e ".[dev]"
-pytest -q
+uv sync --group dev
+uv run pytest -q
+uv run mypy src/open_news
+uv build
 ```
 
-The repository includes unit tests, contract tests, mocked integration tests, feed-engine checks, extraction tests, processing tests, export tests, and CLI coverage. Network-dependent behavior should be tested separately from deterministic offline tests.
+Use `uv run pytest tests/test_cli.py -q` to run a focused test file. The repository includes unit, contract, mocked integration, feed-engine, extraction, processing, export, and CLI tests. Network-dependent behavior should be tested separately from deterministic offline tests.
+
+`fetch()`, `search()`, `search_site()`, and `discover_and_get()` group similar
+stories by default. Each result is a representative article with a `sources`
+list and `similar_articles` records. Exact normalized URL copies are merged;
+articles with similar titles but distinct URLs stay in the story group rather
+than being discarded.
 
 ## ⚠️ Operational notes
 

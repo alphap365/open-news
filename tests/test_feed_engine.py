@@ -2,12 +2,12 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from open_news.cache import UserProfile
-from open_news.feeds import (
+from open_news import (
     FeedConfig,
     FeedEngine,
     FeedProfileRequiredError,
 )
+from open_news.cache import UserProfile
 
 
 class MemoryCache:
@@ -35,7 +35,7 @@ def test_feed_config_defaults_and_custom_values():
 
 def test_build_empty_articles_returns_empty_without_loading_profile(mocker):
     load_profile = mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
     )
     engine = FeedEngine(MemoryCache())
 
@@ -66,16 +66,56 @@ def test_build_generic_feed_ranks_by_freshness_without_mutating_input(mocker):
 
 def test_build_generic_feed_uses_configured_limit():
     engine = FeedEngine(MemoryCache(), FeedConfig(max_items=2))
-    articles = [_article(f"Story {index}") for index in range(4)]
+    articles = [
+        _article("NASA launches a new telescope"),
+        _article("Local football team wins final"),
+        _article("Gardeners prepare for spring"),
+        _article("New restaurant opens downtown"),
+    ]
 
     result = engine.build(articles)
 
     assert len(result) == 2
 
 
+def test_generic_feed_does_not_require_a_cache_backend():
+    result = FeedEngine().build([_article("NASA launches new telescope")])
+
+    assert len(result) == 1
+
+
+def test_build_groups_similar_coverage_into_a_story():
+    engine = FeedEngine(MemoryCache())
+    articles = [
+        {
+            "title": "City approves a new clean energy plan",
+            "url": "https://one.example/energy-plan",
+            "source": "One News",
+            "published": "2025-01-02T00:00:00Z",
+        },
+        {
+            "title": "City approves new clean energy plan",
+            "url": "https://two.example/clean-energy",
+            "source": "Two News",
+            "published": "2025-01-01T00:00:00Z",
+        },
+    ]
+
+    result = engine.build(articles)
+
+    assert len(result) == 1
+    assert result[0]["cluster_size"] == 2
+    assert result[0]["sources"] == ["One News", "Two News"]
+    assert result[0]["similar_articles"][0]["url"] == "https://two.example/clean-energy"
+
+
 def test_build_explicit_limit_overrides_configured_limit():
     engine = FeedEngine(MemoryCache(), FeedConfig(max_items=1))
-    articles = [_article("One"), _article("Two"), _article("Three")]
+    articles = [
+        _article("NASA launches a telescope"),
+        _article("Football team wins final"),
+        _article("Restaurant opens downtown"),
+    ]
 
     assert len(engine.build(articles, limit=2)) == 2
 
@@ -97,7 +137,7 @@ def test_build_personalized_feed_scores_all_profile_preferences(mocker):
         preferred_sources=("trusted news",),
     )
     mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
         return_value=profile,
     )
     mocker.patch.object(engine, "_freshness_score", return_value=0.5)
@@ -134,7 +174,7 @@ def test_build_personalized_feed_uses_title_description_and_summary(mocker):
     engine = FeedEngine(cache)
     profile = UserProfile(user_id="reader", interests=("climate", "energy"))
     mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
         return_value=profile,
     )
     mocker.patch.object(engine, "_freshness_score", return_value=0.0)
@@ -156,7 +196,7 @@ def test_build_personalized_feed_excludes_blocked_sources(mocker):
         blocked_sources=("blocked news",),
     )
     mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
         return_value=profile,
     )
 
@@ -182,10 +222,20 @@ def test_personalized_feed_requires_user_id():
         engine.build([_article("Story")], personalized=True)
 
 
+def test_personalized_feed_requires_cache_backend():
+    engine = FeedEngine()
+
+    with pytest.raises(
+        FeedProfileRequiredError,
+        match="cache backend is required",
+    ):
+        engine.build([_article("Story")], user_id="reader", personalized=True)
+
+
 def test_personalized_feed_requires_a_cached_profile(mocker):
     cache = MemoryCache()
     load_profile = mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
         return_value=None,
     )
     engine = FeedEngine(cache)
@@ -204,7 +254,7 @@ def test_personalized_feed_caches_result_with_configured_ttl(mocker):
     engine = FeedEngine(cache, FeedConfig(cache_ttl=45))
     profile = UserProfile(user_id="reader", interests=("climate",))
     mocker.patch(
-        "open_news.feeds.feed_engine.load_user_profile",
+        "open_news.processing.feed_engine.load_user_profile",
         return_value=profile,
     )
 
