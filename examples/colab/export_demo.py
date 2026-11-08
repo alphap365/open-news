@@ -3,6 +3,9 @@ from open_news import cluster_articles, export, fetch, rank_articles
 
 def main():
     articles = fetch(category="tech", max_results=20)
+    if not isinstance(articles, list):
+        raise TypeError("Expected finite results; do not set refresh_interval.")
+
     ranked = rank_articles(articles, query="artificial intelligence", method="auto")
     clusters = cluster_articles(ranked, threshold=0.72, drop_singletons=True)
 
