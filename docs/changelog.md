@@ -4,6 +4,57 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.6] — 2026-11-11
+
+This stable release brings together the features and improvements developed
+through the `1.0.6a1`–`1.0.6b2` pre-release cycle.
+
+## ✨ Added
+
+- Added story-grouped discovery results with representative articles, source
+  names, related articles, and cluster metadata, plus the `FeedCache` protocol
+  for custom personalized-feed caching.
+- Added an optional FastMCP stdio server with tools for news search and fetch,
+  article extraction, publisher-scoped search, discovery, summarization,
+  filtering, ranking, and clustering.
+- Added `to_text()`, `to_jsonld()`, and `to_csv()` exporters, corresponding CLI
+  options, documentation, and examples.
+- Added dependency-wheel planning and verification tools and GitHub Actions
+  workflows for building and validating dependency wheels.
+- Adopted the `src/open_news` package layout and updated package discovery,
+  typing metadata, tests, CI, and source distributions.
+
+## 🔄 Changed
+
+- Added `async_=True` support to `fetch()`, `search()`, `get_article()`,
+  `batch_summarize()`, and `search_and_summarize()`; synchronous behavior
+  remains the default. Async mode cannot be combined with streaming
+  `refresh_interval`.
+- Retained the former package-level async function names as deprecated
+  compatibility wrappers that emit `DeprecationWarning`; new code should use
+  `async_=True`.
+- Replaced title-based article removal with story clustering. Distinct URLs
+  for similar stories are grouped, while exact normalized URL duplicates are
+  merged and source names retained.
+- Moved the feed engine implementation to `open_news.processing`, preserving
+  the old `open_news.feeds` import path for compatibility.
+- Updated CLI and Markdown output to show grouped sources and related article
+  links, and removed fuzzy-deduplication controls from discovery CLI.
+
+## 🧪 Validation
+
+- Added and organized tests for the package APIs, async compatibility,
+  exporters, MCP tools, and release workflows.
+- Verified source and wheel builds; the test suite passed with 262 tests
+  passed and 1 skipped, and mypy reported no issues.
+
+## ℹ️ Known gaps
+
+- MCP is an initial integration and does not expose every Python API option.
+  Use the Python API for functionality not yet available through MCP.
+
+---
+
 # [1.0.6b2] — 2026-11-11
 
 This beta focuses on API compatibility and release validation ahead of the
