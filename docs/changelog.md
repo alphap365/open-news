@@ -4,6 +4,26 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.6b2] — 2026-11-11
+
+This beta focuses on API compatibility and release validation ahead of the
+stable `1.0.6` release.
+
+## 🔄 Changed
+
+- Restored the package-level `fetch_async()`, `search_async()`,
+  `get_article_async()`, `batch_summarize_async()`, and
+  `search_and_summarize_async()` entry points as deprecated compatibility
+  wrappers. They emit `DeprecationWarning`; new code should use
+  `async_=True` on the corresponding public functions.
+
+## 🧪 Validation
+
+- Added regression coverage for legacy async aliases and their delegation to
+  the unified async implementations.
+
+---
+
 # [1.0.6b1] — 2026-11-11
 
 This upcoming alpha release adds an initial Model Context Protocol (MCP)

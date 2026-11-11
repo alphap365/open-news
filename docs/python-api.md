@@ -112,8 +112,9 @@ the flag, it preserves the synchronous behavior. The same pattern works with
 `search_and_summarize()`. `async` is a Python reserved word, so the supported
 parameter spelling is `async_`.
 
-The former package-level `*_async()` entry points have been replaced by this
-flag; awaitable operations are selected on the same public functions.
+The `*_async()` entry points remain available as deprecated compatibility
+wrappers. They emit `DeprecationWarning`; use the corresponding public function
+with `async_=True` in new code.
 
 ## `search()`
 

@@ -21,5 +21,5 @@ The SVG diagrams are vector images. Open them directly in a browser or image vie
 
 ## Version note
 
-The project metadata currently declares version `1.0.6b1`. Use the changelog
+The project metadata currently declares version `1.0.6b2`. Use the changelog
 for release history and version notes.

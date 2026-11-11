@@ -2,13 +2,18 @@ import logging
 
 from . import export
 from .api import (
+    batch_summarize_async,
     cluster_articles,
     discover_and_get,
     fetch,
+    fetch_async,
     filter_articles,
     get_article,
+    get_article_async,
     rank_articles,
     search,
+    search_and_summarize_async,
+    search_async,
     search_site,
     stream_fetch,
     stream_search,
@@ -40,11 +45,9 @@ from .processing.feed_engine import (
 )
 from .processing.summarizer import summarize_text, summarize_with_keywords
 
-__version__ = "1.0.6b1"
+__version__ = "1.0.6b2"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
-
-
 
 __all__ = [
     # sync
@@ -74,4 +77,9 @@ __all__ = [
     "to_jsonld",
     "to_csv",
     "to_text",
+    "fetch_async",
+    "search_async",
+    "get_article_async",
+    "batch_summarize_async",
+    "search_and_summarize_async",
 ]

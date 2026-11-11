@@ -8,12 +8,51 @@ from open_news import batch_summarize, fetch, get_article, search, search_and_su
 from open_news.processing import batch
 
 
-def test_legacy_async_functions_are_not_public_exports():
-    assert not hasattr(open_news, "fetch_async")
-    assert not hasattr(open_news, "search_async")
-    assert not hasattr(open_news, "get_article_async")
-    assert not hasattr(open_news, "batch_summarize_async")
-    assert not hasattr(open_news, "search_and_summarize_async")
+def test_legacy_async_functions_are_public_compatibility_aliases():
+    assert callable(open_news.fetch_async)
+    assert callable(open_news.search_async)
+    assert callable(open_news.get_article_async)
+    assert callable(open_news.batch_summarize_async)
+    assert callable(open_news.search_and_summarize_async)
+
+
+@pytest.mark.parametrize(
+    ("legacy_name", "implementation_path", "args"),
+    [
+        ("fetch_async", "open_news.api._fetch_async", ()),
+        ("search_async", "open_news.api._search_async", ("climate",)),
+        (
+            "get_article_async",
+            "open_news.api._get_article_async",
+            ("https://example.com/story",),
+        ),
+        (
+            "batch_summarize_async",
+            "open_news.api._batch_summarize_impl",
+            (["https://example.com/story"],),
+        ),
+        (
+            "search_and_summarize_async",
+            "open_news.api._search_and_summarize_impl",
+            ("climate",),
+        ),
+    ],
+)
+def test_legacy_async_alias_warns_and_delegates(
+    mocker, legacy_name, implementation_path, args
+):
+    implementation = mocker.patch(
+        implementation_path,
+        new_callable=AsyncMock,
+        return_value=[],
+    )
+    legacy = getattr(open_news, legacy_name)
+
+    with pytest.warns(DeprecationWarning, match="async_=True"):
+        result = asyncio.run(legacy(*args))
+
+    assert result == []
+    implementation.assert_awaited_once()
 
 
 def test_fetch_async_option_returns_awaitable(mocker):

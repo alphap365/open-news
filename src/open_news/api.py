@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import warnings
 from datetime import date, datetime
 from typing import Awaitable, Dict, Iterator, List, Optional, Union, cast
 
@@ -13,6 +14,7 @@ from .fetch.article import get_article as _get_article
 from .fetch.article import _get_article_async
 from .fetch.crawler import crawl_site
 from .processing.cluster import cluster_articles as cluster_articles
+from .processing.batch import _batch_summarize_impl, _search_and_summarize_impl
 from .processing.dedupe import normalize_url
 from .processing.pipeline import run_pipeline, run_pipeline_async
 from .processing.rank import rank_articles as rank_articles
@@ -26,6 +28,14 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 # Simplified public API
 # ------------------------------------------------------------------
+
+
+def _warn_async_alias(name: str, replacement: str) -> None:
+    warnings.warn(
+        f"{name}() is deprecated; use {replacement}(..., async_=True) instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
 
 
 async def _fetch_async(
@@ -67,6 +77,36 @@ async def _fetch_async(
         sort_by=config.sort_by,
         full_content=config.full_content,
         search_in=config.search_in,
+        js=js,
+    )
+
+
+async def fetch_async(
+    category: str = "general",
+    location: Optional[str] = None,
+    time_limit: str = "d",
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    search_in: Optional[List[str]] = None,
+    js: bool = False,
+) -> List[Dict]:
+    """Deprecated alias for ``await fetch(..., async_=True)``."""
+    _warn_async_alias("fetch_async", "fetch")
+    return await _fetch_async(
+        category=category,
+        location=location,
+        time_limit=time_limit,
+        max_results=max_results,
+        language=language,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        sort_by=sort_by,
+        full_content=full_content,
+        search_in=search_in,
         js=js,
     )
 
@@ -121,6 +161,44 @@ async def _search_async(
     )
 
 
+async def search_async(
+    query: str,
+    query_mode: str = "any",
+    exclude_terms: Optional[List[str]] = None,
+    time_limit: str = "d",
+    start_date: Optional[Union[str, date, datetime]] = None,
+    end_date: Optional[Union[str, date, datetime]] = None,
+    country: Optional[str] = None,
+    max_results: int = 20,
+    language: Optional[str] = None,
+    whitelist: Optional[List[str]] = None,
+    blacklist: Optional[List[str]] = None,
+    sort_by: str = "date",
+    full_content: bool = False,
+    search_in: Optional[List[str]] = None,
+    js: bool = False,
+) -> List[Dict]:
+    """Deprecated alias for ``await search(..., async_=True)``."""
+    _warn_async_alias("search_async", "search")
+    return await _search_async(
+        query=query,
+        query_mode=query_mode,
+        exclude_terms=exclude_terms,
+        time_limit=time_limit,
+        start_date=start_date,
+        end_date=end_date,
+        country=country,
+        max_results=max_results,
+        language=language,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        sort_by=sort_by,
+        full_content=full_content,
+        search_in=search_in,
+        js=js,
+    )
+
+
 def get_article(
     url: str,
     timeout: int = 15,
@@ -131,6 +209,62 @@ def get_article(
     if async_:
         return _get_article_async(url, timeout=timeout, js=js)
     return _get_article(url, timeout, js=js)
+
+
+async def get_article_async(
+    url: str,
+    timeout: int = 15,
+    js: bool = False,
+) -> Dict:
+    """Deprecated alias for ``await get_article(..., async_=True)``."""
+    _warn_async_alias("get_article_async", "get_article")
+    return await _get_article_async(url, timeout=timeout, js=js)
+
+
+async def batch_summarize_async(
+    urls: List[str],
+    sentence_count: int = 3,
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
+    max_concurrency: int = 5,
+    timeout_per_article: int = 30,
+    js: bool = False,
+    dedupe: bool = True,
+) -> List[Dict]:
+    """Deprecated alias for ``await batch_summarize(..., async_=True)``."""
+    _warn_async_alias("batch_summarize_async", "batch_summarize")
+    return await _batch_summarize_impl(
+        urls,
+        sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_concurrency,
+        timeout_per_article=timeout_per_article,
+        js=js,
+        dedupe=dedupe,
+    )
+
+
+async def search_and_summarize_async(
+    query: str,
+    limit: int = 10,
+    sentence_count: int = 3,
+    include_full_text: bool = False,
+    include_images_videos: bool = False,
+    max_concurrency: int = 5,
+    js: bool = False,
+) -> List[Dict]:
+    """Deprecated alias for ``await search_and_summarize(..., async_=True)``."""
+    _warn_async_alias("search_and_summarize_async", "search_and_summarize")
+    return await _search_and_summarize_impl(
+        query,
+        limit=limit,
+        sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_concurrency,
+        js=js,
+    )
 
 
 def fetch(
