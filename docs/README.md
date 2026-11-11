@@ -8,6 +8,7 @@ This documentation reflects the current repository state in this checkout of the
 - [Python API](python-api.md)
 - [CLI reference](cli-reference.md)
 - [Parameters reference](parameters-reference.md)
+- [Model Context Protocol (MCP)](mcp.md)
 - [Architecture](architecture.md)
 - [Changelog](changelog.md)
 
@@ -20,4 +21,5 @@ The SVG diagrams are vector images. Open them directly in a browser or image vie
 
 ## Version note
 
-This repository currently reports package version `1.0.5` in `pyproject.toml` and the package metadata. Use the changelog for release history and version notes.
+The project metadata currently declares version `1.0.6b1`. Use the changelog
+for release history and version notes.

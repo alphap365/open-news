@@ -39,6 +39,18 @@ python -m pip install "open-news-api[nlp]"
 
 The `nlp` extra installs optional BM25 and summarization components. Ranking with `method="auto"` can use a pure-Python TF-IDF fallback when `bm25s` is unavailable.
 
+### MCP server
+
+```bash
+python -m pip install "open-news-api[mcp]"
+open-news-mcp
+```
+
+This installs FastMCP and provides the `open-news-mcp` stdio server command.
+See the [MCP guide](mcp.md) for client setup, tool descriptions, and a runnable
+client example. MCP support is still growing; some Python API features are not
+yet available as MCP tools.
+
 ## Install with uv
 
 Install Open News into the current project's environment:
@@ -52,8 +64,9 @@ Add optional features when your application needs them:
 ```bash
 uv add "open-news-api[js]"
 uv add "open-news-api[nlp]"
-# Or both extras together:
+# Or combine optional features:
 uv add "open-news-api[js,nlp]"
+uv add "open-news-api[mcp]"
 ```
 
 Run the CLI without adding it to the current project:

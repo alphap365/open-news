@@ -8,8 +8,8 @@ Import public functions from `open_news`. This guide describes the current publi
 
 ```python
 from open_news import (
-    fetch, fetch_async,
-    search, search_async,
+    fetch,
+    search,
     stream_fetch, stream_search,
     search_site,
 )
@@ -20,7 +20,6 @@ from open_news import (
 ```python
 from open_news import (
     get_article,
-    get_article_async,
     discover_and_get,
 )
 ```
@@ -36,9 +35,7 @@ from open_news import (
     summarize_text,
     summarize_with_keywords,
     batch_summarize,
-    batch_summarize_async,
     search_and_summarize,
-    search_and_summarize_async,
 )
 ```
 
@@ -67,7 +64,14 @@ application-owned persistence backends; `EncryptedCache` implements it.
 ### Export
 
 ```python
-from open_news import export, to_markdown, to_json
+from open_news import (
+    export,
+    to_markdown,
+    to_json,
+    to_jsonld,
+    to_csv,
+    to_text,
+)
 ```
 
 ## `fetch()`
@@ -89,20 +93,27 @@ articles = fetch(
 
 Common arguments include category, location, time window, maximum results, language, domain allow/deny lists, sorting, full-content enrichment, and JavaScript rendering. Similar-story grouping is always enabled; exact normalized URL duplicates are merged. Consult `open_news.api.fetch` for the exact signature in the installed release.
 
-### Async equivalent
+### Async call
 
 ```python
 import asyncio
-from open_news import fetch_async
+from open_news import fetch
 
 async def main():
-    articles = await fetch_async(category="tech", max_results=10)
+    articles = await fetch(category="tech", max_results=10, async_=True)
     print(len(articles))
 
 asyncio.run(main())
 ```
 
-`fetch_async()` is a coroutine; await it from an async function.
+With `async_=True`, `fetch()` returns a coroutine that must be awaited. Without
+the flag, it preserves the synchronous behavior. The same pattern works with
+`search()`, `get_article()`, `batch_summarize()`, and
+`search_and_summarize()`. `async` is a Python reserved word, so the supported
+parameter spelling is `async_`.
+
+The former package-level `*_async()` entry points have been replaced by this
+flag; awaitable operations are selected on the same public functions.
 
 ## `search()`
 
@@ -121,16 +132,17 @@ articles = search(
 
 Search supports query matching modes, excluded terms, date bounds, country/language settings, domain filters, sorting, optional full-content extraction, and streaming via the refresh interval where supported.
 
-### Async equivalent
+### Async call
 
 ```python
-from open_news import search_async
+from open_news import search
 
 async def main():
-    articles = await search_async(
+    articles = await search(
         "climate policy",
         country="in",
         max_results=10,
+        async_=True,
     )
 ```
 
@@ -158,12 +170,12 @@ print(article.get("title"))
 print(article.get("text"))
 ```
 
-Async version:
+Async call:
 
 ```python
-from open_news import get_article_async
+from open_news import get_article
 
-article = await get_article_async("https://example.com/story")
+article = await get_article("https://example.com/story", async_=True)
 ```
 
 Typical article records may contain `url`, `title`, `text`, `authors`, `publish_date`, `category`, `top_image`, `images`, `videos`, `source`, and `meta`. Availability depends on the source page.
@@ -221,11 +233,12 @@ results = batch_summarize(
 Async batch summarization:
 
 ```python
-from open_news import batch_summarize_async
+from open_news import batch_summarize
 
-results = await batch_summarize_async(
+results = await batch_summarize(
     ["https://example.com/story-a"],
     sentence_count=3,
+    async_=True,
 )
 ```
 
@@ -241,7 +254,8 @@ results = search_and_summarize(
 )
 ```
 
-The async counterpart is `search_and_summarize_async()`.
+Use `await search_and_summarize(..., async_=True)` for the asynchronous
+counterpart.
 
 ## Export
 
@@ -258,9 +272,31 @@ json_text = export.to_json(
     clusters,
     path="out/clusters.json",
 )
+
+jsonld_text = export.to_jsonld(
+    clusters,
+    path="out/clusters.jsonld",
+)
+
+csv_text = export.to_csv(
+    clusters,
+    path="out/clusters.csv",
+)
+
+llm_context = export.to_text(
+    clusters,
+    path="out/clusters.txt",
+    max_text_chars=4000,
+)
 ```
 
-Both functions return serialized text. JSON supports a schema-versioned envelope and a bare-list mode; see the exporter function documentation for its options.
+Each exporter returns the serialized content and writes it to `path` when
+provided. `to_jsonld()` emits a Schema.org `ItemList` of `NewsArticle` records.
+`to_csv()` uses stable columns and JSON-encodes nested values in cells.
+`to_text()` creates labeled plain-text context for LLM prompts or retrieval
+systems; set `include_text=False` or `max_text_chars` to control article-body
+content. Article and cluster records are both supported. `to_json()` supports
+a schema-versioned envelope and a bare-list mode.
 
 ## Compatibility guidance
 

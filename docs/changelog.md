@@ -4,6 +4,41 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.6b1] — 2026-11-11
+
+This upcoming alpha release adds an initial Model Context Protocol (MCP)
+integration.
+
+## ✨ Added
+
+- Added the optional `mcp` dependency extra and the `open-news-mcp` stdio server.
+- Exposed news search and category fetch, article extraction, publisher-scoped
+  search, website discovery, summarization, filtering, ranking, and story
+  clustering as MCP tools.
+- Added an MCP setup and tool reference, plus a runnable stdio client example.
+- Added `to_text()`, `to_jsonld()`, and `to_csv()` structured exporters for
+  LLM-ready context, Schema.org NewsArticle data, and tabular workflows.
+- Added a structured-export example and public API documentation for the new
+  formats.
+- Added CLI flags for writing JSON-LD, CSV, and plain-text exports directly
+  from fetched results or from saved JSON.
+
+## 🔄 Changed
+
+- Added the `async_=True` option to `fetch()`, `search()`, `get_article()`,
+  `batch_summarize()`, and `search_and_summarize()` to return awaitable
+  operations through the same public functions. Existing synchronous behavior
+  is unchanged by default; the former package-level `*_async()` functions are
+  no longer public entry points.
+
+## ℹ️ Known gaps
+
+- MCP support is an early integration and is not feature-complete. More tools
+  and capabilities are planned; use the Python API for options not currently
+  exposed by MCP tools.
+
+---
+
 # [1.0.6a2] — 2026-11-08
 
 This upcoming alpha release records the changes since `v1.0.6a1`.

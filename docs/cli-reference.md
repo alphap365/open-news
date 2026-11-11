@@ -22,6 +22,9 @@ Commands that produce article results share output controls where applicable:
 - `--save FILE` saves the raw result payload.
 - `--export-md FILE` writes a Markdown export.
 - `--export-json FILE` writes a clean JSON export.
+- `--export-jsonld FILE` writes Schema.org JSON-LD.
+- `--export-csv FILE` writes structured CSV.
+- `--export-text FILE` writes labeled plain text for LLM context and retrieval.
 - `--export-title TITLE` sets the Markdown document title.
 - `--export-all-members` includes all members of clusters in Markdown output.
 
@@ -117,10 +120,14 @@ Options include `--query`, `--limit`, `--sentences`, `--workers`, and `--js`.
 Re-export a saved JSON file without fetching news again.
 
 ```bash
-open-news export input.json --md output.md --json clean.json
+open-news export input.json --md output.md --json clean.json \
+  --jsonld stories.jsonld --csv stories.csv --text context.txt
 ```
 
-Optional flags include `--title` and `--all-members`.
+Any combination of `--md`, `--json`, `--jsonld`, `--csv`, and `--text` can be
+used. Optional Markdown flags include `--title` and `--all-members`. JSON-LD
+exports Schema.org `ItemList` and `NewsArticle` objects; CSV JSON-encodes
+nested values; text exports labeled article and cluster context.
 
 ## JSON pipelines
 
