@@ -220,7 +220,10 @@ def _emit(data: Any, args: argparse.Namespace, kind: str) -> None:
     # Clean exports (independent of --save / --format)
     md_path = getattr(args, "export_md", None)
     json_path = getattr(args, "export_json", None)
-    if not md_path and not json_path:
+    jsonld_path = getattr(args, "export_jsonld", None)
+    csv_path = getattr(args, "export_csv", None)
+    text_path = getattr(args, "export_text", None)
+    if not any((md_path, json_path, jsonld_path, csv_path, text_path)):
         return
 
     export_items = [data] if isinstance(data, dict) else list(data)
@@ -238,6 +241,15 @@ def _emit(data: Any, args: argparse.Namespace, kind: str) -> None:
         if json_path:
             _export.to_json(export_items, path=json_path)
             print(C.dim(f"JSON export written to {json_path}"), file=sys.stderr)
+        if jsonld_path:
+            _export.to_jsonld(export_items, path=jsonld_path)
+            print(C.dim(f"JSON-LD export written to {jsonld_path}"), file=sys.stderr)
+        if csv_path:
+            _export.to_csv(export_items, path=csv_path)
+            print(C.dim(f"CSV export written to {csv_path}"), file=sys.stderr)
+        if text_path:
+            _export.to_text(export_items, path=text_path)
+            print(C.dim(f"Text export written to {text_path}"), file=sys.stderr)
     except Exception as e:
         print(C.red(f"Export failed: {e}"), file=sys.stderr)
 
@@ -293,6 +305,17 @@ def _add_output_args(p: argparse.ArgumentParser) -> None:
         "--export-json",
         metavar="FILE",
         help="Write a clean, schema-versioned JSON export to FILE.",
+    )
+    p.add_argument(
+        "--export-jsonld",
+        metavar="FILE",
+        help="Write Schema.org JSON-LD to FILE.",
+    )
+    p.add_argument("--export-csv", metavar="FILE", help="Write structured CSV to FILE.")
+    p.add_argument(
+        "--export-text",
+        metavar="FILE",
+        help="Write labeled plain-text context to FILE.",
     )
     p.add_argument(
         "--export-title",
@@ -619,14 +642,16 @@ def build_parser() -> argparse.ArgumentParser:
         "export",
         help="Re-export a saved JSON file to Markdown and/or clean JSON.",
         description=(
-            "Reads a JSON file produced by --save or --export-json and writes "
-            "clean Markdown and/or schema-versioned JSON. Useful for changing "
-            "format without re-fetching."
+            "Reads a JSON file produced by --save or an export option and writes "
+            "Markdown, JSON, JSON-LD, CSV, and/or plain text without re-fetching."
         ),
     )
     export_p.add_argument("input", help="Input JSON file.")
     export_p.add_argument("--md", metavar="FILE", help="Write Markdown to FILE.")
     export_p.add_argument("--json", metavar="FILE", help="Write clean JSON to FILE.")
+    export_p.add_argument("--jsonld", metavar="FILE", help="Write Schema.org JSON-LD.")
+    export_p.add_argument("--csv", metavar="FILE", help="Write structured CSV.")
+    export_p.add_argument("--text", metavar="FILE", help="Write labeled plain text.")
     export_p.add_argument("--title", help="Document title for the Markdown export.")
     export_p.add_argument(
         "--all-members",
@@ -808,8 +833,10 @@ def _run(args: argparse.Namespace) -> None:
         _emit(results, args, "summaries")
 
     elif args.command == "export":
-        if not args.md and not args.json:
-            raise SystemExit("export: provide --md and/or --json")
+        if not any((args.md, args.json, args.jsonld, args.csv, args.text)):
+            raise SystemExit(
+                "export: provide one or more of --md, --json, --jsonld, --csv, --text"
+            )
         with open(args.input, "r", encoding="utf-8") as f:
             payload = json.load(f)
         if isinstance(payload, dict):
@@ -830,6 +857,15 @@ def _run(args: argparse.Namespace) -> None:
         if args.json:
             _export.to_json(items, path=args.json)
             print(C.dim(f"Wrote {args.json}"), file=sys.stderr)
+        if args.jsonld:
+            _export.to_jsonld(items, path=args.jsonld)
+            print(C.dim(f"Wrote {args.jsonld}"), file=sys.stderr)
+        if args.csv:
+            _export.to_csv(items, path=args.csv)
+            print(C.dim(f"Wrote {args.csv}"), file=sys.stderr)
+        if args.text:
+            _export.to_text(items, path=args.text)
+            print(C.dim(f"Wrote {args.text}"), file=sys.stderr)
 
 
 def main() -> None:

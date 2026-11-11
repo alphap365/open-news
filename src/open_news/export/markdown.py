@@ -2,16 +2,12 @@
 
 from __future__ import annotations
 
-import logging
-import os
 import re
 from datetime import datetime, timezone
 from typing import Dict, List, Optional, Union
 
 from ..utils.textutil import MARKS
-from ._shape import normalize_input
-
-logger = logging.getLogger(__name__)
+from ._shape import normalize_input, write_output
 
 # Keep word chars, combining marks (Devanagari vowel signs, nukta, anusvara,
 # Arabic harakat, ...), whitespace, and dashes. Strip everything else.
@@ -162,15 +158,6 @@ def _cluster_block(
     return "\n".join(lines)
 
 
-def _write(path, content: str) -> None:
-    p = os.fspath(path)
-    parent = os.path.dirname(os.path.abspath(p))
-    os.makedirs(parent, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(content)
-    logger.info("Wrote %d chars to %s", len(content), p)
-
-
 def to_markdown(
     items: List[Dict],
     path: Optional[Union[str, "os.PathLike"]] = None,
@@ -239,5 +226,5 @@ def to_markdown(
         md = "\n".join(out).rstrip() + "\n"
 
     if path:
-        _write(path, md)
+        write_output(path, md)
     return md

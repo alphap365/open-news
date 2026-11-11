@@ -1,7 +1,7 @@
 import asyncio
 import logging
 from datetime import date, datetime
-from typing import Dict, Iterator, List, Optional, Union, cast
+from typing import Awaitable, Dict, Iterator, List, Optional, Union, cast
 
 from .config import FetchConfig, SearchConfig
 from .feeds.duckduckgo_engine import fetch_raw
@@ -10,6 +10,7 @@ from .feeds.rss_discovery import discover_rss_feed
 from .feeds.sources import from_rss
 from .feeds.sources import search_site as _search_site
 from .fetch.article import get_article as _get_article
+from .fetch.article import _get_article_async
 from .fetch.crawler import crawl_site
 from .processing.cluster import cluster_articles as cluster_articles
 from .processing.dedupe import normalize_url
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 # ------------------------------------------------------------------
 
 
-async def fetch_async(
+async def _fetch_async(
     category: str = "general",
     location: Optional[str] = None,
     time_limit: str = "d",
@@ -70,7 +71,7 @@ async def fetch_async(
     )
 
 
-async def search_async(
+async def _search_async(
     query: str,
     query_mode: str = "any",
     exclude_terms: Optional[List[str]] = None,
@@ -120,8 +121,15 @@ async def search_async(
     )
 
 
-def get_article(url: str, timeout: int = 15, js: bool = False) -> Dict:
+def get_article(
+    url: str,
+    timeout: int = 15,
+    js: bool = False,
+    async_: bool = False,
+) -> Union[Dict, Awaitable[Dict]]:
     """Fetch full article content, metadata, images, videos."""
+    if async_:
+        return _get_article_async(url, timeout=timeout, js=js)
     return _get_article(url, timeout, js=js)
 
 
@@ -138,7 +146,8 @@ def fetch(
     search_in: Optional[List[str]] = None,
     refresh_interval: Optional[int] = None,
     js: bool = False,
-) -> Union[List[Dict], Iterator[List[Dict]]]:
+    async_: bool = False,
+) -> Union[List[Dict], Iterator[List[Dict]], Awaitable[List[Dict]]]:
     """
     Live category/location news via the DuckDuckGo News engine. Always
     queries live — no disk cache — since freshness is the point. This
@@ -158,6 +167,7 @@ def fetch(
         refresh_interval: if set (seconds, >= 5), returns a generator that
             polls on this cadence and yields only newly-seen articles
         js: use the persistent-browser crawler backend for full_content fetches
+        async_: if True, return a coroutine to await instead of blocking
     """
     config = FetchConfig(
         category=category,
@@ -173,24 +183,26 @@ def fetch(
         refresh_interval=refresh_interval,
     )
 
+    if async_ and refresh_interval:
+        raise ValueError("async_=True cannot be combined with refresh_interval")
+
     if refresh_interval:
         return _fetch_stream(config, js=js)
 
-    return asyncio.run(
-        fetch_async(
-            category=category,
-            location=location,
-            time_limit=time_limit,
-            max_results=max_results,
-            language=language,
-            whitelist=whitelist,
-            blacklist=blacklist,
-            sort_by=sort_by,
-            full_content=full_content,
-            search_in=search_in,
-            js=js,
-        )
+    coroutine = _fetch_async(
+        category=category,
+        location=location,
+        time_limit=time_limit,
+        max_results=max_results,
+        language=language,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        sort_by=sort_by,
+        full_content=full_content,
+        search_in=search_in,
+        js=js,
     )
+    return coroutine if async_ else asyncio.run(coroutine)
 
 
 def _fetch_stream(config: FetchConfig, js: bool) -> Iterator[List[Dict]]:
@@ -238,7 +250,8 @@ def search(
     search_in: Optional[List[str]] = None,
     refresh_interval: Optional[int] = None,
     js: bool = False,
-) -> Union[List[Dict], Iterator[List[Dict]]]:
+    async_: bool = False,
+) -> Union[List[Dict], Iterator[List[Dict]], Awaitable[List[Dict]]]:
     """
     Direct keyword search via Google News RSS.
 
@@ -264,6 +277,7 @@ def search(
             fetch(refresh_interval=...), previously only available via
             fetch(). Prefer stream_search() if you always want a
             generator back regardless of this argument.
+        async_: if True, return a coroutine to await instead of blocking
         (remaining parameters shared with fetch(), same meaning)
     """
     config = SearchConfig(
@@ -283,28 +297,30 @@ def search(
         refresh_interval=refresh_interval,
     )
 
+    if async_ and refresh_interval:
+        raise ValueError("async_=True cannot be combined with refresh_interval")
+
     if refresh_interval:
         return _search_stream(config, country=country, js=js)
 
-    return asyncio.run(
-        search_async(
-            query=query,
-            query_mode=query_mode,
-            exclude_terms=exclude_terms,
-            time_limit=time_limit,
-            start_date=start_date,
-            end_date=end_date,
-            country=country,
-            max_results=max_results,
-            language=language,
-            whitelist=whitelist,
-            blacklist=blacklist,
-            sort_by=sort_by,
-            full_content=full_content,
-            search_in=search_in,
-            js=js,
-        )
+    coroutine = _search_async(
+        query=query,
+        query_mode=query_mode,
+        exclude_terms=exclude_terms,
+        time_limit=time_limit,
+        start_date=start_date,
+        end_date=end_date,
+        country=country,
+        max_results=max_results,
+        language=language,
+        whitelist=whitelist,
+        blacklist=blacklist,
+        sort_by=sort_by,
+        full_content=full_content,
+        search_in=search_in,
+        js=js,
     )
+    return coroutine if async_ else asyncio.run(coroutine)
 
 
 def _search_stream(

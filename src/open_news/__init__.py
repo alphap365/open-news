@@ -5,12 +5,10 @@ from .api import (
     cluster_articles,
     discover_and_get,
     fetch,
-    fetch_async,
     filter_articles,
     get_article,
     rank_articles,
     search,
-    search_async,
     search_site,
     stream_fetch,
     stream_search,
@@ -27,13 +25,10 @@ from .cache import (
 from .cache import (
     store_user_profile as store_user_profile,
 )
-from .export import to_json, to_markdown
-from .fetch.article import get_article_async
+from .export import to_csv, to_json, to_jsonld, to_markdown, to_text
 from .processing.batch import (
     batch_summarize,
-    batch_summarize_async,
     search_and_summarize,
-    search_and_summarize_async,
 )
 from .processing.dedupe import dedupe_articles
 from .processing.feed_engine import (
@@ -45,9 +40,11 @@ from .processing.feed_engine import (
 )
 from .processing.summarizer import summarize_text, summarize_with_keywords
 
-__version__ = "1.0.6a2"
+__version__ = "1.0.6b1"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
+
+
 
 __all__ = [
     # sync
@@ -74,10 +71,7 @@ __all__ = [
     "export",
     "to_markdown",
     "to_json",
-    # async
-    "fetch_async",
-    "search_async",
-    "get_article_async",
-    "batch_summarize_async",
-    "search_and_summarize_async",
+    "to_jsonld",
+    "to_csv",
+    "to_text",
 ]

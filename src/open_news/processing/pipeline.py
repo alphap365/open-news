@@ -26,7 +26,7 @@ async def _enrich_full_content_async(
     Order is preserved: results[i] corresponds to articles[i].
     Reuses a single AsyncClient so the connection pool is shared.
     """
-    from ..fetch.article import get_article_async
+    from ..fetch.article import _get_article_async
 
     if not articles:
         return articles
@@ -50,7 +50,7 @@ async def _enrich_full_content_async(
 
         try:
             async with sem:
-                full = await get_article_async(url, js=js, client=shared_client)
+                full = await _get_article_async(url, js=js, client=shared_client)
             if full.get("text"):
                 merged = dict(art)
                 for key, value in full.items():

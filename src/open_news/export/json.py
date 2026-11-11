@@ -4,14 +4,11 @@ from __future__ import annotations
 
 import dataclasses
 import json
-import logging
-import os
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
-from ._shape import normalize_input
+from ._shape import normalize_input, write_output
 
-logger = logging.getLogger(__name__)
 SCHEMA_VERSION = "1.0"
 
 _INTERNAL_KEYS = {
@@ -38,15 +35,6 @@ def _default_serializer(o: Any):
     if dataclasses.is_dataclass(o) and not isinstance(o, type):
         return dataclasses.asdict(o)
     return str(o)
-
-
-def _write(path, content: str) -> None:
-    p = os.fspath(path)
-    parent = os.path.dirname(os.path.abspath(p))
-    os.makedirs(parent, exist_ok=True)
-    with open(p, "w", encoding="utf-8") as f:
-        f.write(content)
-    logger.info("Wrote %d chars to %s", len(content), p)
 
 
 def to_json(
@@ -87,5 +75,5 @@ def to_json(
         payload, indent=indent, default=_default_serializer, ensure_ascii=ensure_ascii
     )
     if path:
-        _write(path, text)
+        write_output(path, text)
     return text

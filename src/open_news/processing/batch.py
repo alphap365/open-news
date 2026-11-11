@@ -1,15 +1,15 @@
 import asyncio
 import logging
-from typing import Dict, List, cast
+from typing import Awaitable, Dict, List
 
-from ..fetch.article import get_article_async
+from ..fetch.article import _get_article_async
 from .dedupe import dedupe_articles
 from .summarizer import summarize_text
 
 logger = logging.getLogger(__name__)
 
 
-async def batch_summarize_async(
+async def _batch_summarize_impl(
     urls: List[str],
     sentence_count: int = 3,
     include_full_text: bool = False,
@@ -29,7 +29,7 @@ async def batch_summarize_async(
         async with sem:
             try:
                 logger.info("Processing: %s", url)
-                article = await get_article_async(
+                article = await _get_article_async(
                     url,
                     timeout=timeout_per_article,
                     js=js,
@@ -81,23 +81,23 @@ def batch_summarize(
     timeout_per_article: int = 30,
     js: bool = False,
     dedupe: bool = True,
-) -> List[Dict]:
-    """Sync wrapper — `max_workers` maps to async concurrency limit."""
-    return asyncio.run(
-        batch_summarize_async(
-            urls,
-            sentence_count=sentence_count,
-            include_full_text=include_full_text,
-            include_images_videos=include_images_videos,
-            max_concurrency=max_workers,
-            timeout_per_article=timeout_per_article,
-            js=js,
-            dedupe=dedupe,
-        )
+    async_: bool = False,
+) -> List[Dict] | Awaitable[List[Dict]]:
+    """Summarize URLs; await the result when async_ is True."""
+    coroutine = _batch_summarize_impl(
+        urls,
+        sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_workers,
+        timeout_per_article=timeout_per_article,
+        js=js,
+        dedupe=dedupe,
     )
+    return coroutine if async_ else asyncio.run(coroutine)
 
 
-async def search_and_summarize_async(
+async def _search_and_summarize_impl(
     query: str,
     limit: int = 10,
     sentence_count: int = 3,
@@ -106,15 +106,15 @@ async def search_and_summarize_async(
     max_concurrency: int = 5,
     js: bool = False,
 ) -> List[Dict]:
-    from ..api import search  # deferred: avoid circular import
+    from ..api import _search_async  # deferred: avoid circular import
 
-    articles = cast(List[Dict], search(query, max_results=limit))
+    articles = await _search_async(query=query, max_results=limit)
     if not articles:
         logger.warning("No articles found for %r", query)
         return []
 
     urls = [art["url"] for art in articles]
-    batch_results = await batch_summarize_async(
+    batch_results = await _batch_summarize_impl(
         urls,
         sentence_count=sentence_count,
         include_full_text=include_full_text,
@@ -135,18 +135,19 @@ def search_and_summarize(
     include_images_videos: bool = False,
     max_workers: int = 5,
     js: bool = False,
-) -> List[Dict]:
-    return asyncio.run(
-        search_and_summarize_async(
-            query,
-            limit=limit,
-            sentence_count=sentence_count,
-            include_full_text=include_full_text,
-            include_images_videos=include_images_videos,
-            max_concurrency=max_workers,
-            js=js,
-        )
+    async_: bool = False,
+) -> List[Dict] | Awaitable[List[Dict]]:
+    """Search for articles and summarize them; await when async_ is True."""
+    coroutine = _search_and_summarize_impl(
+        query,
+        limit=limit,
+        sentence_count=sentence_count,
+        include_full_text=include_full_text,
+        include_images_videos=include_images_videos,
+        max_concurrency=max_workers,
+        js=js,
     )
+    return coroutine if async_ else asyncio.run(coroutine)
 
 
 # Legacy aliases

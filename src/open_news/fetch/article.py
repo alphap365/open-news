@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from typing import Dict, Optional
+from typing import Awaitable, Dict, Optional, Union
 from urllib.parse import urlparse
 
 import httpx
@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 DEFAULT_TIMEOUT = 15
 
 
-async def get_article_async(
+async def _get_article_async(
     url: str,
     timeout: int = DEFAULT_TIMEOUT,
     js: bool = False,
@@ -34,7 +34,7 @@ async def get_article_async(
         try:
             # Playwright's sync driver is not async-safe. Isolate it in a
             # worker thread; the async event loop keeps running for other
-            # concurrent get_article_async calls.
+            # concurrent article fetch calls.
             html = await asyncio.to_thread(
                 js_renderer.render_html,
                 url,
@@ -88,9 +88,15 @@ async def get_article_async(
     }
 
 
-def get_article(url: str, timeout: int = DEFAULT_TIMEOUT, js: bool = False) -> Dict:
-    """Sync wrapper for backward compatibility."""
-    return asyncio.run(get_article_async(url, timeout=timeout, js=js))
+def get_article(
+    url: str,
+    timeout: int = DEFAULT_TIMEOUT,
+    js: bool = False,
+    async_: bool = False,
+) -> Union[Dict, Awaitable[Dict]]:
+    """Fetch an article synchronously or return a coroutine when async_ is True."""
+    coroutine = _get_article_async(url, timeout=timeout, js=js)
+    return coroutine if async_ else asyncio.run(coroutine)
 
 
 def _empty_result(url: str) -> Dict:
