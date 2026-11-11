@@ -41,7 +41,7 @@ It is not a hosted reader or a single website scraper. You can use it as a Pytho
 | Website discovery | Finds articles through RSS discovery and fallback crawling |
 | Processing | Filters by language, topic, and domains; merges exact normalized URL copies |
 | Story grouping | Groups similar headlines while keeping distinct articles and their source names |
-| Async workflows | Supports async fetch/search/article retrieval and batch summarization |
+| Async workflows | Select async behavior with `async_=True` on supported APIs |
 | Summarization | Produces lightweight summaries with optional NLP helpers |
 | Export | Writes Markdown and clean JSON output |
 | CLI | Works well in shell scripts and automation |
@@ -61,7 +61,7 @@ It is not a hosted reader or a single website scraper. You can use it as a Pytho
 <details>
 <summary><strong>Article extraction and website discovery</strong></summary>
 
-- `get_article()` and `get_article_async()` for a single URL
+- `get_article()` for synchronous or awaitable article retrieval
 - `discover_and_get()` for RSS-first discovery with same-domain crawling when needed
 - Optional Playwright rendering for JavaScript-heavy pages
 - Metadata extraction using structured data, Open Graph, and HTML heuristics
@@ -83,7 +83,8 @@ It is not a hosted reader or a single website scraper. You can use it as a Pytho
 <details>
 <summary><strong>Async API</strong></summary>
 
-The library exposes async entry points such as `fetch_async()`, `search_async()`, `get_article_async()`, `batch_summarize_async()`, and `search_and_summarize_async()` for non-blocking workflows.
+Use `async_=True` with `fetch()`, `search()`, `get_article()`,
+`batch_summarize()`, or `search_and_summarize()` to get a coroutine to await.
 
 </details>
 
@@ -98,6 +99,10 @@ python -m pip install open-news-api
 Optional extras:
 
 ```bash
+# Model Context Protocol server
+python -m pip install "open-news-api[mcp]"
+open-news-mcp
+
 # Browser rendering for JavaScript-heavy pages
 python -m pip install "open-news-api[js]"
 playwright install chromium
@@ -105,6 +110,10 @@ playwright install chromium
 # Optional NLP components, including BM25 and summarization helpers
 python -m pip install "open-news-api[nlp]"
 ```
+
+See the [MCP guide](docs/mcp.md) for client configuration, available tools,
+and a runnable client example. MCP support is still growing; the Python API
+currently exposes more features than the MCP server.
 
 ### Install and run with `uv`
 
@@ -203,10 +212,10 @@ articles = search(
 
 ```python
 import asyncio
-from open_news import fetch_async
+from open_news import fetch
 
 async def main():
-    articles = await fetch_async(category="science", max_results=10)
+    articles = await fetch(category="science", max_results=10, async_=True)
     for article in articles:
         print(article["title"])
 
@@ -254,9 +263,16 @@ from open_news import export
 
 markdown = export.to_markdown(clusters, path="out/stories.md")
 json_text = export.to_json(clusters, path="out/stories.json")
+jsonld = export.to_jsonld(clusters, path="out/stories.jsonld")
+csv_text = export.to_csv(clusters, path="out/stories.csv")
+llm_context = export.to_text(clusters, path="out/stories.txt")
 ```
 
-Both exporters return the serialized string; if you pass a `path`, they also write the file to disk.
+Exporters return the serialized content and also write it to `path` when
+provided. JSON-LD uses Schema.org `ItemList` and `NewsArticle` types; CSV
+preserves nested values as JSON in cells; plain text provides labeled story
+context suitable for LLM and retrieval workflows. See the
+[structured export example](examples/structured_export_demo.py).
 
 ## 🧭 Architecture
 
