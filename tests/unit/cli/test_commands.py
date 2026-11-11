@@ -216,6 +216,33 @@ def test_cli_search_with_export_json(mocker, tmp_path):
     assert data["articles"][0]["title"] == "Climate news"
 
 
+@pytest.mark.parametrize(
+    ("option", "suffix"),
+    [
+        ("--export-jsonld", ".jsonld"),
+        ("--export-csv", ".csv"),
+        ("--export-text", ".txt"),
+    ],
+)
+def test_cli_search_with_structured_export(mocker, tmp_path, option, suffix):
+    out_path = tmp_path / f"out{suffix}"
+    mocker.patch(
+        "sys.argv",
+        ["open-news", "search", "climate", option, str(out_path)],
+    )
+    mocker.patch(
+        "open_news.cli.search",
+        return_value=[
+            {"title": "Climate news", "url": "https://a.com/1"},
+        ],
+    )
+
+    main()
+
+    assert out_path.exists()
+    assert "Climate news" in out_path.read_text(encoding="utf-8")
+
+
 def test_cli_export_with_custom_title(mocker, tmp_path):
     out_path = tmp_path / "out.md"
     mocker.patch(
@@ -299,6 +326,29 @@ def test_cli_export_writes_markdown(mocker, tmp_path):
     main()
     assert out.exists()
     assert "Story A" in out.read_text()
+
+
+@pytest.mark.parametrize(
+    ("option", "suffix"),
+    [
+        ("--jsonld", ".jsonld"),
+        ("--csv", ".csv"),
+        ("--text", ".txt"),
+    ],
+)
+def test_cli_export_writes_structured_formats(mocker, tmp_path, option, suffix):
+    src = tmp_path / "in.json"
+    src.write_text(
+        json.dumps([{"title": "Story A", "url": "https://a.com/1"}]),
+        encoding="utf-8",
+    )
+    out = tmp_path / f"out{suffix}"
+    mocker.patch("sys.argv", ["open-news", "export", str(src), option, str(out)])
+
+    main()
+
+    assert out.exists()
+    assert "Story A" in out.read_text(encoding="utf-8")
 
 
 def test_cli_export_unwraps_envelope(mocker, tmp_path):
