@@ -4,6 +4,61 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.7a1] — 2026-11-15
+
+> **This is a pre-release.** It exists to smoke-test the v1.0.7 line end to
+> end, including the MCP server. Pre-releases publish to TestPyPI only; the
+> stable `v1.0.7` release follows once this has been validated.
+
+## 🐛 Fixed
+
+- **The MCP `get_article` tool works again.** The tool shadowed the library
+  function it imported and called itself with `async_=True`, so every call
+  raised `TypeError`. The import is now aliased to `_get_article`, and the
+  regression test patches the library symbol instead of the shadowed name.
+- **Deprecated async wrappers accept `max_workers`.** `batch_summarize_async()`
+  and `search_and_summarize_async()` exposed `max_concurrency`, so code
+  migrating to `batch_summarize(max_workers=...)` broke with `TypeError`. Both
+  now accept `max_workers`; the old `max_concurrency` spelling still works and
+  emits `DeprecationWarning`.
+- **The documentation contract test finally runs.** It resolved
+  `tests/docs/parameters-reference.md` instead of
+  `docs/parameters-reference.md` and had been skipping on every run since it was
+  added.
+
+## 🔄 Changed
+
+- CI now runs `mypy` on every supported Python, and the MCP test module is
+  installed (`--group mcp`) instead of being skipped by
+  `pytest.importorskip`.
+- `[tool.mypy]` no longer disables `no-redef`, `assignment`, `var-annotated`,
+  `name-defined`, `misc`, `arg-type`, `attr-defined`, `union-attr`, `index` or
+  `unused-ignore`. Those suppressions concealed the MCP defect; only the missing
+  third-party stubs (`import-untyped`, `import-not-found`) remain disabled.
+- CI fails if `open_news.__version__` and `pyproject.toml` disagree.
+- The Colab notebook awaits the async entry points, because notebook kernels run
+  an event loop and the synchronous API calls `asyncio.run()`.
+- `docs/python-api.md` documents that notebook requirement.
+
+## 🗑️ Removed
+
+- Unused runtime dependencies `requests` and `legacy-cgi`; all HTTP goes through
+  `httpx`.
+- The duplicated `dev` extra in `[project.optional-dependencies]`.
+  `[dependency-groups]` is the single source for development tooling.
+- Unused `config.VALID_OUTPUT_FORMATS`.
+
+## ℹ️ Known gaps
+
+- `RobotsCache.allowed()` awaits a `robots.txt` fetch while holding its lock, so
+  crawler workers serialise on the first request per origin.
+- No SSRF guard on `crawl_site()`; `discover_site_news()` passes model-supplied
+  URLs into it.
+- `EncryptedCache` and `PersistentRenderer` still have no direct test coverage.
+- Python 3.15 is not in the CI matrix yet.
+
+---
+
 # [1.0.6] — 2026-11-11
 
 This stable release brings together the features and improvements developed

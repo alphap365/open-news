@@ -116,6 +116,10 @@ The `*_async()` entry points remain available as deprecated compatibility
 wrappers. They emit `DeprecationWarning`; use the corresponding public function
 with `async_=True` in new code.
 
+In notebooks and other environments that already run an event loop (Google
+Colab, Jupyter), use the async form: the synchronous entry points call
+`asyncio.run()`, which raises `RuntimeError` inside a running loop.
+
 ## `search()`
 
 Search news by keyword.
