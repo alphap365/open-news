@@ -1602,15 +1602,6 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/0e/72/a3add0e4eec4eb9e2569554f7c70f4a3c27712f40e3284d483e88094cc0e/langdetect-1.0.9.tar.gz", hash = "sha256:cbc1fef89f8d062739774bd51eda3da3274006b3661d199c2655f6b3f6d605a0", size = 981474, upload-time = "2021-05-07T07:54:13.562Z" }
 
 [[package]]
-name = "legacy-cgi"
-version = "2.6.4"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/f4/9c/91c7d2c5ebbdf0a1a510bfa0ddeaa2fbb5b78677df5ac0a0aa51cf7125b0/legacy_cgi-2.6.4.tar.gz", hash = "sha256:abb9dfc7835772f7c9317977c63253fd22a7484b5c9bbcdca60a29dcce97c577", size = 24603, upload-time = "2025-10-27T05:20:05.395Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/8c/7e/e7394eeb49a41cc514b3eb49020223666cbf40d86f5721c2f07871e6d84a/legacy_cgi-2.6.4-py3-none-any.whl", hash = "sha256:7e235ce58bf1e25d1fc9b2d299015e4e2cd37305eccafec1e6bac3fc04b878cd", size = 20035, upload-time = "2025-10-27T05:20:04.289Z" },
-]
-
-[[package]]
 name = "librt"
 version = "0.15.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2293,7 +2284,7 @@ wheels = [
 
 [[package]]
 name = "open-news-api"
-version = "1.0.6"
+version = "1.0.7a1"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
@@ -2303,25 +2294,11 @@ dependencies = [
     { name = "googlenewsdecoder" },
     { name = "httpx" },
     { name = "langdetect" },
-    { name = "legacy-cgi" },
     { name = "lxml" },
     { name = "python-dateutil" },
-    { name = "requests" },
 ]
 
 [package.optional-dependencies]
-dev = [
-    { name = "cibuildwheel", version = "2.23.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
-    { name = "cibuildwheel", version = "4.2.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.11'" },
-    { name = "mypy" },
-    { name = "pytest" },
-    { name = "pytest-cov" },
-    { name = "pytest-mock" },
-    { name = "pytest-vcr" },
-    { name = "respx" },
-    { name = "tomli", marker = "python_full_version < '3.11'" },
-    { name = "tox" },
-]
 js = [
     { name = "playwright" },
 ]
@@ -2377,7 +2354,6 @@ nlp = [
 requires-dist = [
     { name = "beautifulsoup4" },
     { name = "bm25s", marker = "extra == 'nlp'", specifier = ">=0.3.10" },
-    { name = "cibuildwheel", marker = "extra == 'dev'" },
     { name = "cryptography" },
     { name = "ddgs" },
     { name = "fastmcp", marker = "extra == 'mcp'", specifier = ">=2.0.0" },
@@ -2385,22 +2361,12 @@ requires-dist = [
     { name = "googlenewsdecoder" },
     { name = "httpx" },
     { name = "langdetect" },
-    { name = "legacy-cgi" },
     { name = "lxml" },
-    { name = "mypy", marker = "extra == 'dev'" },
     { name = "playwright", marker = "extra == 'js'", specifier = ">=1.40.0" },
-    { name = "pytest", marker = "extra == 'dev'", specifier = ">=7.0" },
-    { name = "pytest-cov", marker = "extra == 'dev'", specifier = ">=4.0" },
-    { name = "pytest-mock", marker = "extra == 'dev'", specifier = ">=3.0" },
-    { name = "pytest-vcr", marker = "extra == 'dev'", specifier = ">=1.0" },
     { name = "python-dateutil" },
-    { name = "requests" },
-    { name = "respx", marker = "extra == 'dev'", specifier = ">=0.20" },
     { name = "sumy", marker = "extra == 'nlp'", specifier = ">=0.10.0" },
-    { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0" },
-    { name = "tox", marker = "extra == 'dev'", specifier = ">=4.0" },
 ]
-provides-extras = ["js", "nlp", "dev", "mcp"]
+provides-extras = ["js", "nlp", "mcp"]
 
 [package.metadata.requires-dev]
 all = [

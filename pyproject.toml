@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "open-news-api"
-version = "1.0.6"
+version = "1.0.7a1"
 description = "Minimal news fetching: article text, RSS, Google News search, RSS discovery"
 readme = "README.md"
 authors = [{name = "ARAJIT PAUL", email = "arajitpaul2010@gmail.com"}]
@@ -27,10 +27,8 @@ dependencies = [
     "beautifulsoup4",
     "feedparser",
     "googlenewsdecoder",
-    "requests",
     "ddgs",
     "langdetect",
-    "legacy-cgi",
     "cryptography",
 ]
 
@@ -95,18 +93,6 @@ nlp = [
     "bm25s>=0.3.10",
 ]
 
-dev = [
-    "pytest>=7.0",
-    "pytest-cov>=4.0",
-    "pytest-vcr>=1.0",
-    "respx>=0.20",
-    "tox>=4.0",
-    "pytest-mock>=3.0",
-    "mypy",
-    "cibuildwheel",
-    "tomli>=2.0; python_version < '3.11'",
-]
-
 mcp = ["fastmcp>=2.0.0"]
 
 [tool.mypy]
@@ -114,18 +100,10 @@ python_version = "3.10"
 mypy_path = "src"
 warn_unused_ignores = true
 exclude = ["tests"]
+# Only missing third-party stubs stay disabled: those are environmental,
+# not code defects. Everything else is enforced, including no-redef, which is
+# what catches a module-level definition shadowing an imported name.
 disable_error_code = [
-    "arg-type",
-    "assignment",
-    "attr-defined",
-    "index",
-    "misc",
-    "name-defined",
-    "no-redef",
-    "union-attr",
-    "unused-ignore",
-    "var-annotated",
-    "annotation-unchecked",
     "import-untyped",
     "import-not-found",
 ]
