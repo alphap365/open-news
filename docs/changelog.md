@@ -4,6 +4,62 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.7b1] — 2026-11-15
+
+> **This is a pre-release.** It hardens the modules introduced in `1.0.6` and
+> ships to TestPyPI only; the stable `v1.0.7` release follows validation.
+
+## ✨ Added
+
+- `FeedConfig` gains `cluster_threshold`, `drop_singletons`, and a `weights`
+  mapping over `interest`, `category`, `language`, `source`, and `freshness`.
+  Defaults reproduce the previous behaviour exactly.
+- `FeedEngine.clear_cached_feed()` invalidates a personalized feed;
+  `FeedCacheDeletable` documents the backend shape that supports it.
+- `FeedEngine.get_cached_feed()` accepts `validate=` and `max_age=`.
+- `EncryptedCache.purge_expired()` and `EncryptedCache.stats()`.
+- `export_news` MCP tool, exposing the structured exporters to MCP clients.
+
+## 🔄 Changed
+
+- **Personalized scoring now reads fields that exist.** The category weight
+  previously read `categories`, which no producer emits — the extractor writes
+  `category` (singular) — so that signal never fired. Language matching now
+  reduces `en-GB`/`en_GB` to `en` and also consults `meta.language` and
+  `meta.inLanguage`.
+- **Blocked sources are stripped per outlet.** Behaviour change: blocked
+  coverage is removed from `sources` and `similar_articles`, and a story whose
+  representative comes from a blocked outlet is promoted to its first allowed
+  related article. Previously a story survived whenever *any* source was
+  allowed, keeping the blocked outlet in the payload.
+- **Cached feeds are validated on read.** Behaviour change:
+  `get_cached_feed()` returns `None` when `generated_at` is older than
+  `cache_ttl`, so backends that ignore TTL no longer serve stale feeds. Pass
+  `validate=False` to opt out.
+- MCP tools accept the options the library already supported: date ranges,
+  query mode, exclusions, language, time window, full content, and domain
+  filters on search/fetch; `topic_mode`/`search_in` on filtering; `search_in`
+  on ranking; `min_cluster_size`/`sort_by`/`rank_query` on clustering; and
+  `include_full_text`/`timeout_per_article` on summarization.
+- JSON-LD export emits `inLanguage`, `articleSection`, `@id` and
+  `mainEntityOfPage`, plus `firstSeen`/`lastSeen` for story clusters.
+- CSV export includes `language` and `summary` columns.
+
+## 🐛 Fixed
+
+- Personalized feeds scored every article identically for category, and scored
+  language as zero whenever a record had no top-level `language` field.
+
+## ℹ️ Known gaps
+
+- `RobotsCache.allowed()` awaits a `robots.txt` fetch while holding its lock.
+- No SSRF guard on `crawl_site()`/`discover_site_news()`.
+- `PersistentRenderer` still has no direct test coverage.
+- `FeedEngine` remains synchronous; `build_async()` is planned for `1.0.7`.
+- Python 3.15 is not in the CI matrix yet.
+
+---
+
 # [1.0.7a1] — 2026-11-15
 
 > **This is a pre-release.** It exists to smoke-test the v1.0.7 line end to

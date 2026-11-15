@@ -73,8 +73,8 @@ configuration. The module can also be started directly with
 
 | Tool | Purpose |
 |---|---|
-| `search_news` | Search Google News by query, country, result limit, and time window |
-| `fetch_news` | Fetch current news by category or location |
+| `search_news` | Search Google News by query, country, result limit, time window, date range, query mode, exclusions, language, and domain filters |
+| `fetch_news` | Fetch current news by category or location, with time window, language, full-content, and domain filters |
 | `get_article` | Extract article text and metadata from a URL |
 | `search_site_news` | Search for a query scoped to one publisher domain |
 | `discover_site_news` | Discover articles from a website or feed URL, preferring RSS |
@@ -83,6 +83,7 @@ configuration. The module can also be started directly with
 | `filter_news` | Filter article records by query, topic, and excluded terms |
 | `rank_news` | Rank article records by relevance to a query |
 | `cluster_news` | Group similar article records into story clusters |
+| `export_news` | Serialize records to Markdown, JSON, JSON-LD, CSV, or plain text |
 
 Tools that receive `articles` expect the article dictionaries returned by the
 news search and fetch tools. The retrieval tools make live network requests;

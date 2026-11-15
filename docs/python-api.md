@@ -60,6 +60,21 @@ feed = FeedEngine().build(articles)
 Pass an already configured cache when constructing a personalized feed. The
 `FeedCache` protocol defines the minimal `get`/`set` adapter contract for
 application-owned persistence backends; `EncryptedCache` implements it.
+Backends that also implement `delete()` can be invalidated with
+`FeedEngine.clear_cached_feed()`, described by the `FeedCacheDeletable`
+protocol.
+
+`FeedConfig` tunes the engine: `max_items`, `cache_ttl`, `cluster_threshold`,
+`drop_singletons`, and a `weights` mapping over `interest`, `category`,
+`language`, `source`, and `freshness`. Personalized scoring reads the
+`category`/`categories` and `language` fields article records actually carry,
+and blocked sources are stripped from `sources` and `similar_articles` rather
+than only dropping stories whose every source is blocked.
+
+`get_cached_feed()` validates the stored `generated_at` against `cache_ttl` by
+default and returns `None` for stale entries, which matters for cache backends
+that ignore the TTL they are given. Pass `validate=False` to read whatever the
+backend holds, or `max_age=` to use a different window.
 
 ### Export
 
