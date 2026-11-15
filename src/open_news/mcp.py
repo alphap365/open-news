@@ -1,5 +1,5 @@
 import asyncio
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Dict, List, Optional, cast
 
 from fastmcp import FastMCP
 
@@ -9,7 +9,7 @@ from open_news import (
     discover_and_get,
     fetch,
     filter_articles,
-    get_article,
+    get_article as _get_article,
     rank_articles,
     search,
     search_site,
@@ -27,12 +27,15 @@ async def search_news(
     time_limit: str = "d",
 ) -> List[Dict[str, Any]]:
     """Search Google News for articles matching a query."""
-    return await search(
-        query=query,
-        country=country,
-        max_results=max_results,
-        time_limit=time_limit,
-        async_=True,
+    return await cast(
+        Awaitable[List[Dict[str, Any]]],
+        search(
+            query=query,
+            country=country,
+            max_results=max_results,
+            time_limit=time_limit,
+            async_=True,
+        ),
     )
 
 
@@ -43,18 +46,24 @@ async def fetch_news(
     max_results: int = 10,
 ) -> List[Dict[str, Any]]:
     """Fetch current news for a category or location."""
-    return await fetch(
-        category=category,
-        location=location,
-        max_results=max_results,
-        async_=True,
+    return await cast(
+        Awaitable[List[Dict[str, Any]]],
+        fetch(
+            category=category,
+            location=location,
+            max_results=max_results,
+            async_=True,
+        ),
     )
 
 
 @mcp.tool
 async def get_article(url: str, timeout: int = 15, js: bool = False) -> Dict[str, Any]:
     """Fetch an article and extract its text and metadata."""
-    return await get_article(url, timeout=timeout, js=js, async_=True)
+    return await cast(
+        Awaitable[Dict[str, Any]],
+        _get_article(url, timeout=timeout, js=js, async_=True),
+    )
 
 
 @mcp.tool
@@ -88,7 +97,10 @@ async def summarize_articles(
     sentence_count: int = 3,
 ) -> List[Dict[str, Any]]:
     """Fetch and summarize articles from a list of URLs."""
-    return await batch_summarize(urls, sentence_count=sentence_count, async_=True)
+    return await cast(
+        Awaitable[List[Dict[str, Any]]],
+        batch_summarize(urls, sentence_count=sentence_count, async_=True),
+    )
 
 
 @mcp.tool

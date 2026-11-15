@@ -45,7 +45,7 @@ from .processing.feed_engine import (
 )
 from .processing.summarizer import summarize_text, summarize_with_keywords
 
-__version__ = "1.0.6"
+__version__ = "1.0.7a1"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 

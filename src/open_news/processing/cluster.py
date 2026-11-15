@@ -110,7 +110,7 @@ def cluster_to_article(cluster: Dict) -> Dict:
 
 
 def _expand_story_articles(articles: List[Dict]) -> List[Dict]:
-    expanded = []
+    expanded: List[Dict] = []
     story_fields = {
         "similar_articles",
         "cluster_id",

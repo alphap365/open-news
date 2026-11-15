@@ -79,7 +79,7 @@ def _is_aggregator(article: Dict) -> bool:
 
 
 def _source_names(article: Dict) -> List[str]:
-    names = []
+    names: List[str] = []
     meta = article.get("meta")
     site_name = meta.get("site_name") if isinstance(meta, dict) else None
     for value in (

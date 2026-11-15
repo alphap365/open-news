@@ -5,7 +5,6 @@ from typing import List, Optional, Union
 VALID_TIME_LIMITS = {"d", "w", "m"}
 VALID_SORT_FETCH = {"date", "relevance", "popularity"}
 VALID_SORT_SEARCH = {"date", "relevance"}
-VALID_OUTPUT_FORMATS = {"json", "markdown"}
 VALID_QUERY_MODES = {"any", "all", "exact_phrase"}
 VALID_CATEGORIES = {
     "general",

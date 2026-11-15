@@ -38,6 +38,24 @@ def _warn_async_alias(name: str, replacement: str) -> None:
     )
 
 
+def _resolve_max_workers(
+    name: str,
+    max_workers: int,
+    max_concurrency: Optional[int],
+) -> int:
+    """The deprecated wrappers predate ``max_workers`` and exposed
+    ``max_concurrency`` instead. Keep that spelling working while steering
+    callers to the name the public functions use."""
+    if max_concurrency is None:
+        return max_workers
+    warnings.warn(
+        f"{name}(max_concurrency=...) is deprecated; use max_workers=... instead.",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+    return max_concurrency
+
+
 async def _fetch_async(
     category: str = "general",
     location: Optional[str] = None,
@@ -226,19 +244,26 @@ async def batch_summarize_async(
     sentence_count: int = 3,
     include_full_text: bool = False,
     include_images_videos: bool = False,
-    max_concurrency: int = 5,
+    max_workers: int = 5,
     timeout_per_article: int = 30,
     js: bool = False,
     dedupe: bool = True,
+    max_concurrency: Optional[int] = None,
 ) -> List[Dict]:
-    """Deprecated alias for ``await batch_summarize(..., async_=True)``."""
+    """Deprecated alias for ``await batch_summarize(..., async_=True)``.
+
+    Accepts ``max_workers`` like the public function. The old
+    ``max_concurrency`` spelling still works but is deprecated.
+    """
     _warn_async_alias("batch_summarize_async", "batch_summarize")
     return await _batch_summarize_impl(
         urls,
         sentence_count=sentence_count,
         include_full_text=include_full_text,
         include_images_videos=include_images_videos,
-        max_concurrency=max_concurrency,
+        max_concurrency=_resolve_max_workers(
+            "batch_summarize_async", max_workers, max_concurrency
+        ),
         timeout_per_article=timeout_per_article,
         js=js,
         dedupe=dedupe,
@@ -251,10 +276,15 @@ async def search_and_summarize_async(
     sentence_count: int = 3,
     include_full_text: bool = False,
     include_images_videos: bool = False,
-    max_concurrency: int = 5,
+    max_workers: int = 5,
     js: bool = False,
+    max_concurrency: Optional[int] = None,
 ) -> List[Dict]:
-    """Deprecated alias for ``await search_and_summarize(..., async_=True)``."""
+    """Deprecated alias for ``await search_and_summarize(..., async_=True)``.
+
+    Accepts ``max_workers`` like the public function. The old
+    ``max_concurrency`` spelling still works but is deprecated.
+    """
     _warn_async_alias("search_and_summarize_async", "search_and_summarize")
     return await _search_and_summarize_impl(
         query,
@@ -262,7 +292,9 @@ async def search_and_summarize_async(
         sentence_count=sentence_count,
         include_full_text=include_full_text,
         include_images_videos=include_images_videos,
-        max_concurrency=max_concurrency,
+        max_concurrency=_resolve_max_workers(
+            "search_and_summarize_async", max_workers, max_concurrency
+        ),
         js=js,
     )
 
@@ -702,6 +734,6 @@ def discover_and_get(
 fetch_article = get_article
 get_articles_from_website_rss = discover_and_get
 # NOTE: live_news / get_live_news / clear_feed_cache / search_news are
-# retired in v1.0.0 — see docs/v1.0.0_SPEC.md migration table.
+# retired in v1.0.0 — see the migration notes in docs/changelog.md.
 # fetch(category=..., location=...) replaces live_news().
 # search(query=...) replaces the old bare search()/search_news().

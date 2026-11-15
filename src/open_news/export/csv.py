@@ -85,7 +85,7 @@ def to_csv(
     writer.writeheader()
     for item in normalized:
         if is_cluster:
-            article = item.get("representative") or next(
+            article: Dict = item.get("representative") or next(
                 iter(item.get("articles") or [{}]), {}
             )
             row = {

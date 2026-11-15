@@ -82,7 +82,7 @@ def to_text(
     blocks = []
     for index, item in enumerate(normalized, 1):
         if is_cluster:
-            representative = item.get("representative") or next(
+            representative: Dict = item.get("representative") or next(
                 iter(item.get("articles") or [{}]), {}
             )
             header = [

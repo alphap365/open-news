@@ -24,7 +24,7 @@ __all__ = ["main"]
 
 
 # ----------------------------------------------------------------------
-# User preferences, written by install.sh's wizard mode (or hand-edited).
+# User preferences, read from a hand-edited JSON file.
 # Only used to set argparse *defaults* — any flag the person actually
 # passes on the command line still wins.
 # ----------------------------------------------------------------------
@@ -814,19 +814,25 @@ def _run(args: argparse.Namespace) -> None:
 
     elif args.command == "summarize":
         if args.query:
-            results = search_and_summarize(
-                args.query,
-                limit=args.limit,
-                sentence_count=args.sentences,
-                max_workers=args.workers,
-                js=args.js,
+            results = cast(
+                List[Dict],
+                search_and_summarize(
+                    args.query,
+                    limit=args.limit,
+                    sentence_count=args.sentences,
+                    max_workers=args.workers,
+                    js=args.js,
+                ),
             )
         elif args.urls:
-            results = batch_summarize(
-                args.urls,
-                sentence_count=args.sentences,
-                max_workers=args.workers,
-                js=args.js,
+            results = cast(
+                List[Dict],
+                batch_summarize(
+                    args.urls,
+                    sentence_count=args.sentences,
+                    max_workers=args.workers,
+                    js=args.js,
+                ),
             )
         else:
             raise SystemExit("summarize: provide one or more URLs, or --query TOPIC")

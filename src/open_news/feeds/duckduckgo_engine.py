@@ -173,7 +173,7 @@ def _try_ddgs(config: FetchConfig) -> List[Dict]:
         from ddgs import DDGS
     except ImportError:
         try:
-            from duckduckgo_search import DDGS
+            from duckduckgo_search import DDGS  # type: ignore[no-redef]
         except ImportError:
             logger.info("ddgs not installed")
             return []
