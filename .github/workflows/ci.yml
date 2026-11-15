@@ -30,10 +30,16 @@ jobs:
           enable-cache: true
 
       - name: Install project
-        run: uv sync --python ${{ matrix.python-version }}
+        run: uv sync --python ${{ matrix.python-version }} --group mcp
 
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} pytest -q
+
+      - name: Type check
+        run: uv run --python ${{ matrix.python-version }} mypy src/open_news
+
+      - name: Check version agreement
+        run: uv run --python ${{ matrix.python-version }} python .github/scripts/check_version.py
 
       - name: Compile package
         run: uv run --python ${{ matrix.python-version }} python -m compileall -q src/open_news
