@@ -254,7 +254,7 @@ class TestRegionDiscipline:
         library to enforce a hard region filter, this test will fail and
         force the doc to be updated alongside it."""
         doc = (
-            pathlib.Path(__file__).resolve().parent.parent
+            pathlib.Path(__file__).resolve().parent.parent.parent
             / "docs"
             / "parameters-reference.md"
         )

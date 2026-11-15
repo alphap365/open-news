@@ -76,7 +76,7 @@ def test_fetch_news_uses_library_api(mocker):
 
 def test_get_article_uses_library_api(mocker):
     get = mocker.patch(
-        "open_news.mcp.get_article",
+        "open_news.mcp._get_article",
         new_callable=AsyncMock,
         return_value={"title": "News"},
     )
