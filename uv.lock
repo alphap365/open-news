@@ -2284,7 +2284,7 @@ wheels = [
 
 [[package]]
 name = "open-news-api"
-version = "1.0.7a1"
+version = "1.0.7b1"
 source = { editable = "." }
 dependencies = [
     { name = "beautifulsoup4" },
