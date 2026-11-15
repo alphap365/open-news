@@ -38,6 +38,7 @@ from .processing.batch import (
 from .processing.dedupe import dedupe_articles
 from .processing.feed_engine import (
     FeedCache,
+    FeedCacheDeletable,
     FeedConfig,
     FeedEngine,
     FeedError,
@@ -45,7 +46,7 @@ from .processing.feed_engine import (
 )
 from .processing.summarizer import summarize_text, summarize_with_keywords
 
-__version__ = "1.0.7a1"
+__version__ = "1.0.7b1"
 
 logging.getLogger(__name__).addHandler(logging.NullHandler())
 
@@ -66,6 +67,7 @@ __all__ = [
     "cluster_articles",
     "FeedConfig",
     "FeedCache",
+    "FeedCacheDeletable",
     "FeedEngine",
     "FeedError",
     "FeedProfileRequiredError",

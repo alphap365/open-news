@@ -28,6 +28,10 @@ def _news_article(article: Dict) -> Dict[str, Any]:
         if value:
             result[schema_key] = value.isoformat() if hasattr(value, "isoformat") else value
 
+    if result.get("url"):
+        result["@id"] = result["url"]
+        result["mainEntityOfPage"] = {"@type": "WebPage", "@id": result["url"]}
+
     authors = article.get("authors")
     if authors:
         if isinstance(authors, str):
@@ -45,6 +49,16 @@ def _news_article(article: Dict) -> Dict[str, Any]:
     publisher = article.get("source") or (
         meta.get("site_name") if isinstance(meta, dict) else None
     )
+
+    language = article.get("language")
+    if not language and isinstance(meta, dict):
+        language = meta.get("language") or meta.get("inLanguage")
+    if language:
+        result["inLanguage"] = language
+
+    section = article.get("category") or article.get("categories")
+    if section:
+        result["articleSection"] = section
     if publisher:
         result["publisher"] = {"@type": "Organization", "name": publisher}
 
@@ -107,6 +121,18 @@ def to_jsonld(
                         "value": item["sources"],
                     }
                 )
+            for property_name, source_key in (
+                ("firstSeen", "first_seen"),
+                ("lastSeen", "last_seen"),
+            ):
+                if item.get(source_key):
+                    properties.append(
+                        {
+                            "@type": "PropertyValue",
+                            "name": property_name,
+                            "value": item[source_key],
+                        }
+                    )
             article["additionalProperty"] = properties
         else:
             article = _news_article(item)

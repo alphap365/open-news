@@ -7,7 +7,7 @@ import os
 import sqlite3
 import time
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
@@ -194,6 +194,43 @@ class EncryptedCache:
             (namespace,),
         )
         self._db.commit()
+
+    def purge_expired(self) -> int:
+        """Delete expired rows and report how many were removed."""
+        cursor = self._db.execute(
+            "DELETE FROM cache WHERE expires_at IS NOT NULL AND expires_at <= ?",
+            (time.time(),),
+        )
+        self._db.commit()
+        return cursor.rowcount
+
+    def stats(self) -> Dict[str, Any]:
+        """Report row counts and the namespaces currently stored."""
+        row = self._db.execute(
+            """
+            SELECT
+                COUNT(*),
+                SUM(
+                    CASE
+                        WHEN expires_at IS NOT NULL AND expires_at <= ?
+                        THEN 1 ELSE 0
+                    END
+                )
+            FROM cache
+            """,
+            (time.time(),),
+        ).fetchone()
+        namespaces = [
+            namespace
+            for (namespace,) in self._db.execute(
+                "SELECT DISTINCT namespace FROM cache ORDER BY namespace"
+            )
+        ]
+        return {
+            "rows": int(row[0] or 0),
+            "expired": int(row[1] or 0),
+            "namespaces": namespaces,
+        }
 
     def close(self) -> None:
         self._db.close()
