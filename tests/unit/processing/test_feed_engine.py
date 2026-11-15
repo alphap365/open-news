@@ -1,3 +1,4 @@
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -282,7 +283,7 @@ def test_generic_feed_does_not_cache_result():
 
 def test_get_cached_feed_reads_calculated_feed_namespace():
     cache = MemoryCache()
-    cached = {"generated_at": 123.0, "items": [_article("Cached")]}
+    cached = {"generated_at": time.time(), "items": [_article("Cached")]}
     cache.values[("calculated_feed", "reader")] = cached
     engine = FeedEngine(cache)
 
