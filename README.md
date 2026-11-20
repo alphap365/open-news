@@ -372,3 +372,17 @@ than being discarded.
 ## License
 
 Open News is distributed under the MIT License. See [LICENSE](LICENSE).
+
+---
+
+## Contributors
+
+Thanks to everyone who has helped improve **Open News**! ❤️
+
+<a href="https://github.com/alphap365/open-news/graphs/contributors">
+  <img src="https://contrib.rocks/image?repo=alphap365/open-news" />
+</a>
+
+<p align="center">
+  <sub>Contributors are automatically updated from the GitHub repository.</sub>
+</p>
