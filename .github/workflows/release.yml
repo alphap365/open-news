@@ -134,7 +134,7 @@ jobs:
           fetch-depth: 0
 
       - name: Download source distribution
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-sdist
           path: release-assets
@@ -142,7 +142,7 @@ jobs:
       - name: Download dependency-wheels bundle
         if: inputs.include_dependency_wheels
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dependency-wheels
           path: release-assets/dependencies
@@ -150,7 +150,7 @@ jobs:
       - name: Download dependency-wheels-prebuilt bundle
         if: inputs.include_dependency_wheels
         continue-on-error: true
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: dependency-wheels-prebuilt
           path: release-assets/prebuilt
