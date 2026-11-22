@@ -4,6 +4,41 @@ This file tracks the project’s release history in a clear, version-by-version 
 
 The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), with a focus on what changed and why it mattered.
 
+# [1.0.7b2] — 2026-11-22
+
+> **This is a pre-release.** It builds on `1.0.7b1` with improved body search,
+> Google News link resolution, and expanded agent integrations.
+
+## ✨ Added
+
+- An in-package Google News URL resolver decodes legacy article tokens and
+  resolves opaque tokens through Google's decode endpoint, removing the
+  `googlenewsdecoder` runtime dependency.
+- MCP tools for search-and-summarize and keyword summaries, with more retrieval
+  and article-extraction options.
+- An MCP capabilities resource and `news_briefing` prompt, plus a portable
+  Open News agent skill for sourced, safer news research.
+- Regression coverage for Google News URL decoding and body-search workflows.
+
+## 🔄 Changed
+
+- Body-keyword searches now fetch candidates in bounded batches until enough
+  text-verified matches are found or the candidate pool is exhausted. Article
+  enrichment preserves merged source attribution and does not mutate inputs.
+- CI now uses `uv`, runs Ruff and Ty, and tests Python 3.14. Dependency groups
+  and the lockfile were cleaned up, and Dependabot updates were added.
+- README and MCP documentation describe the expanded tools and agent workflow.
+
+## 🐛 Fixed
+
+- Body searches no longer stop at an early batch of non-matching articles;
+  failed extractions keep their failure details and do not consume the match
+  quota.
+- Google News links with opaque article tokens can resolve to publisher URLs
+  without relying on the removed third-party decoder package.
+
+---
+
 # [1.0.7b1] — 2026-11-15
 
 > **This is a pre-release.** It hardens the modules introduced in `1.0.6` and
