@@ -112,8 +112,9 @@ python -m pip install "open-news-api[nlp]"
 ```
 
 See the [MCP guide](docs/mcp.md) for client configuration, available tools,
-and a runnable client example. MCP support is still growing; the Python API
-currently exposes more features than the MCP server.
+agent workflows, and a runnable client example. The repository also includes
+a portable Open News agent skill at
+[`.agents/skills/open-news-mcp/SKILL.md`](.agents/skills/open-news-mcp/SKILL.md).
 
 ### Install and run with `uv`
 
@@ -349,7 +350,7 @@ The project uses `uv` and declares development tools in the `dev` dependency gro
 ```bash
 uv sync --group dev
 uv run pytest -q
-uv run mypy src/open_news
+uv run ty check
 uv build
 ```
 

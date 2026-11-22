@@ -84,13 +84,13 @@ The notes follow the spirit of [Keep a Changelog](https://keepachangelog.com/en/
 
 ## 🔄 Changed
 
-- CI now runs `mypy` on every supported Python, and the MCP test module is
-  installed (`--group mcp`) instead of being skipped by
+- CI now runs static type analysis on every supported Python, and the MCP test
+  module is installed (`--group mcp`) instead of being skipped by
   `pytest.importorskip`.
-- `[tool.mypy]` no longer disables `no-redef`, `assignment`, `var-annotated`,
-  `name-defined`, `misc`, `arg-type`, `attr-defined`, `union-attr`, `index` or
-  `unused-ignore`. Those suppressions concealed the MCP defect; only the missing
-  third-party stubs (`import-untyped`, `import-not-found`) remain disabled.
+- Removed broad suppressions for redefinitions, assignments, missing names,
+  argument and attribute types, indexing, and unused ignores. Those
+  suppressions concealed the MCP defect; unresolved third-party imports remain
+  ignored where stubs are unavailable.
 - CI fails if `open_news.__version__` and `pyproject.toml` disagree.
 - The Colab notebook awaits the async entry points, because notebook kernels run
   an event loop and the synchronous API calls `asyncio.run()`.
@@ -157,7 +157,7 @@ through the `1.0.6a1`–`1.0.6b2` pre-release cycle.
 - Added and organized tests for the package APIs, async compatibility,
   exporters, MCP tools, and release workflows.
 - Verified source and wheel builds; the test suite passed with 262 tests
-  passed and 1 skipped, and mypy reported no issues.
+  passed and 1 skipped, and static type checks reported no issues.
 
 ## ℹ️ Known gaps
 

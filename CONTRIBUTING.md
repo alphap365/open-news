@@ -80,7 +80,7 @@ In your suggestion, explain:
 ### PR Checklist
 - [ ] Code is formatted with Black.
 - [ ] Linter (Ruff) reports no errors.
-- [ ] Type hints added and `mypy` passes.
+- [ ] Type hints added and `uv run ty check` passes.
 - [ ] New tests are included and pass.
 - [ ] Documentation updated (if applicable).
 - [ ] PR targets `main` and has no merge conflicts.

@@ -37,7 +37,7 @@ jobs:
         run: uv run --python ${{ matrix.python-version }} ruff check src tests
 
       - name: Type check
-        run: uv run --python ${{ matrix.python-version }} ty check --python-version 3.10 --ignore import-not-found src/open_news
+        run: uv run --python ${{ matrix.python-version }} ty check
 
       - name: Check version agreement
         run: uv run --python ${{ matrix.python-version }} python .github/scripts/check_version.py

@@ -52,6 +52,15 @@ open_news = ["py.typed"]
 testpaths = ["tests"]
 pythonpath = ["src"]
 
+[tool.ty.environment]
+python-version = "3.10"
+
+[tool.ty.rules]
+import-not-found = "ignore"
+
+[tool.ty.src]
+include = ["src/open_news"]
+
 [dependency-groups]
 dev = [
     "pytest>=7.0",

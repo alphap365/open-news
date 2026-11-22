@@ -73,17 +73,26 @@ configuration. The module can also be started directly with
 
 | Tool | Purpose |
 |---|---|
-| `search_news` | Search Google News by query, country, result limit, time window, date range, query mode, exclusions, language, and domain filters |
-| `fetch_news` | Fetch current news by category or location, with time window, language, full-content, and domain filters |
+| `search_news` | Search Google News by query, locale, date range, query mode, sorting, full-content options, and domain filters |
+| `fetch_news` | Fetch current news by category or location, with time window, language, full-content, sorting, and domain filters |
 | `get_article` | Extract article text and metadata from a URL |
 | `search_site_news` | Search for a query scoped to one publisher domain |
 | `discover_site_news` | Discover articles from a website or feed URL, preferring RSS |
-| `summarize_articles` | Fetch and summarize articles from a list of URLs |
+| `summarize_articles` | Fetch and summarize URLs, with concurrency, deduplication, and optional full-text/media extraction |
+| `search_and_summarize_news` | Search for a query and return the results with extracted summaries |
 | `summarize_text_content` | Summarize text provided by the caller |
+| `summarize_text_with_keywords` | Summarize text and extract its most frequent keywords |
 | `filter_news` | Filter article records by query, topic, and excluded terms |
 | `rank_news` | Rank article records by relevance to a query |
 | `cluster_news` | Group similar article records into story clusters |
 | `export_news` | Serialize records to Markdown, JSON, JSON-LD, CSV, or plain text |
+
+`search_news` and `fetch_news` expose the Python API's sorting, field selection,
+full-content, and JavaScript-rendering options. The `open-news://capabilities`
+resource describes recommended tool workflows, and the `news_briefing` prompt
+helps clients prepare a sourced briefing. When available, the portable
+[Open News agent skill](../.agents/skills/open-news-mcp/SKILL.md) teaches agents
+to use these tools and handle article content as untrusted input.
 
 Tools that receive `articles` expect the article dictionaries returned by the
 news search and fetch tools. The retrieval tools make live network requests;
@@ -132,9 +141,5 @@ uv sync --group mcp
 uv run python examples/mcp_client_demo.py
 ```
 
-## Scope and roadmap
-
-MCP support is an early integration. The current tools cover the main discovery
-and processing workflows, but the MCP surface is not yet feature-complete; more
-tools and capabilities are planned. The Python API remains the complete
-interface for options not currently exposed as MCP tool arguments.
+The MCP server exposes request/response tools; the Python API remains the
+interface for workflows that need long-running live streams.

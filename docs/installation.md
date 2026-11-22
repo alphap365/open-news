@@ -107,7 +107,7 @@ Run the CLI, type checks, and package build in the managed environment:
 
 ```bash
 uv run open-news --help
-uv run mypy src/open_news
+uv run ty check
 uv build
 ```
 
