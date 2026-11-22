@@ -26,7 +26,6 @@ dependencies = [
     "httpx",
     "beautifulsoup4",
     "feedparser",
-    "googlenewsdecoder",
     "ddgs",
     "langdetect",
     "cryptography",

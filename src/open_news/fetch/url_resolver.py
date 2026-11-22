@@ -13,10 +13,7 @@ import re
 from typing import Optional
 from urllib.parse import parse_qs, urlparse
 
-try:
-    from googlenewsdecoder import new_decoderv1
-except ImportError:
-    new_decoderv1 = None
+from ..utils.google_news import resolve_google_news_url
 
 logger = logging.getLogger(__name__)
 
@@ -42,16 +39,11 @@ def resolve_url(url: str) -> str:
     Never raises."""
     if not is_google_news_url(url):
         return url
-    if not new_decoderv1:
-        logger.debug("googlenewsdecoder not installed, using raw URL")
-        return url
-    try:
-        result = new_decoderv1(url)
-        decoded = result.get("decoded_url") if result else None
-        return decoded or url
-    except Exception as e:
-        logger.debug("Decoder error for %s: %s", url, e)
-        return url
+    destination_url = resolve_google_news_url(url)
+    if destination_url:
+        return destination_url
+    logger.debug("Could not decode Google News URL: %s", url)
+    return url
 
 
 def clean_url(url: str) -> str:
