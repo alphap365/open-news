@@ -353,7 +353,7 @@ jobs:
       #   - CIBW_SKIP: cp31?t-*             (skip free-threaded builds)
       - name: Build dependency wheel (cibuildwheel)
         if: matrix.build_type == 'cibuildwheel'
-        uses: pypa/cibuildwheel@v4.2.0
+        uses: pypa/cibuildwheel@v4.3.5
         with:
           package-dir: pkgsrc
           output-dir: wheelhouse
