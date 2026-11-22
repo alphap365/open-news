@@ -61,9 +61,10 @@ dev = [
     "respx>=0.20",
     "tox>=4.0",
     "pytest-mock>=3.0",
-    "mypy",
     "cibuildwheel",
     "tomli>=2.0; python_version < '3.11'",
+    "ruff>=0.17.6",
+    "ty>=0.0.107",
 ]
 js = [
     "playwright>=1.40.0"
@@ -95,31 +96,8 @@ nlp = [
 
 mcp = ["fastmcp>=2.0.0"]
 
-[tool.mypy]
-python_version = "3.10"
-mypy_path = "src"
-warn_unused_ignores = true
-exclude = ["tests"]
-# Only missing third-party stubs stay disabled: those are environmental,
-# not code defects. Everything else is enforced, including no-redef, which is
-# what catches a module-level definition shadowing an imported name.
-disable_error_code = [
-    "import-untyped",
-    "import-not-found",
-]
+[tool.ruff]
+target-version = "py310"
 
-[[tool.mypy.overrides]]
-module = [
-    "dateutil.*",
-    "feedparser",
-    "langdetect",
-    "googlenewsdecoder",
-    "playwright",
-    "playwright.*",
-    "duckduckgo_search",
-    "sumy.*",
-    "colorama",
-    "bs4",
-    "lxml.*",
-]
-ignore_missing_imports = true
+[tool.ruff.lint]
+select = ["E4", "E7", "E9", "F"]
