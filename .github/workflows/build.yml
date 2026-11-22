@@ -101,7 +101,7 @@ jobs:
 
       - name: Upload prebuilt external wheels
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: prebuilt-wheels
           path: prebuilt_wheels/*.whl
@@ -109,7 +109,7 @@ jobs:
           retention-days: 30
 
       - name: Upload discovery and planning reports
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheel-build-metadata
           path: |
@@ -442,7 +442,7 @@ jobs:
 
       - name: Upload generated wheels
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-wheels-${{ strategy.job-index }}
           path: wheelhouse/*.whl
@@ -518,7 +518,7 @@ jobs:
           PY
           fi
 
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: wheel-verification-report
@@ -593,7 +593,7 @@ jobs:
 
       - name: Upload dependency-wheels bundle
         if: needs.plan.outputs.has_builds == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-wheels
           path: bundles/dependency-wheels.zip
@@ -602,7 +602,7 @@ jobs:
 
       - name: Upload dependency-wheels-prebuilt bundle
         if: needs.plan.outputs.has_prebuilt == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: dependency-wheels-prebuilt
           path: bundles/dependency-wheels-prebuilt.zip
