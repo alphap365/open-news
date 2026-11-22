@@ -10,6 +10,7 @@
 
 [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white)](https://www.python.org/)
 [![PyPI](https://img.shields.io/pypi/v/open-news-api.svg?label=PyPI)](https://pypi.org/project/open-news-api/)
+[![TestPyPI](https://img.shields.io/badge/TestPyPI-1.0.7b2-blue)](https://test.pypi.org/project/open-news-api/)
 [![License](https://img.shields.io/badge/License-MIT-6C5CE7)](LICENSE)
 [![CI](https://github.com/alphap365/open-news/actions/workflows/ci.yml/badge.svg)](https://github.com/alphap365/open-news/actions/workflows/ci.yml)
 [![Version](https://img.shields.io/badge/Version-1.0.7b2-blue)](https://github.com/alphap365/open-news/releases)
